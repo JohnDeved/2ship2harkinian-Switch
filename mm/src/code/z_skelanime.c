@@ -3,6 +3,10 @@
 #include <string.h>
 #include <stdio.h>
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
 #include "z64malloc.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
 
@@ -945,11 +949,37 @@ s16 Animation_GetLastFrameLegacy(LegacyAnimationHeader* animation) {
  * Linearly interpolates the start and target frame tables with the given weight, putting the result in dst
  */
 void SkelAnime_InterpFrameTable(s32 limbCount, Vec3s* dst, Vec3s* start, Vec3s* target, f32 weight) {
-    s32 i;
-    s16 diff;
-    s16 base;
-
     if (weight < 1.0f) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        s32 total = limbCount * 3;
+        s16* d = (s16*)dst;
+        s16* s = (s16*)start;
+        s16* t = (s16*)target;
+        float32x4_t wv = vdupq_n_f32(weight);
+        s32 j = 0;
+
+        for (; j + 7 < total; j += 8) {
+            int16x8_t sv = vld1q_s16(&s[j]);
+            int16x8_t tv = vld1q_s16(&t[j]);
+            int16x8_t diff = vsubq_s16(tv, sv);
+            int32x4_t diff_lo = vmovl_s16(vget_low_s16(diff));
+            float32x4_t prod_lo = vmulq_f32(vcvtq_f32_s32(diff_lo), wv);
+            int32x4_t trunc_lo = vcvtq_s32_f32(prod_lo);
+            int32x4_t diff_hi = vmovl_s16(vget_high_s16(diff));
+            float32x4_t prod_hi = vmulq_f32(vcvtq_f32_s32(diff_hi), wv);
+            int32x4_t trunc_hi = vcvtq_s32_f32(prod_hi);
+            int16x8_t narrow = vcombine_s16(vmovn_s32(trunc_lo), vmovn_s32(trunc_hi));
+            vst1q_s16(&d[j], vaddq_s16(narrow, sv));
+        }
+        for (; j < total; j++) {
+            s16 base = s[j];
+            d[j] = TRUNCF_BINANG((t[j] - base) * weight) + base;
+        }
+#else
+        s32 i;
+        s16 diff;
+        s16 base;
+
         for (i = 0; i < limbCount; i++, dst++, start++, target++) {
             base = start->x;
             diff = target->x - base;
@@ -961,12 +991,9 @@ void SkelAnime_InterpFrameTable(s32 limbCount, Vec3s* dst, Vec3s* start, Vec3s* 
             diff = target->z - base;
             dst->z = TRUNCF_BINANG(diff * weight) + base;
         }
+#endif
     } else {
-        for (i = 0; i < limbCount; i++, dst++, target++) {
-            dst->x = target->x;
-            dst->y = target->y;
-            dst->z = target->z;
-        }
+        memcpy(dst, target, limbCount * sizeof(Vec3s));
     }
 }
 
@@ -1174,13 +1201,7 @@ void AnimTask_Copy(PlayState* play, AnimTaskData* data) {
     AnimTaskCopy* task = &data->copy;
 
     if (!(task->group & sDisabledTransformTaskGroups)) {
-        Vec3s* dest = task->dest;
-        Vec3s* src = task->src;
-        s32 i;
-
-        for (i = 0; i < task->vecCount; i++) {
-            *dest++ = *src++;
-        }
+        memcpy(task->dest, task->src, task->vecCount * sizeof(Vec3s));
     }
 }
 

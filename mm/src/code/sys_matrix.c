@@ -43,6 +43,10 @@
 #include "global.h"
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
 /* data */
 #define qs1616(e) ((s32)((e)*0x00010000))
 
@@ -201,22 +205,35 @@ void Matrix_Mult(MtxF* mf, MatrixMode mode) {
 void Matrix_Translate(f32 x, f32 y, f32 z, MatrixMode mode) {
     FrameInterpolation_RecordMatrixTranslate(x, y, z, mode);
     MtxF* cmf = sCurrentMatrix;
-    f32 tempX;
-    f32 tempY;
 
     if (mode == MTXMODE_APPLY) {
-        tempX = cmf->xx;
-        tempY = cmf->xy;
-        cmf->xw += tempX * x + tempY * y + cmf->xz * z;
-        tempX = cmf->yx;
-        tempY = cmf->yy;
-        cmf->yw += tempX * x + tempY * y + cmf->yz * z;
-        tempX = cmf->zx;
-        tempY = cmf->zy;
-        cmf->zw += tempX * x + tempY * y + cmf->zz * z;
-        tempX = cmf->wx;
-        tempY = cmf->wy;
-        cmf->ww += tempX * x + tempY * y + cmf->wz * z;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        float32x4_t col0 = vld1q_f32(&cmf->xx);
+        float32x4_t col1 = vld1q_f32(&cmf->xy);
+        float32x4_t col2 = vld1q_f32(&cmf->xz);
+        float32x4_t col3 = vld1q_f32(&cmf->xw);
+        col3 = vmlaq_n_f32(col3, col0, x);
+        col3 = vmlaq_n_f32(col3, col1, y);
+        col3 = vmlaq_n_f32(col3, col2, z);
+        vst1q_f32(&cmf->xw, col3);
+#else
+        {
+            f32 tempX;
+            f32 tempY;
+            tempX = cmf->xx;
+            tempY = cmf->xy;
+            cmf->xw += tempX * x + tempY * y + cmf->xz * z;
+            tempX = cmf->yx;
+            tempY = cmf->yy;
+            cmf->yw += tempX * x + tempY * y + cmf->yz * z;
+            tempX = cmf->zx;
+            tempY = cmf->zy;
+            cmf->zw += tempX * x + tempY * y + cmf->zz * z;
+            tempX = cmf->wx;
+            tempY = cmf->wy;
+            cmf->ww += tempX * x + tempY * y + cmf->wz * z;
+        }
+#endif
     } else {
         SkinMatrix_SetTranslate(cmf, x, y, z);
     }
@@ -250,6 +267,11 @@ void Matrix_Scale(f32 x, f32 y, f32 z, MatrixMode mode) {
     MtxF* cmf = sCurrentMatrix;
 
     if (mode == MTXMODE_APPLY) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        vst1q_f32(&cmf->xx, vmulq_n_f32(vld1q_f32(&cmf->xx), x));
+        vst1q_f32(&cmf->xy, vmulq_n_f32(vld1q_f32(&cmf->xy), y));
+        vst1q_f32(&cmf->xz, vmulq_n_f32(vld1q_f32(&cmf->xz), z));
+#else
         cmf->xx *= x;
         cmf->yx *= x;
         cmf->zx *= x;
@@ -262,6 +284,7 @@ void Matrix_Scale(f32 x, f32 y, f32 z, MatrixMode mode) {
         cmf->wx *= x;
         cmf->wy *= y;
         cmf->wz *= z;
+#endif
     } else {
         SkinMatrix_SetScale(cmf, x, y, z);
     }
@@ -296,8 +319,6 @@ void Matrix_RotateXS(s16 x, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
-    f32 tempY;
-    f32 tempZ;
 
     if (mode == MTXMODE_APPLY) {
         if (x != 0) {
@@ -306,25 +327,38 @@ void Matrix_RotateXS(s16 x, MatrixMode mode) {
             sin = Math_SinS(x);
             cos = Math_CosS(x);
 
-            tempY = cmf->xy;
-            tempZ = cmf->xz;
-            cmf->xy = tempY * cos + tempZ * sin;
-            cmf->xz = tempZ * cos - tempY * sin;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            float32x4_t col1 = vld1q_f32(&cmf->xy);
+            float32x4_t col2 = vld1q_f32(&cmf->xz);
+            float32x4_t new_col1 = vmlaq_n_f32(vmulq_n_f32(col1, cos), col2, sin);
+            float32x4_t new_col2 = vmlsq_n_f32(vmulq_n_f32(col2, cos), col1, sin);
+            vst1q_f32(&cmf->xy, new_col1);
+            vst1q_f32(&cmf->xz, new_col2);
+#else
+            {
+                f32 tempY;
+                f32 tempZ;
+                tempY = cmf->xy;
+                tempZ = cmf->xz;
+                cmf->xy = tempY * cos + tempZ * sin;
+                cmf->xz = tempZ * cos - tempY * sin;
 
-            tempY = cmf->yy;
-            tempZ = cmf->yz;
-            cmf->yy = tempY * cos + tempZ * sin;
-            cmf->yz = tempZ * cos - tempY * sin;
+                tempY = cmf->yy;
+                tempZ = cmf->yz;
+                cmf->yy = tempY * cos + tempZ * sin;
+                cmf->yz = tempZ * cos - tempY * sin;
 
-            tempY = cmf->zy;
-            tempZ = cmf->zz;
-            cmf->zy = tempY * cos + tempZ * sin;
-            cmf->zz = tempZ * cos - tempY * sin;
+                tempY = cmf->zy;
+                tempZ = cmf->zz;
+                cmf->zy = tempY * cos + tempZ * sin;
+                cmf->zz = tempZ * cos - tempY * sin;
 
-            tempY = cmf->wy;
-            tempZ = cmf->wz;
-            cmf->wy = tempY * cos + tempZ * sin;
-            cmf->wz = tempZ * cos - tempY * sin;
+                tempY = cmf->wy;
+                tempZ = cmf->wz;
+                cmf->wy = tempY * cos + tempZ * sin;
+                cmf->wz = tempZ * cos - tempY * sin;
+            }
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
@@ -461,8 +495,6 @@ void Matrix_RotateXFApply(f32 x) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
-    f32 tempY;
-    f32 tempZ;
     s32 pad;
 
     if (x != 0.0f) {
@@ -471,6 +503,16 @@ void Matrix_RotateXFApply(f32 x) {
         sin = sins(RAD_TO_BINANG(x)) * SHT_MINV;
         cos = coss(RAD_TO_BINANG(x)) * SHT_MINV;
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        float32x4_t col1 = vld1q_f32(&cmf->xy);
+        float32x4_t col2 = vld1q_f32(&cmf->xz);
+        float32x4_t new_col1 = vmlaq_n_f32(vmulq_n_f32(col1, cos), col2, sin);
+        float32x4_t new_col2 = vmlsq_n_f32(vmulq_n_f32(col2, cos), col1, sin);
+        vst1q_f32(&cmf->xy, new_col1);
+        vst1q_f32(&cmf->xz, new_col2);
+#else
+        f32 tempY;
+        f32 tempZ;
         tempY = cmf->xy;
         tempZ = cmf->xz;
         cmf->xy = (tempY * cos) + (tempZ * sin);
@@ -490,6 +532,7 @@ void Matrix_RotateXFApply(f32 x) {
         tempZ = cmf->wz;
         cmf->wy = (tempY * cos) + (tempZ * sin);
         cmf->wz = (tempZ * cos) - (tempY * sin);
+#endif
     }
 }
 
@@ -565,8 +608,6 @@ void Matrix_RotateYS(s16 y, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
-    f32 tempX;
-    f32 tempZ;
 
     if (mode == MTXMODE_APPLY) {
         if (y != 0) {
@@ -575,25 +616,38 @@ void Matrix_RotateYS(s16 y, MatrixMode mode) {
             sin = Math_SinS(y);
             cos = Math_CosS(y);
 
-            tempX = cmf->xx;
-            tempZ = cmf->xz;
-            cmf->xx = tempX * cos - tempZ * sin;
-            cmf->xz = tempX * sin + tempZ * cos;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            float32x4_t col0 = vld1q_f32(&cmf->xx);
+            float32x4_t col2 = vld1q_f32(&cmf->xz);
+            float32x4_t new_col0 = vmlsq_n_f32(vmulq_n_f32(col0, cos), col2, sin);
+            float32x4_t new_col2 = vmlaq_n_f32(vmulq_n_f32(col2, cos), col0, sin);
+            vst1q_f32(&cmf->xx, new_col0);
+            vst1q_f32(&cmf->xz, new_col2);
+#else
+            {
+                f32 tempX;
+                f32 tempZ;
+                tempX = cmf->xx;
+                tempZ = cmf->xz;
+                cmf->xx = tempX * cos - tempZ * sin;
+                cmf->xz = tempX * sin + tempZ * cos;
 
-            tempX = cmf->yx;
-            tempZ = cmf->yz;
-            cmf->yx = tempX * cos - tempZ * sin;
-            cmf->yz = tempX * sin + tempZ * cos;
+                tempX = cmf->yx;
+                tempZ = cmf->yz;
+                cmf->yx = tempX * cos - tempZ * sin;
+                cmf->yz = tempX * sin + tempZ * cos;
 
-            tempX = cmf->zx;
-            tempZ = cmf->zz;
-            cmf->zx = tempX * cos - tempZ * sin;
-            cmf->zz = tempX * sin + tempZ * cos;
+                tempX = cmf->zx;
+                tempZ = cmf->zz;
+                cmf->zx = tempX * cos - tempZ * sin;
+                cmf->zz = tempX * sin + tempZ * cos;
 
-            tempX = cmf->wx;
-            tempZ = cmf->wz;
-            cmf->wx = tempX * cos - tempZ * sin;
-            cmf->wz = tempX * sin + tempZ * cos;
+                tempX = cmf->wx;
+                tempZ = cmf->wz;
+                cmf->wx = tempX * cos - tempZ * sin;
+                cmf->wz = tempX * sin + tempZ * cos;
+            }
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
@@ -655,8 +709,6 @@ void Matrix_RotateYF(f32 y, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
-    f32 tempX;
-    f32 tempZ;
     f32 zero = 0.0;
     f32 one = 1.0;
 
@@ -667,25 +719,38 @@ void Matrix_RotateYF(f32 y, MatrixMode mode) {
             sin = sinf(y);
             cos = cosf(y);
 
-            tempX = cmf->xx;
-            tempZ = cmf->xz;
-            cmf->xx = tempX * cos - tempZ * sin;
-            cmf->xz = tempX * sin + tempZ * cos;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            float32x4_t col0 = vld1q_f32(&cmf->xx);
+            float32x4_t col2 = vld1q_f32(&cmf->xz);
+            float32x4_t new_col0 = vmlsq_n_f32(vmulq_n_f32(col0, cos), col2, sin);
+            float32x4_t new_col2 = vmlaq_n_f32(vmulq_n_f32(col2, cos), col0, sin);
+            vst1q_f32(&cmf->xx, new_col0);
+            vst1q_f32(&cmf->xz, new_col2);
+#else
+            {
+                f32 tempX;
+                f32 tempZ;
+                tempX = cmf->xx;
+                tempZ = cmf->xz;
+                cmf->xx = tempX * cos - tempZ * sin;
+                cmf->xz = tempX * sin + tempZ * cos;
 
-            tempX = cmf->yx;
-            tempZ = cmf->yz;
-            cmf->yx = tempX * cos - tempZ * sin;
-            cmf->yz = tempX * sin + tempZ * cos;
+                tempX = cmf->yx;
+                tempZ = cmf->yz;
+                cmf->yx = tempX * cos - tempZ * sin;
+                cmf->yz = tempX * sin + tempZ * cos;
 
-            tempX = cmf->zx;
-            tempZ = cmf->zz;
-            cmf->zx = tempX * cos - tempZ * sin;
-            cmf->zz = tempX * sin + tempZ * cos;
+                tempX = cmf->zx;
+                tempZ = cmf->zz;
+                cmf->zx = tempX * cos - tempZ * sin;
+                cmf->zz = tempX * sin + tempZ * cos;
 
-            tempX = cmf->wx;
-            tempZ = cmf->wz;
-            cmf->wx = tempX * cos - tempZ * sin;
-            cmf->wz = tempX * sin + tempZ * cos;
+                tempX = cmf->wx;
+                tempZ = cmf->wz;
+                cmf->wx = tempX * cos - tempZ * sin;
+                cmf->wz = tempX * sin + tempZ * cos;
+            }
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
@@ -746,8 +811,6 @@ void Matrix_RotateZS(s16 z, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
-    f32 tempX;
-    f32 tempY;
     f32 zero = 0.0;
     f32 one = 1.0;
 
@@ -758,25 +821,38 @@ void Matrix_RotateZS(s16 z, MatrixMode mode) {
             sin = Math_SinS(z);
             cos = Math_CosS(z);
 
-            tempX = cmf->xx;
-            tempY = cmf->xy;
-            cmf->xx = tempX * cos + tempY * sin;
-            cmf->xy = tempY * cos - tempX * sin;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            float32x4_t col0 = vld1q_f32(&cmf->xx);
+            float32x4_t col1 = vld1q_f32(&cmf->xy);
+            float32x4_t new_col0 = vmlaq_n_f32(vmulq_n_f32(col0, cos), col1, sin);
+            float32x4_t new_col1 = vmlsq_n_f32(vmulq_n_f32(col1, cos), col0, sin);
+            vst1q_f32(&cmf->xx, new_col0);
+            vst1q_f32(&cmf->xy, new_col1);
+#else
+            {
+                f32 tempX;
+                f32 tempY;
+                tempX = cmf->xx;
+                tempY = cmf->xy;
+                cmf->xx = tempX * cos + tempY * sin;
+                cmf->xy = tempY * cos - tempX * sin;
 
-            tempX = cmf->yx;
-            tempY = cmf->yy;
-            cmf->yx = tempX * cos + tempY * sin;
-            cmf->yy = tempY * cos - tempX * sin;
+                tempX = cmf->yx;
+                tempY = cmf->yy;
+                cmf->yx = tempX * cos + tempY * sin;
+                cmf->yy = tempY * cos - tempX * sin;
 
-            tempX = cmf->zx;
-            tempY = cmf->zy;
-            cmf->zx = tempX * cos + tempY * sin;
-            cmf->zy = tempY * cos - tempX * sin;
+                tempX = cmf->zx;
+                tempY = cmf->zy;
+                cmf->zx = tempX * cos + tempY * sin;
+                cmf->zy = tempY * cos - tempX * sin;
 
-            tempX = cmf->wx;
-            tempY = cmf->wy;
-            cmf->wx = tempX * cos + tempY * sin;
-            cmf->wy = tempY * cos - tempX * sin;
+                tempX = cmf->wx;
+                tempY = cmf->wy;
+                cmf->wx = tempX * cos + tempY * sin;
+                cmf->wy = tempY * cos - tempX * sin;
+            }
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
@@ -918,8 +994,6 @@ void Matrix_RotateZF(f32 z, MatrixMode mode) {
 void Matrix_RotateZYX(s16 x, s16 y, s16 z, MatrixMode mode) {
     FrameInterpolation_RecordMatrixRotateZYX(x, y, z, mode);
     MtxF* cmf = sCurrentMatrix;
-    f32 temp1;
-    f32 temp2;
     f32 sin;
     f32 cos;
 
@@ -928,75 +1002,120 @@ void Matrix_RotateZYX(s16 x, s16 y, s16 z, MatrixMode mode) {
             sin = Math_SinS(z);
             cos = Math_CosS(z);
 
-            temp1 = cmf->xx;
-            temp2 = cmf->xy;
-            cmf->xx = temp1 * cos + temp2 * sin;
-            cmf->xy = temp2 * cos - temp1 * sin;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            {
+                float32x4_t c0 = vld1q_f32(&cmf->xx);
+                float32x4_t c1 = vld1q_f32(&cmf->xy);
+                float32x4_t nc0 = vmlaq_n_f32(vmulq_n_f32(c0, cos), c1, sin);
+                float32x4_t nc1 = vmlsq_n_f32(vmulq_n_f32(c1, cos), c0, sin);
+                vst1q_f32(&cmf->xx, nc0);
+                vst1q_f32(&cmf->xy, nc1);
+            }
+#else
+            {
+                f32 temp1;
+                f32 temp2;
+                temp1 = cmf->xx;
+                temp2 = cmf->xy;
+                cmf->xx = temp1 * cos + temp2 * sin;
+                cmf->xy = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->yx;
-            temp2 = cmf->yy;
-            cmf->yx = temp1 * cos + temp2 * sin;
-            cmf->yy = temp2 * cos - temp1 * sin;
+                temp1 = cmf->yx;
+                temp2 = cmf->yy;
+                cmf->yx = temp1 * cos + temp2 * sin;
+                cmf->yy = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->zx;
-            temp2 = cmf->zy;
-            cmf->zx = temp1 * cos + temp2 * sin;
-            cmf->zy = temp2 * cos - temp1 * sin;
+                temp1 = cmf->zx;
+                temp2 = cmf->zy;
+                cmf->zx = temp1 * cos + temp2 * sin;
+                cmf->zy = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->wx;
-            temp2 = cmf->wy;
-            cmf->wx = temp1 * cos + temp2 * sin;
-            cmf->wy = temp2 * cos - temp1 * sin;
+                temp1 = cmf->wx;
+                temp2 = cmf->wy;
+                cmf->wx = temp1 * cos + temp2 * sin;
+                cmf->wy = temp2 * cos - temp1 * sin;
+            }
+#endif
         }
 
         if (y != 0) {
             sin = Math_SinS(y);
             cos = Math_CosS(y);
 
-            temp1 = cmf->xx;
-            temp2 = cmf->xz;
-            cmf->xx = temp1 * cos - temp2 * sin;
-            cmf->xz = temp1 * sin + temp2 * cos;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            {
+                float32x4_t c0 = vld1q_f32(&cmf->xx);
+                float32x4_t c2 = vld1q_f32(&cmf->xz);
+                float32x4_t nc0 = vmlsq_n_f32(vmulq_n_f32(c0, cos), c2, sin);
+                float32x4_t nc2 = vmlaq_n_f32(vmulq_n_f32(c2, cos), c0, sin);
+                vst1q_f32(&cmf->xx, nc0);
+                vst1q_f32(&cmf->xz, nc2);
+            }
+#else
+            {
+                f32 temp1;
+                f32 temp2;
+                temp1 = cmf->xx;
+                temp2 = cmf->xz;
+                cmf->xx = temp1 * cos - temp2 * sin;
+                cmf->xz = temp1 * sin + temp2 * cos;
 
-            temp1 = cmf->yx;
-            temp2 = cmf->yz;
-            cmf->yx = temp1 * cos - temp2 * sin;
-            cmf->yz = temp1 * sin + temp2 * cos;
+                temp1 = cmf->yx;
+                temp2 = cmf->yz;
+                cmf->yx = temp1 * cos - temp2 * sin;
+                cmf->yz = temp1 * sin + temp2 * cos;
 
-            temp1 = cmf->zx;
-            temp2 = cmf->zz;
-            cmf->zx = temp1 * cos - temp2 * sin;
-            cmf->zz = temp1 * sin + temp2 * cos;
+                temp1 = cmf->zx;
+                temp2 = cmf->zz;
+                cmf->zx = temp1 * cos - temp2 * sin;
+                cmf->zz = temp1 * sin + temp2 * cos;
 
-            temp1 = cmf->wx;
-            temp2 = cmf->wz;
-            cmf->wx = temp1 * cos - temp2 * sin;
-            cmf->wz = temp1 * sin + temp2 * cos;
+                temp1 = cmf->wx;
+                temp2 = cmf->wz;
+                cmf->wx = temp1 * cos - temp2 * sin;
+                cmf->wz = temp1 * sin + temp2 * cos;
+            }
+#endif
         }
 
         if (x != 0) {
             sin = Math_SinS(x);
             cos = Math_CosS(x);
 
-            temp1 = cmf->xy;
-            temp2 = cmf->xz;
-            cmf->xy = temp1 * cos + temp2 * sin;
-            cmf->xz = temp2 * cos - temp1 * sin;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            {
+                float32x4_t c1 = vld1q_f32(&cmf->xy);
+                float32x4_t c2 = vld1q_f32(&cmf->xz);
+                float32x4_t nc1 = vmlaq_n_f32(vmulq_n_f32(c1, cos), c2, sin);
+                float32x4_t nc2 = vmlsq_n_f32(vmulq_n_f32(c2, cos), c1, sin);
+                vst1q_f32(&cmf->xy, nc1);
+                vst1q_f32(&cmf->xz, nc2);
+            }
+#else
+            {
+                f32 temp1;
+                f32 temp2;
+                temp1 = cmf->xy;
+                temp2 = cmf->xz;
+                cmf->xy = temp1 * cos + temp2 * sin;
+                cmf->xz = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->yy;
-            temp2 = cmf->yz;
-            cmf->yy = temp1 * cos + temp2 * sin;
-            cmf->yz = temp2 * cos - temp1 * sin;
+                temp1 = cmf->yy;
+                temp2 = cmf->yz;
+                cmf->yy = temp1 * cos + temp2 * sin;
+                cmf->yz = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->zy;
-            temp2 = cmf->zz;
-            cmf->zy = temp1 * cos + temp2 * sin;
-            cmf->zz = temp2 * cos - temp1 * sin;
+                temp1 = cmf->zy;
+                temp2 = cmf->zz;
+                cmf->zy = temp1 * cos + temp2 * sin;
+                cmf->zz = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->wy;
-            temp2 = cmf->wz;
-            cmf->wy = temp1 * cos + temp2 * sin;
-            cmf->wz = temp2 * cos - temp1 * sin;
+                temp1 = cmf->wy;
+                temp2 = cmf->wz;
+                cmf->wy = temp1 * cos + temp2 * sin;
+                cmf->wz = temp2 * cos - temp1 * sin;
+            }
+#endif
         }
     } else {
         SkinMatrix_SetRotateRPY(cmf, x, y, z);
@@ -1020,83 +1139,128 @@ void Matrix_TranslateRotateZYX(Vec3f* translation, Vec3s* rot) {
     MtxF* cmf = sCurrentMatrix;
     f32 sin = Math_SinS(rot->z);
     f32 cos = Math_CosS(rot->z);
-    f32 temp1;
-    f32 temp2;
 
-    // No check for z != 0, presumably since translation is interleaved.
-    temp1 = cmf->xx;
-    temp2 = cmf->xy;
-    cmf->xw += temp1 * translation->x + temp2 * translation->y + cmf->xz * translation->z;
-    cmf->xx = temp1 * cos + temp2 * sin;
-    cmf->xy = temp2 * cos - temp1 * sin;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    /* Z rotation + translation */
+    {
+        float32x4_t col0 = vld1q_f32(&cmf->xx);
+        float32x4_t col1 = vld1q_f32(&cmf->xy);
+        float32x4_t col2 = vld1q_f32(&cmf->xz);
+        float32x4_t col3 = vld1q_f32(&cmf->xw);
+        col3 = vmlaq_n_f32(col3, col0, translation->x);
+        col3 = vmlaq_n_f32(col3, col1, translation->y);
+        col3 = vmlaq_n_f32(col3, col2, translation->z);
+        float32x4_t new_col0 = vmlaq_n_f32(vmulq_n_f32(col0, cos), col1, sin);
+        float32x4_t new_col1 = vmlsq_n_f32(vmulq_n_f32(col1, cos), col0, sin);
+        vst1q_f32(&cmf->xx, new_col0);
+        vst1q_f32(&cmf->xy, new_col1);
+        vst1q_f32(&cmf->xw, col3);
+    }
 
-    temp1 = cmf->yx;
-    temp2 = cmf->yy;
-    cmf->yw += temp1 * translation->x + temp2 * translation->y + cmf->yz * translation->z;
-    cmf->yx = temp1 * cos + temp2 * sin;
-    cmf->yy = temp2 * cos - temp1 * sin;
-
-    temp1 = cmf->zx;
-    temp2 = cmf->zy;
-    cmf->zw += temp1 * translation->x + temp2 * translation->y + cmf->zz * translation->z;
-    cmf->zx = temp1 * cos + temp2 * sin;
-    cmf->zy = temp2 * cos - temp1 * sin;
-
-    temp1 = cmf->wx;
-    temp2 = cmf->wy;
-    cmf->ww += temp1 * translation->x + temp2 * translation->y + cmf->wz * translation->z;
-    cmf->wx = temp1 * cos + temp2 * sin;
-    cmf->wy = temp2 * cos - temp1 * sin;
-
+    /* Y rotation */
     if (rot->y != 0) {
         sin = Math_SinS(rot->y);
         cos = Math_CosS(rot->y);
-
-        temp1 = cmf->xx;
-        temp2 = cmf->xz;
-        cmf->xx = temp1 * cos - temp2 * sin;
-        cmf->xz = temp1 * sin + temp2 * cos;
-
-        temp1 = cmf->yx;
-        temp2 = cmf->yz;
-        cmf->yx = temp1 * cos - temp2 * sin;
-        cmf->yz = temp1 * sin + temp2 * cos;
-
-        temp1 = cmf->zx;
-        temp2 = cmf->zz;
-        cmf->zx = temp1 * cos - temp2 * sin;
-        cmf->zz = temp1 * sin + temp2 * cos;
-
-        temp1 = cmf->wx;
-        temp2 = cmf->wz;
-        cmf->wx = temp1 * cos - temp2 * sin;
-        cmf->wz = temp1 * sin + temp2 * cos;
+        float32x4_t col0 = vld1q_f32(&cmf->xx);
+        float32x4_t col2 = vld1q_f32(&cmf->xz);
+        float32x4_t new_col0 = vmlsq_n_f32(vmulq_n_f32(col0, cos), col2, sin);
+        float32x4_t new_col2 = vmlaq_n_f32(vmulq_n_f32(col2, cos), col0, sin);
+        vst1q_f32(&cmf->xx, new_col0);
+        vst1q_f32(&cmf->xz, new_col2);
     }
 
+    /* X rotation */
     if (rot->x != 0) {
         sin = Math_SinS(rot->x);
         cos = Math_CosS(rot->x);
-
-        temp1 = cmf->xy;
-        temp2 = cmf->xz;
-        cmf->xy = temp1 * cos + temp2 * sin;
-        cmf->xz = temp2 * cos - temp1 * sin;
-
-        temp1 = cmf->yy;
-        temp2 = cmf->yz;
-        cmf->yy = temp1 * cos + temp2 * sin;
-        cmf->yz = temp2 * cos - temp1 * sin;
-
-        temp1 = cmf->zy;
-        temp2 = cmf->zz;
-        cmf->zy = temp1 * cos + temp2 * sin;
-        cmf->zz = temp2 * cos - temp1 * sin;
-
-        temp1 = cmf->wy;
-        temp2 = cmf->wz;
-        cmf->wy = temp1 * cos + temp2 * sin;
-        cmf->wz = temp2 * cos - temp1 * sin;
+        float32x4_t col1 = vld1q_f32(&cmf->xy);
+        float32x4_t col2 = vld1q_f32(&cmf->xz);
+        float32x4_t new_col1 = vmlaq_n_f32(vmulq_n_f32(col1, cos), col2, sin);
+        float32x4_t new_col2 = vmlsq_n_f32(vmulq_n_f32(col2, cos), col1, sin);
+        vst1q_f32(&cmf->xy, new_col1);
+        vst1q_f32(&cmf->xz, new_col2);
     }
+#else
+    {
+        f32 temp1;
+        f32 temp2;
+
+        // No check for z != 0, presumably since translation is interleaved.
+        temp1 = cmf->xx;
+        temp2 = cmf->xy;
+        cmf->xw += temp1 * translation->x + temp2 * translation->y + cmf->xz * translation->z;
+        cmf->xx = temp1 * cos + temp2 * sin;
+        cmf->xy = temp2 * cos - temp1 * sin;
+
+        temp1 = cmf->yx;
+        temp2 = cmf->yy;
+        cmf->yw += temp1 * translation->x + temp2 * translation->y + cmf->yz * translation->z;
+        cmf->yx = temp1 * cos + temp2 * sin;
+        cmf->yy = temp2 * cos - temp1 * sin;
+
+        temp1 = cmf->zx;
+        temp2 = cmf->zy;
+        cmf->zw += temp1 * translation->x + temp2 * translation->y + cmf->zz * translation->z;
+        cmf->zx = temp1 * cos + temp2 * sin;
+        cmf->zy = temp2 * cos - temp1 * sin;
+
+        temp1 = cmf->wx;
+        temp2 = cmf->wy;
+        cmf->ww += temp1 * translation->x + temp2 * translation->y + cmf->wz * translation->z;
+        cmf->wx = temp1 * cos + temp2 * sin;
+        cmf->wy = temp2 * cos - temp1 * sin;
+
+        if (rot->y != 0) {
+            sin = Math_SinS(rot->y);
+            cos = Math_CosS(rot->y);
+
+            temp1 = cmf->xx;
+            temp2 = cmf->xz;
+            cmf->xx = temp1 * cos - temp2 * sin;
+            cmf->xz = temp1 * sin + temp2 * cos;
+
+            temp1 = cmf->yx;
+            temp2 = cmf->yz;
+            cmf->yx = temp1 * cos - temp2 * sin;
+            cmf->yz = temp1 * sin + temp2 * cos;
+
+            temp1 = cmf->zx;
+            temp2 = cmf->zz;
+            cmf->zx = temp1 * cos - temp2 * sin;
+            cmf->zz = temp1 * sin + temp2 * cos;
+
+            temp1 = cmf->wx;
+            temp2 = cmf->wz;
+            cmf->wx = temp1 * cos - temp2 * sin;
+            cmf->wz = temp1 * sin + temp2 * cos;
+        }
+
+        if (rot->x != 0) {
+            sin = Math_SinS(rot->x);
+            cos = Math_CosS(rot->x);
+
+            temp1 = cmf->xy;
+            temp2 = cmf->xz;
+            cmf->xy = temp1 * cos + temp2 * sin;
+            cmf->xz = temp2 * cos - temp1 * sin;
+
+            temp1 = cmf->yy;
+            temp2 = cmf->yz;
+            cmf->yy = temp1 * cos + temp2 * sin;
+            cmf->yz = temp2 * cos - temp1 * sin;
+
+            temp1 = cmf->zy;
+            temp2 = cmf->zz;
+            cmf->zy = temp1 * cos + temp2 * sin;
+            cmf->zz = temp2 * cos - temp1 * sin;
+
+            temp1 = cmf->wy;
+            temp2 = cmf->wz;
+            cmf->wy = temp1 * cos + temp2 * sin;
+            cmf->wz = temp2 * cos - temp1 * sin;
+        }
+    }
+#endif
 }
 
 /**
@@ -1276,9 +1440,24 @@ Mtx* Matrix_MtxFToNewMtx(MtxF* src, GraphicsContext* gfxCtx) {
 void Matrix_MultVec3f(Vec3f* src, Vec3f* dest) {
     MtxF* cmf = sCurrentMatrix;
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t col0 = vld1q_f32((const float*)&cmf->xx);
+    float32x4_t col1 = vld1q_f32((const float*)&cmf->xy);
+    float32x4_t col2 = vld1q_f32((const float*)&cmf->xz);
+    float32x4_t col3 = vld1q_f32((const float*)&cmf->xw);
+
+    float32x4_t result = vmlaq_n_f32(col3, col0, src->x);
+    result = vmlaq_n_f32(result, col1, src->y);
+    result = vmlaq_n_f32(result, col2, src->z);
+
+    dest->x = vgetq_lane_f32(result, 0);
+    dest->y = vgetq_lane_f32(result, 1);
+    dest->z = vgetq_lane_f32(result, 2);
+#else
     dest->x = cmf->xw + (cmf->xx * src->x + cmf->xy * src->y + cmf->xz * src->z);
     dest->y = cmf->yw + (cmf->yx * src->x + cmf->yy * src->y + cmf->yz * src->z);
     dest->z = cmf->zw + (cmf->zx * src->x + cmf->zy * src->y + cmf->zz * src->z);
+#endif
 }
 
 /**
@@ -1374,8 +1553,22 @@ void Matrix_MultVecZ(f32 z, Vec3f* dest) {
 void Matrix_MultVec3fXZ(Vec3f* src, Vec3f* dest) {
     MtxF* cmf = sCurrentMatrix;
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t col0 = vld1q_f32((const float*)&cmf->xx);
+    float32x4_t col1 = vld1q_f32((const float*)&cmf->xy);
+    float32x4_t col2 = vld1q_f32((const float*)&cmf->xz);
+    float32x4_t col3 = vld1q_f32((const float*)&cmf->xw);
+
+    float32x4_t result = vmlaq_n_f32(col3, col0, src->x);
+    result = vmlaq_n_f32(result, col1, src->y);
+    result = vmlaq_n_f32(result, col2, src->z);
+
+    dest->x = vgetq_lane_f32(result, 0);
+    dest->z = vgetq_lane_f32(result, 2);
+#else
     dest->x = cmf->xw + (cmf->xx * src->x + cmf->xy * src->y + cmf->xz * src->z);
     dest->z = cmf->zw + (cmf->zx * src->x + cmf->zy * src->y + cmf->zz * src->z);
+#endif
 }
 
 /**
@@ -1387,14 +1580,12 @@ void Matrix_MultVec3fXZ(Vec3f* src, Vec3f* dest) {
  * @remark original name: "Matrix_copy_MtxF"
  */
 void Matrix_MtxFCopy(MtxF* dest, MtxF* src) {
-    dest->xx = src->xx;
-    dest->yx = src->yx;
-    dest->zx = src->zx;
-    dest->wx = src->wx;
-    dest->xy = src->xy;
-    dest->yy = src->yy;
-    dest->zy = src->zy;
-    dest->wy = src->wy;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    vst1q_f32((float*)&dest->xx, vld1q_f32((const float*)&src->xx));
+    vst1q_f32((float*)&dest->xy, vld1q_f32((const float*)&src->xy));
+    vst1q_f32((float*)&dest->xz, vld1q_f32((const float*)&src->xz));
+    vst1q_f32((float*)&dest->xw, vld1q_f32((const float*)&src->xw));
+#else
     dest->xx = src->xx;
     dest->yx = src->yx;
     dest->zx = src->zx;
@@ -1411,14 +1602,7 @@ void Matrix_MtxFCopy(MtxF* dest, MtxF* src) {
     dest->yw = src->yw;
     dest->zw = src->zw;
     dest->ww = src->ww;
-    dest->xz = src->xz;
-    dest->yz = src->yz;
-    dest->zz = src->zz;
-    dest->wz = src->wz;
-    dest->xw = src->xw;
-    dest->yw = src->yw;
-    dest->zw = src->zw;
-    dest->ww = src->ww;
+#endif
 }
 
 /**
@@ -1445,9 +1629,24 @@ void Matrix_MtxToMtxF(Mtx* src, MtxF* dest) {
  * @param[in] mf matrix to multiply by
  */
 void Matrix_MultVec3fExt(Vec3f* src, Vec3f* dest, MtxF* mf) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t col0 = vld1q_f32((const float*)&mf->xx);
+    float32x4_t col1 = vld1q_f32((const float*)&mf->xy);
+    float32x4_t col2 = vld1q_f32((const float*)&mf->xz);
+    float32x4_t col3 = vld1q_f32((const float*)&mf->xw);
+
+    float32x4_t result = vmlaq_n_f32(col3, col0, src->x);
+    result = vmlaq_n_f32(result, col1, src->y);
+    result = vmlaq_n_f32(result, col2, src->z);
+
+    dest->x = vgetq_lane_f32(result, 0);
+    dest->y = vgetq_lane_f32(result, 1);
+    dest->z = vgetq_lane_f32(result, 2);
+#else
     dest->x = mf->xw + (mf->xx * src->x + mf->xy * src->y + mf->xz * src->z);
     dest->y = mf->yw + (mf->yx * src->x + mf->yy * src->y + mf->yz * src->z);
     dest->z = mf->zw + (mf->zx * src->x + mf->zy * src->y + mf->zz * src->z);
+#endif
 }
 
 /**
@@ -1703,6 +1902,42 @@ void Matrix_RotateAxisF(f32 angle, Vec3f* axis, MatrixMode mode) {
             sin = sinf(angle);
             cos = cosf(angle);
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            /* Build the 3×3 Rodrigues rotation matrix R, then compute M_new = M @ R
+             * for columns 0-2. The w row (wx,wy,wz) is preserved (scalar doesn't touch it).
+             */
+            {
+                f32 versin = 1.0f - cos;
+                f32 ax = axis->x, ay = axis->y, az = axis->z;
+
+                f32 R00 = cos + ax * ax * versin;
+                f32 R10 = ax * ay * versin + az * sin;
+                f32 R20 = ax * az * versin - ay * sin;
+                f32 R01 = ax * ay * versin - az * sin;
+                f32 R11 = cos + ay * ay * versin;
+                f32 R21 = ay * az * versin + ax * sin;
+                f32 R02 = ax * az * versin + ay * sin;
+                f32 R12 = ay * az * versin - ax * sin;
+                f32 R22 = cos + az * az * versin;
+
+                float32x4_t col0 = vld1q_f32(&cmf->xx);
+                float32x4_t col1 = vld1q_f32(&cmf->xy);
+                float32x4_t col2 = vld1q_f32(&cmf->xz);
+                f32 save_wx = cmf->wx, save_wy = cmf->wy, save_wz = cmf->wz;
+
+                float32x4_t new0 = vmlaq_n_f32(vmlaq_n_f32(vmulq_n_f32(col0, R00), col1, R10), col2, R20);
+                float32x4_t new1 = vmlaq_n_f32(vmlaq_n_f32(vmulq_n_f32(col0, R01), col1, R11), col2, R21);
+                float32x4_t new2 = vmlaq_n_f32(vmlaq_n_f32(vmulq_n_f32(col0, R02), col1, R12), col2, R22);
+
+                vst1q_f32(&cmf->xx, new0);
+                vst1q_f32(&cmf->xy, new1);
+                vst1q_f32(&cmf->xz, new2);
+                cmf->wx = save_wx;
+                cmf->wy = save_wy;
+                cmf->wz = save_wz;
+            }
+#else
+
             temp1 = cmf->xx;
             temp2 = cmf->xy;
             temp3 = cmf->xz;
@@ -1726,6 +1961,7 @@ void Matrix_RotateAxisF(f32 angle, Vec3f* axis, MatrixMode mode) {
             cmf->zx = temp1 * cos + axis->x * temp4 + sin * (temp2 * axis->z - temp3 * axis->y);
             cmf->zy = temp2 * cos + axis->y * temp4 + sin * (temp3 * axis->x - temp1 * axis->z);
             cmf->zz = temp3 * cos + axis->z * temp4 + sin * (temp1 * axis->y - temp2 * axis->x);
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
@@ -1805,6 +2041,38 @@ void Matrix_RotateAxisS(s16 angle, Vec3f* axis, MatrixMode mode) {
             sin = Math_SinS(angle);
             cos = Math_CosS(angle);
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            {
+                f32 versin = 1.0f - cos;
+                f32 ax = axis->x, ay = axis->y, az = axis->z;
+
+                f32 R00 = cos + ax * ax * versin;
+                f32 R10 = ax * ay * versin + az * sin;
+                f32 R20 = ax * az * versin - ay * sin;
+                f32 R01 = ax * ay * versin - az * sin;
+                f32 R11 = cos + ay * ay * versin;
+                f32 R21 = ay * az * versin + ax * sin;
+                f32 R02 = ax * az * versin + ay * sin;
+                f32 R12 = ay * az * versin - ax * sin;
+                f32 R22 = cos + az * az * versin;
+
+                float32x4_t col0 = vld1q_f32(&cmf->xx);
+                float32x4_t col1 = vld1q_f32(&cmf->xy);
+                float32x4_t col2 = vld1q_f32(&cmf->xz);
+                f32 save_wx = cmf->wx, save_wy = cmf->wy, save_wz = cmf->wz;
+
+                float32x4_t new0 = vmlaq_n_f32(vmlaq_n_f32(vmulq_n_f32(col0, R00), col1, R10), col2, R20);
+                float32x4_t new1 = vmlaq_n_f32(vmlaq_n_f32(vmulq_n_f32(col0, R01), col1, R11), col2, R21);
+                float32x4_t new2 = vmlaq_n_f32(vmlaq_n_f32(vmulq_n_f32(col0, R02), col1, R12), col2, R22);
+
+                vst1q_f32(&cmf->xx, new0);
+                vst1q_f32(&cmf->xy, new1);
+                vst1q_f32(&cmf->xz, new2);
+                cmf->wx = save_wx;
+                cmf->wy = save_wy;
+                cmf->wz = save_wz;
+            }
+#else
             temp1 = cmf->xx;
             temp2 = cmf->xy;
             temp3 = cmf->xz;
@@ -1828,6 +2096,7 @@ void Matrix_RotateAxisS(s16 angle, Vec3f* axis, MatrixMode mode) {
             cmf->zx = temp1 * cos + axis->x * temp4 + sin * (temp2 * axis->z - temp3 * axis->y);
             cmf->zy = temp2 * cos + axis->y * temp4 + sin * (temp3 * axis->x - temp1 * axis->z);
             cmf->zz = temp3 * cos + axis->z * temp4 + sin * (temp1 * axis->y - temp2 * axis->x);
+#endif
         }
     } else {
         cmf = sCurrentMatrix;

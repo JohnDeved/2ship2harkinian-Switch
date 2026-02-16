@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 #include "mixer.h"
-#if defined(__ARM_NEON)
+#if defined(__ARM_NEON) && defined(__aarch64__)
 #include <arm_neon.h>
 #endif
 #ifndef __clang__
@@ -170,10 +170,33 @@ void aSetBufferImpl(uint8_t flags, uint16_t in, uint16_t out, uint16_t nbytes) {
 }
 
 void aInterleaveImpl(uint16_t dest, uint16_t left, uint16_t right, uint16_t c) {
+    // count is in groups of 4 sample-pairs (each iteration interleaves 4 L + 4 R -> 8 output samples).
     int count = ROUND_UP_8(c) / sizeof(int16_t) / 4;
     int16_t* l = BUF_S16(left);
     int16_t* r = BUF_S16(right);
     int16_t* d = BUF_S16(dest);
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // Process 2 groups at a time (8 L + 8 R -> 16 interleaved output samples).
+    while (count >= 2) {
+        const int16x8_t lv = vld1q_s16(l);
+        const int16x8_t rv = vld1q_s16(r);
+        const int16x8x2_t zipped = vzipq_s16(lv, rv);
+        vst1q_s16(d, zipped.val[0]);
+        vst1q_s16(d + 8, zipped.val[1]);
+        l += 8;
+        r += 8;
+        d += 16;
+        count -= 2;
+    }
+    if (count > 0) {
+        const int16x4_t lv = vld1_s16(l);
+        const int16x4_t rv = vld1_s16(r);
+        const int16x4x2_t zipped = vzip_s16(lv, rv);
+        vst1_s16(d, zipped.val[0]);
+        vst1_s16(d + 4, zipped.val[1]);
+    }
+    return;
+#endif
     while (count > 0) {
         int16_t l0 = *l++;
         int16_t l1 = *l++;
@@ -461,6 +484,16 @@ void aS8DecImpl(uint8_t flags, ADPCM_STATE state) {
     }
     out += 16;
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    while (nbytes > 0) {
+        uint8x16_t bytes = vld1q_u8(in);
+        vst1q_s16(out,     vreinterpretq_s16_u16(vshll_n_u8(vget_low_u8(bytes), 8)));
+        vst1q_s16(out + 8, vreinterpretq_s16_u16(vshll_n_u8(vget_high_u8(bytes), 8)));
+        in += 16;
+        out += 16;
+        nbytes -= 16 * sizeof(int16_t);
+    }
+#else
     while (nbytes > 0) {
         *out++ = (int16_t)(*in++ << 8);
         *out++ = (int16_t)(*in++ << 8);
@@ -481,6 +514,7 @@ void aS8DecImpl(uint8_t flags, ADPCM_STATE state) {
 
         nbytes -= 16 * sizeof(int16_t);
     }
+#endif
 
     memcpy(state, out - 16, 16 * sizeof(int16_t));
 }
@@ -547,12 +581,35 @@ void aDuplicateImpl(uint16_t count, uint16_t in_addr, uint16_t out_addr) {
     uint8_t* in = BUF_U8(in_addr);
     uint8_t* out = BUF_U8(out_addr);
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    /* Cache 128 bytes (8 × 16-byte NEON registers) then blast copies */
+    uint8x16_t r0 = vld1q_u8(in);
+    uint8x16_t r1 = vld1q_u8(in + 16);
+    uint8x16_t r2 = vld1q_u8(in + 32);
+    uint8x16_t r3 = vld1q_u8(in + 48);
+    uint8x16_t r4 = vld1q_u8(in + 64);
+    uint8x16_t r5 = vld1q_u8(in + 80);
+    uint8x16_t r6 = vld1q_u8(in + 96);
+    uint8x16_t r7 = vld1q_u8(in + 112);
+    do {
+        vst1q_u8(out, r0);
+        vst1q_u8(out + 16, r1);
+        vst1q_u8(out + 32, r2);
+        vst1q_u8(out + 48, r3);
+        vst1q_u8(out + 64, r4);
+        vst1q_u8(out + 80, r5);
+        vst1q_u8(out + 96, r6);
+        vst1q_u8(out + 112, r7);
+        out += 128;
+    } while (count-- > 0);
+#else
     uint8_t tmp[128];
     memcpy(tmp, in, 128);
     do {
         memcpy(out, tmp, 128);
         out += 128;
     } while (count-- > 0);
+#endif
 }
 
 void aResampleZohImpl(uint16_t pitch, uint16_t start_fract) {
@@ -643,8 +700,25 @@ void aFilterImpl(uint8_t flags, uint16_t count_or_buf, int16_t* state_or_filter)
             rspa.filter[i] = (tmp2[i] + rspa.filter[i]) / 2;
         }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        /* Reverse filter coefficients using NEON lane reversal */
+        int16x8_t filt = vld1q_s16(rspa.filter);
+        int16x8_t filt_rev = vrev64q_s16(filt);
+        filt_rev = vcombine_s16(vget_high_s16(filt_rev), vget_low_s16(filt_rev));
+#endif
+
         do {
             memcpy(tmp + 8, buf, 8 * sizeof(int16_t));
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            for (int i = 0; i < 8; i++) {
+                const int16x8_t s = vld1q_s16(&tmp[i]);
+                int32x4_t prod = vmull_s16(vget_low_s16(s), vget_low_s16(filt_rev));
+                prod = vmlal_s16(prod, vget_high_s16(s), vget_high_s16(filt_rev));
+                int64x2_t prod64 = vpaddlq_s32(prod);
+                int64_t sample = 0x4000 + vaddvq_s64(prod64);
+                buf[i] = clamp16((int32_t)(sample >> 15));
+            }
+#else
             for (int i = 0; i < 8; i++) {
                 int64_t sample = 0x4000; // round term
                 for (int j = 0; j < 8; j++) {
@@ -652,6 +726,7 @@ void aFilterImpl(uint8_t flags, uint16_t count_or_buf, int16_t* state_or_filter)
                 }
                 buf[i] = clamp16((int32_t)(sample >> 15));
             }
+#endif
             memcpy(tmp, tmp + 8, 8 * sizeof(int16_t));
 
             buf += 8;
@@ -712,6 +787,33 @@ void aUnkCmd19Impl(uint8_t f, uint16_t count, uint16_t out_addr, uint16_t in_add
     int nbytes = ROUND_UP_64(count);
     int16_t* in = BUF_S16(in_addr + f);
     int16_t* out = BUF_S16(out_addr);
+
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    int16x8_t t0 = vld1q_s16(in);
+    int16x8_t t1 = vld1q_s16(in + 8);
+    int16x8_t t2 = vld1q_s16(in + 16);
+    int16x8_t t3 = vld1q_s16(in + 24);
+    do {
+        int16x8_t o0 = vld1q_s16(out);
+        int16x8_t o1 = vld1q_s16(out + 8);
+        int16x8_t o2 = vld1q_s16(out + 16);
+        int16x8_t o3 = vld1q_s16(out + 24);
+        int32x4_t p0l = vmull_s16(vget_low_s16(o0), vget_low_s16(t0));
+        int32x4_t p0h = vmull_s16(vget_high_s16(o0), vget_high_s16(t0));
+        int32x4_t p1l = vmull_s16(vget_low_s16(o1), vget_low_s16(t1));
+        int32x4_t p1h = vmull_s16(vget_high_s16(o1), vget_high_s16(t1));
+        int32x4_t p2l = vmull_s16(vget_low_s16(o2), vget_low_s16(t2));
+        int32x4_t p2h = vmull_s16(vget_high_s16(o2), vget_high_s16(t2));
+        int32x4_t p3l = vmull_s16(vget_low_s16(o3), vget_low_s16(t3));
+        int32x4_t p3h = vmull_s16(vget_high_s16(o3), vget_high_s16(t3));
+        vst1q_s16(out,      vcombine_s16(vqmovn_s32(p0l), vqmovn_s32(p0h)));
+        vst1q_s16(out + 8,  vcombine_s16(vqmovn_s32(p1l), vqmovn_s32(p1h)));
+        vst1q_s16(out + 16, vcombine_s16(vqmovn_s32(p2l), vqmovn_s32(p2h)));
+        vst1q_s16(out + 24, vcombine_s16(vqmovn_s32(p3l), vqmovn_s32(p3h)));
+        out += 32;
+        nbytes -= 32 * sizeof(int16_t);
+    } while (nbytes > 0);
+#else
     int16_t tbl[32];
 
     memcpy(tbl, in, 32 * sizeof(int16_t));
@@ -722,6 +824,7 @@ void aUnkCmd19Impl(uint8_t f, uint16_t count, uint16_t out_addr, uint16_t in_add
         out += 32;
         nbytes -= 32 * sizeof(int16_t);
     } while (nbytes > 0);
+#endif
 }
 
 // From here on there are SIMD implementations of the various mixer functions.

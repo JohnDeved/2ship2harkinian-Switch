@@ -71,6 +71,7 @@ CrowdControl* CrowdControl::Instance;
 #include "2s2h/ShipUtils.h"
 #include "2s2h/ShipInit.hpp"
 #include "2s2h/PresetManager/PresetManager.h"
+#include "2s2h/collision_worker.h"
 
 // Resource Types/Factories
 #include <ship/resource/type/Blob.h>
@@ -737,6 +738,7 @@ extern "C" void InitOTR() {
 
     OTRMessage_Init();
     OTRAudio_Init();
+    TaskWorker_Init();
     OTRExtScanner();
     PlayerCustomFlipbooks_Patch();
 
@@ -776,6 +778,7 @@ extern "C" void SaveManager_ThreadPoolWait() {
 
 extern "C" void DeinitOTR() {
     SaveManager_ThreadPoolWait();
+    TaskWorker_Destroy();
     OTRAudio_Exit();
 #ifdef ENABLE_CROWD_CONTROL
     CrowdControl::Instance->Disable();
@@ -942,13 +945,24 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
 
 // C->C++ Bridge
 extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
+    // Wait for the *previous* frame's audio to finish before starting the new one.
+    // This lets audio processing overlap with game logic instead of blocking after rendering.
+    {
+        std::unique_lock<std::mutex> Lock(audio.mutex);
+        while (audio.processing) {
+            audio.cv_from_thread.wait(Lock);
+        }
+    }
+
+    // Now kick off this frame's audio processing
     {
         std::unique_lock<std::mutex> Lock(audio.mutex);
         audio.processing = true;
     }
-
     audio.cv_to_thread.notify_one();
-    std::vector<std::unordered_map<Mtx*, MtxF>> mtx_replacements;
+
+    thread_local std::vector<std::unordered_map<Mtx*, MtxF>> mtx_replacements;
+    mtx_replacements.clear();
     int target_fps = OTRGlobals::Instance->GetInterpolationFPS();
     static int last_fps;
     static int last_update_rate;
@@ -993,13 +1007,6 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
 
     last_fps = fps;
     last_update_rate = R_UPDATE_RATE;
-
-    {
-        std::unique_lock<std::mutex> Lock(audio.mutex);
-        while (audio.processing) {
-            audio.cv_from_thread.wait(Lock);
-        }
-    }
 
     bool curAltAssets = CVarGetInteger("gEnhancements.Mods.AlternateAssets", 0);
     if (prevAltAssets != curAltAssets) {

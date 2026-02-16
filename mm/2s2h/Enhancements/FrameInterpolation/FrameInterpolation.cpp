@@ -9,6 +9,9 @@
 #include "2s2h/BenPort.h"
 #include <sys_matrix.h>
 #include <z64skin_matrix.h>
+#if defined(__ARM_NEON) && defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 
 /*
 Frame interpolation.
@@ -186,11 +189,24 @@ struct InterpolateCtx {
     }
 
     void interpolate_mtxf(MtxF* res, MtxF* o, MtxF* n) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        float32x4_t vw = vdupq_n_f32(w);
+        float32x4_t vs = vdupq_n_f32(step);
+        const float* op = &o->mf[0][0];
+        const float* np = &n->mf[0][0];
+        float* rp = &res->mf[0][0];
+        for (int i = 0; i < 4; i++) {
+            float32x4_t ov = vld1q_f32(op + i * 4);
+            float32x4_t nv = vld1q_f32(np + i * 4);
+            vst1q_f32(rp + i * 4, vmlaq_f32(vmulq_f32(vw, ov), vs, nv));
+        }
+#else
         for (size_t i = 0; i < 4; i++) {
             for (size_t j = 0; j < 4; j++) {
                 res->mf[i][j] = w * o->mf[i][j] + step * n->mf[i][j];
             }
         }
+#endif
     }
 
     float lerp(f32 o, f32 n) {

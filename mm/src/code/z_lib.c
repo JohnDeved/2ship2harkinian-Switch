@@ -252,87 +252,7 @@ s16 Rand_S16OffsetStride(s16 base, s16 stride, s16 range) {
     return (s16)(Rand_ZeroOne() * range) * stride + base;
 }
 
-void Math_Vec3f_Copy(Vec3f* dest, Vec3f* src) {
-    f32 x = src->x;
-    f32 y = src->y;
-    f32 z = src->z;
-
-    dest->x = x;
-    dest->y = y;
-    dest->z = z;
-}
-
-void Math_Vec3s_Copy(Vec3s* dest, Vec3s* src) {
-    s16 x = src->x;
-    s16 y = src->y;
-    s16 z = src->z;
-
-    dest->x = x;
-    dest->y = y;
-    dest->z = z;
-}
-
-void Math_Vec3s_ToVec3f(Vec3f* dest, Vec3s* src) {
-    f32 x = src->x;
-    f32 y = src->y;
-    f32 z = src->z;
-
-    dest->x = x;
-    dest->y = y;
-    dest->z = z;
-}
-
-void Math_Vec3f_ToVec3s(Vec3s* dest, Vec3f* src) {
-    f32 x = src->x;
-    f32 y = src->y;
-    f32 z = src->z;
-
-    dest->x = x;
-    dest->y = y;
-    dest->z = z;
-}
-
-void Math_Vec3f_Sum(Vec3f* l, Vec3f* r, Vec3f* dest) {
-    dest->x = l->x + r->x;
-    dest->y = l->y + r->y;
-    dest->z = l->z + r->z;
-}
-
-void Math_Vec3f_Diff(Vec3f* l, Vec3f* r, Vec3f* dest) {
-    dest->x = l->x - r->x;
-    dest->y = l->y - r->y;
-    dest->z = l->z - r->z;
-}
-
-void Math_Vec3s_DiffToVec3f(Vec3f* dest, Vec3s* l, Vec3s* r) {
-    dest->x = l->x - r->x;
-    dest->y = l->y - r->y;
-    dest->z = l->z - r->z;
-}
-
-void Math_Vec3f_Scale(Vec3f* vec, f32 scale) {
-    vec->x *= scale;
-    vec->y *= scale;
-    vec->z *= scale;
-}
-
-void Math_Vec3f_ScaleAndStore(Vec3f* vec, f32 scale, Vec3f* dest) {
-    dest->x = vec->x * scale;
-    dest->y = vec->y * scale;
-    dest->z = vec->z * scale;
-}
-
-void Math_Vec3f_Lerp(Vec3f* a, Vec3f* b, f32 t, Vec3f* dest) {
-    dest->x = (b->x - a->x) * t + a->x;
-    dest->y = (b->y - a->y) * t + a->y;
-    dest->z = (b->z - a->z) * t + a->z;
-}
-
-void Math_Vec3f_SumScaled(Vec3f* a, Vec3f* b, f32 scale, Vec3f* dest) {
-    dest->x = b->x * scale + a->x;
-    dest->y = b->y * scale + a->y;
-    dest->z = b->z * scale + a->z;
-}
+/* Vec3f/Vec3s trivial utilities are now static inline in z64math.h */
 
 void Math_Vec3f_AddRand(Vec3f* orig, f32 scale, Vec3f* dest) {
     dest->x = Rand_CenteredFloat(scale) + orig->x;
@@ -400,9 +320,7 @@ f32 Math_Vec3f_StepToXZ(Vec3f* start, Vec3f* target, f32 speed) {
     return f2;
 }
 
-f32 Math_Vec3f_DiffY(Vec3f* a, Vec3f* b) {
-    return b->y - a->y;
-}
+/* Math_Vec3f_DiffY is now static inline in z64math.h */
 
 s16 Math_Vec3f_Yaw(Vec3f* a, Vec3f* b) {
     f32 f14 = b->x - a->x;
@@ -497,127 +415,15 @@ void IChain_Apply_Vec3s(u8* ptr, InitChainEntry* ichain) {
     v0->x = v1;
 }
 
-f32 Math_SmoothStepToF(f32* pValue, f32 target, f32 fraction, f32 step, f32 minStep) {
-    f32 stepSize;
+/* Math_SmoothStepToF is now static inline in z64math.h */
 
-    if (*pValue != target) {
-        stepSize = (target - *pValue) * fraction;
+/* Math_ApproachF is now static inline in z64math.h */
 
-        if ((stepSize >= minStep) || (stepSize <= -minStep)) {
-            if (stepSize > step) {
-                stepSize = step;
-            }
+/* Math_ApproachZeroF is now static inline in z64math.h */
 
-            if (stepSize < -step) {
-                stepSize = -step;
-            }
+/* Math_SmoothStepToS is now static inline in z64math.h */
 
-            *pValue += stepSize;
-        } else {
-            if (stepSize > 0) {
-                if (stepSize < minStep) {
-                    *pValue += minStep;
-
-                    if (target < *pValue) {
-                        *pValue = target;
-                    }
-                }
-            } else {
-                if (-minStep < stepSize) {
-                    *pValue += -minStep;
-
-                    if (*pValue < target) {
-                        *pValue = target;
-                    }
-                }
-            }
-        }
-    }
-
-    return fabsf(target - *pValue);
-}
-
-void Math_ApproachF(f32* pValue, f32 target, f32 scale, f32 maxStep) {
-    f32 f2;
-
-    if (*pValue != target) {
-        f2 = (target - *pValue) * scale;
-
-        if (f2 > maxStep) {
-            f2 = maxStep;
-        } else if (f2 < -maxStep) {
-            f2 = -maxStep;
-        }
-
-        *pValue += f2;
-    }
-}
-
-void Math_ApproachZeroF(f32* pValue, f32 scale, f32 maxStep) {
-    f32 f0 = *pValue * scale;
-
-    if (maxStep < f0) {
-        f0 = maxStep;
-    } else if (f0 < -maxStep) {
-        f0 = -maxStep;
-    }
-
-    *pValue = *pValue - f0;
-}
-
-s16 Math_SmoothStepToS(s16* pValue, s16 target, s16 scale, s16 step, s16 minStep) {
-    s16 stepSize = 0;
-    s16 diff = target - *pValue;
-
-    if (*pValue != target) {
-        stepSize = diff / scale;
-
-        if ((stepSize > minStep) || (stepSize < -minStep)) {
-            if (stepSize > step) {
-                stepSize = step;
-            }
-
-            if (stepSize < -step) {
-                stepSize = -step;
-            }
-
-            *pValue += stepSize;
-        } else {
-            if (diff >= 0) {
-                *pValue += minStep;
-
-                if ((s16)(target - *pValue) <= 0) {
-                    *pValue = target;
-                }
-            } else {
-                *pValue -= minStep;
-
-                if ((s16)(target - *pValue) >= 0) {
-                    *pValue = target;
-                }
-            }
-        }
-    }
-
-    return diff;
-}
-
-void Math_ApproachS(s16* pValue, s16 target, s16 scale, s16 maxStep) {
-    s16 diff = target - *pValue;
-    diff /= scale;
-
-    if (diff > maxStep) {
-        *pValue += maxStep;
-        return;
-    }
-
-    if (diff < -maxStep) {
-        *pValue -= maxStep;
-        return;
-    }
-
-    *pValue += diff;
-}
+/* Math_ApproachS is now static inline in z64math.h */
 
 void Color_RGBA8_Copy(Color_RGBA8* dst, Color_RGBA8* src) {
     dst->r = src->r;

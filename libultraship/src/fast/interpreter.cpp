@@ -8,6 +8,10 @@
 #include <assert.h>
 #include <stdio.h>
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
 #include <any>
 #include <map>
 #include <set>
@@ -528,23 +532,75 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
         fullImageLineSizeBytes = width * 2;
     }
 
-    uint32_t i = 0;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON fast path: when texture is contiguous in memory (stride == width),
+    // process 8 pixels at a time using SIMD bit manipulation.
+    if (fullImageLineSizeBytes == line_size_bytes) {
+        uint32_t totalPixels = width * height;
+        uint32_t i = 0;
+        const uint16_t* src16 = (const uint16_t*)addr;
+        uint8_t* dst = mTexUploadBuffer;
 
-    for (uint32_t y = 0; y < height; y++) {
-        for (uint32_t x = 0; x < width; x++) {
-            uint32_t clrIdx = (y * (fullImageLineSizeBytes / 2)) + (x);
+        // Process 8 RGBA5551 pixels at a time
+        for (; i + 8 <= totalPixels; i += 8, src16 += 8, dst += 32) {
+            // Load 8 big-endian uint16 pixels and byte-swap
+            uint8x16_t raw = vld1q_u8((const uint8_t*)src16);
+            uint8x16_t swapped = vrev16q_u8(raw); // byte-swap to little-endian
+            uint16x8_t pixels = vreinterpretq_u16_u8(swapped);
 
-            uint16_t col16 = (addr[2 * clrIdx] << 8) | addr[2 * clrIdx + 1];
+            // Extract 5-bit channels: R=bits[15:11], G=bits[10:6], B=bits[5:1], A=bit[0]
+            uint16x8_t r5 = vshrq_n_u16(pixels, 11);                         // R: top 5 bits
+            uint16x8_t g5 = vandq_u16(vshrq_n_u16(pixels, 6), vdupq_n_u16(0x1f));  // G: bits[10:6]
+            uint16x8_t b5 = vandq_u16(vshrq_n_u16(pixels, 1), vdupq_n_u16(0x1f));  // B: bits[5:1]
+            uint16x8_t a1 = vandq_u16(pixels, vdupq_n_u16(1));                // A: bit 0
+
+            // SCALE_5_8: (val * 255) / 31 ≈ (val * 255 + 15) >> 5 ... but use (val*0xFF)/0x1F
+            // More precisely: (val * 527 + 23) >> 6 gives exact SCALE_5_8 for 0-31
+            // But simplest exact match: val * 8 + (val >> 2) = val * 8.25 ≈ 255/31
+            // Use: (val << 3) | (val >> 2) which is the standard 5-to-8 expansion
+            uint8x8_t r8 = vmovn_u16(vorrq_u16(vshlq_n_u16(r5, 3), vshrq_n_u16(r5, 2)));
+            uint8x8_t g8 = vmovn_u16(vorrq_u16(vshlq_n_u16(g5, 3), vshrq_n_u16(g5, 2)));
+            uint8x8_t b8 = vmovn_u16(vorrq_u16(vshlq_n_u16(b5, 3), vshrq_n_u16(b5, 2)));
+            // Alpha: 0→0, 1→255
+            uint8x8_t a8 = vmovn_u16(vmulq_n_u16(a1, 255));
+
+            // Interleave R,G,B,A and store
+            uint8x8x4_t rgba = {{ r8, g8, b8, a8 }};
+            vst4_u8(dst, rgba);
+        }
+
+        // Scalar tail for remaining pixels
+        for (; i < totalPixels; i++, src16++, dst += 4) {
+            uint16_t col16 = (((const uint8_t*)src16)[0] << 8) | ((const uint8_t*)src16)[1];
             uint8_t a = col16 & 1;
             uint8_t r = col16 >> 11;
             uint8_t g = (col16 >> 6) & 0x1f;
             uint8_t b = (col16 >> 1) & 0x1f;
-            mTexUploadBuffer[4 * i + 0] = SCALE_5_8(r);
-            mTexUploadBuffer[4 * i + 1] = SCALE_5_8(g);
-            mTexUploadBuffer[4 * i + 2] = SCALE_5_8(b);
-            mTexUploadBuffer[4 * i + 3] = a ? 255 : 0;
+            dst[0] = SCALE_5_8(r);
+            dst[1] = SCALE_5_8(g);
+            dst[2] = SCALE_5_8(b);
+            dst[3] = a ? 255 : 0;
+        }
+    } else
+#endif
+    {
+        uint32_t i = 0;
+        for (uint32_t y = 0; y < height; y++) {
+            for (uint32_t x = 0; x < width; x++) {
+                uint32_t clrIdx = (y * (fullImageLineSizeBytes / 2)) + (x);
 
-            i++;
+                uint16_t col16 = (addr[2 * clrIdx] << 8) | addr[2 * clrIdx + 1];
+                uint8_t a = col16 & 1;
+                uint8_t r = col16 >> 11;
+                uint8_t g = (col16 >> 6) & 0x1f;
+                uint8_t b = (col16 >> 1) & 0x1f;
+                mTexUploadBuffer[4 * i + 0] = SCALE_5_8(r);
+                mTexUploadBuffer[4 * i + 1] = SCALE_5_8(g);
+                mTexUploadBuffer[4 * i + 2] = SCALE_5_8(b);
+                mTexUploadBuffer[4 * i + 3] = a ? 255 : 0;
+
+                i++;
+            }
         }
     }
 
@@ -612,6 +668,35 @@ void Interpreter::ImportTextureIA8(int tile, bool importReplacement) {
     uint32_t lineSizeBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
     SUPPORT_CHECK(fullImageLineSizeBytes == lineSizeBytes);
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    {
+        // NEON: process 16 IA8 pixels at a time.
+        // Each input byte: high nibble = intensity (4-bit), low nibble = alpha (4-bit)
+        // SCALE_4_8(x) = x * 0x11 = (x << 4) | x
+        uint32_t i = 0;
+        uint8_t* dst = mTexUploadBuffer;
+        for (; i + 16 <= sizeBytes; i += 16, dst += 64) {
+            uint8x16_t src = vld1q_u8(addr + i);
+            uint8x16_t intensity = vshrq_n_u8(src, 4);      // high nibble
+            uint8x16_t alpha = vandq_u8(src, vdupq_n_u8(0x0f)); // low nibble
+            // SCALE_4_8: (val << 4) | val
+            uint8x16_t i8 = vorrq_u8(vshlq_n_u8(intensity, 4), intensity);
+            uint8x16_t a8 = vorrq_u8(vshlq_n_u8(alpha, 4), alpha);
+            // Interleave as RGBA (R=G=B=intensity, A=alpha)
+            uint8x16x4_t rgba = {{ i8, i8, i8, a8 }};
+            vst4q_u8(dst, rgba);
+        }
+        // Scalar tail
+        for (; i < sizeBytes; i++) {
+            uint8_t intens = addr[i] >> 4;
+            uint8_t alph = addr[i] & 0xf;
+            mTexUploadBuffer[4 * i + 0] = SCALE_4_8(intens);
+            mTexUploadBuffer[4 * i + 1] = SCALE_4_8(intens);
+            mTexUploadBuffer[4 * i + 2] = SCALE_4_8(intens);
+            mTexUploadBuffer[4 * i + 3] = SCALE_4_8(alph);
+        }
+    }
+#else
     for (uint32_t i = 0; i < sizeBytes; i++) {
         uint8_t intensity = addr[i] >> 4;
         uint8_t alpha = addr[i] & 0xf;
@@ -623,6 +708,7 @@ void Interpreter::ImportTextureIA8(int tile, bool importReplacement) {
         mTexUploadBuffer[4 * i + 2] = SCALE_4_8(b);
         mTexUploadBuffer[4 * i + 3] = SCALE_4_8(alpha);
     }
+#endif
 
     uint32_t width = mRdp->texture_tile[tile].line_size_bytes;
     uint32_t height = sizeBytes / mRdp->texture_tile[tile].line_size_bytes;
@@ -727,6 +813,26 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
         mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].full_image_line_size_bytes;
     uint32_t line_size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    {
+        // NEON: duplicate each intensity byte into RGBA (all 4 channels identical)
+        uint32_t i = 0;
+        uint8_t* dst = mTexUploadBuffer;
+        for (; i + 16 <= sizeBytes; i += 16, dst += 64) {
+            uint8x16_t src = vld1q_u8(addr + i);
+            uint8x16x4_t rgba = {{ src, src, src, src }};
+            vst4q_u8(dst, rgba);
+        }
+        // Scalar tail
+        for (; i < sizeBytes; i++) {
+            uint8_t intensity = addr[i];
+            mTexUploadBuffer[4 * i + 0] = intensity;
+            mTexUploadBuffer[4 * i + 1] = intensity;
+            mTexUploadBuffer[4 * i + 2] = intensity;
+            mTexUploadBuffer[4 * i + 3] = intensity;
+        }
+    }
+#else
     for (uint32_t i = 0; i < sizeBytes; i++) {
         uint8_t intensity = addr[i];
         mTexUploadBuffer[4 * i + 0] = intensity;
@@ -734,6 +840,7 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
         mTexUploadBuffer[4 * i + 2] = intensity;
         mTexUploadBuffer[4 * i + 3] = intensity;
     }
+#endif
 
     uint32_t width = mRdp->texture_tile[tile].line_size_bytes;
     uint32_t height = sizeBytes / mRdp->texture_tile[tile].line_size_bytes;
@@ -1075,6 +1182,21 @@ void Interpreter::TransposedMatrixMul(float res[3], const float a[3], const floa
 }
 
 void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[4][4]) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON 4×4 matrix multiply: process one result row at a time.
+    // Each result row = a[i][0]*b_row0 + a[i][1]*b_row1 + a[i][2]*b_row2 + a[i][3]*b_row3
+    float32x4_t b0 = vld1q_f32(b[0]);
+    float32x4_t b1 = vld1q_f32(b[1]);
+    float32x4_t b2 = vld1q_f32(b[2]);
+    float32x4_t b3 = vld1q_f32(b[3]);
+    for (int i = 0; i < 4; i++) {
+        float32x4_t row = vmulq_n_f32(b0, a[i][0]);
+        row = vmlaq_n_f32(row, b1, a[i][1]);
+        row = vmlaq_n_f32(row, b2, a[i][2]);
+        row = vmlaq_n_f32(row, b3, a[i][3]);
+        vst1q_f32(res[i], row);
+    }
+#else
     float tmp[4][4];
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
@@ -1082,6 +1204,7 @@ void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[
         }
     }
     memcpy(res, tmp, sizeof(tmp));
+#endif
 }
 
 void Interpreter::CalculateNormalDir(const F3DLight_t* light, float coeffs[3]) {
@@ -1195,21 +1318,57 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
             return;
         }
 
-        float x = v->ob[0] * mRsp->MP_matrix[0][0] + v->ob[1] * mRsp->MP_matrix[1][0] +
+        float x, y, z, w;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: transform vertex position by MP_matrix (column-major dot products)
+        // result[j] = ob[0]*M[0][j] + ob[1]*M[1][j] + ob[2]*M[2][j] + M[3][j]
+        {
+            float32x4_t r0 = vld1q_f32(mRsp->MP_matrix[0]);
+            float32x4_t r1 = vld1q_f32(mRsp->MP_matrix[1]);
+            float32x4_t r2 = vld1q_f32(mRsp->MP_matrix[2]);
+            float32x4_t r3 = vld1q_f32(mRsp->MP_matrix[3]);
+            float32x4_t res = vmulq_n_f32(r0, (float)v->ob[0]);
+            res = vmlaq_n_f32(res, r1, (float)v->ob[1]);
+            res = vmlaq_n_f32(res, r2, (float)v->ob[2]);
+            res = vaddq_f32(res, r3);
+            x = vgetq_lane_f32(res, 0);
+            y = vgetq_lane_f32(res, 1);
+            z = vgetq_lane_f32(res, 2);
+            w = vgetq_lane_f32(res, 3);
+        }
+#else
+        x = v->ob[0] * mRsp->MP_matrix[0][0] + v->ob[1] * mRsp->MP_matrix[1][0] +
                   v->ob[2] * mRsp->MP_matrix[2][0] + mRsp->MP_matrix[3][0];
-        float y = v->ob[0] * mRsp->MP_matrix[0][1] + v->ob[1] * mRsp->MP_matrix[1][1] +
+        y = v->ob[0] * mRsp->MP_matrix[0][1] + v->ob[1] * mRsp->MP_matrix[1][1] +
                   v->ob[2] * mRsp->MP_matrix[2][1] + mRsp->MP_matrix[3][1];
-        float z = v->ob[0] * mRsp->MP_matrix[0][2] + v->ob[1] * mRsp->MP_matrix[1][2] +
+        z = v->ob[0] * mRsp->MP_matrix[0][2] + v->ob[1] * mRsp->MP_matrix[1][2] +
                   v->ob[2] * mRsp->MP_matrix[2][2] + mRsp->MP_matrix[3][2];
-        float w = v->ob[0] * mRsp->MP_matrix[0][3] + v->ob[1] * mRsp->MP_matrix[1][3] +
+        w = v->ob[0] * mRsp->MP_matrix[0][3] + v->ob[1] * mRsp->MP_matrix[1][3] +
                   v->ob[2] * mRsp->MP_matrix[2][3] + mRsp->MP_matrix[3][3];
+#endif
 
         float world_pos[3] = { 0.0 };
         if (mRsp->geometry_mode & G_LIGHTING_POSITIONAL) {
             float(*mtx)[4] = mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1];
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            {
+                float32x4_t r0 = vld1q_f32(mtx[0]);
+                float32x4_t r1 = vld1q_f32(mtx[1]);
+                float32x4_t r2 = vld1q_f32(mtx[2]);
+                float32x4_t r3 = vld1q_f32(mtx[3]);
+                float32x4_t res = vmulq_n_f32(r0, (float)v->ob[0]);
+                res = vmlaq_n_f32(res, r1, (float)v->ob[1]);
+                res = vmlaq_n_f32(res, r2, (float)v->ob[2]);
+                res = vaddq_f32(res, r3);
+                world_pos[0] = vgetq_lane_f32(res, 0);
+                world_pos[1] = vgetq_lane_f32(res, 1);
+                world_pos[2] = vgetq_lane_f32(res, 2);
+            }
+#else
             world_pos[0] = v->ob[0] * mtx[0][0] + v->ob[1] * mtx[1][0] + v->ob[2] * mtx[2][0] + mtx[3][0];
             world_pos[1] = v->ob[0] * mtx[0][1] + v->ob[1] * mtx[1][1] + v->ob[2] * mtx[2][1] + mtx[3][1];
             world_pos[2] = v->ob[0] * mtx[0][2] + v->ob[1] * mtx[1][2] + v->ob[2] * mtx[2][2] + mtx[3][2];
+#endif
         }
 
         x = AdjXForAspectRatio(x);

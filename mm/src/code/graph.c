@@ -29,6 +29,7 @@ OSTime sGraphPrevUpdateEndTime;
 #include "overlays/gamestates/ovl_title/z_title.h"
 #include "z_title_setup.h"
 #include "BenPort.h"
+#include "2s2h/DeveloperTools/FrameProfiler.h"
 
 void Graph_StartFrame();
 void Graph_ProcessGfxCommands(Gfx* commands);
@@ -256,8 +257,13 @@ void Graph_UpdateGame(GameState* gameState) {
  */
 void Graph_ExecuteAndDraw(GraphicsContext* gfxCtx, GameState* gameState) {
     u32 problem;
+
+    FrameProfiler_StartPhase(PROFILE_PHASE_TOTAL_FRAME);
+
     if (GfxDebuggerIsDebugging()) {
         Graph_ProcessGfxCommands(&gGfxMasterDL->taskStart[0]);
+        FrameProfiler_EndPhase(PROFILE_PHASE_TOTAL_FRAME);
+        FrameProfiler_EndFrame();
         return;
     }
 
@@ -351,6 +357,9 @@ void Graph_ExecuteAndDraw(GraphicsContext* gfxCtx, GameState* gameState) {
         }
         sGraphPrevUpdateEndTime = time;
     }
+
+    FrameProfiler_EndPhase(PROFILE_PHASE_TOTAL_FRAME);
+    FrameProfiler_EndFrame();
 }
 
 void Graph_Update(GraphicsContext* gfxCtx, GameState* gameState) {

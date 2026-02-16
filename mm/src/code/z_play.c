@@ -1660,8 +1660,6 @@ void Play_Main(GameState* thisx) {
     static Input* prevInput = NULL;
     PlayState* this = (PlayState*)thisx;
 
-    FrameProfiler_StartPhase(PROFILE_PHASE_TOTAL_FRAME);
-
     prevInput = CONTROLLER1(&this->state);
     DebugDisplay_Init();
 
@@ -1689,9 +1687,6 @@ void Play_Main(GameState* thisx) {
 
     CutsceneManager_Update();
     CutsceneManager_ClearWaiting();
-
-    FrameProfiler_EndPhase(PROFILE_PHASE_TOTAL_FRAME);
-    FrameProfiler_EndFrame();
 }
 
 bool Play_InCsMode(PlayState* this) {

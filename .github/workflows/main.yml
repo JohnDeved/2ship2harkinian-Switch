@@ -18,7 +18,8 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         max-size: "500M"
-        key: ${{ runner.os }}-otr-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp') }}
+        verbose: 2
+        key: ${{ runner.os }}-otr-ccache-${{ hashFiles('CMakeLists.txt', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-otr-ccache-
     - name: Install dependencies
@@ -29,7 +30,9 @@ jobs:
       id: cache-deps-otr
       uses: actions/cache@v5
       with:
-        key: ${{ runner.os }}-deps-${{ hashFiles('mm/**/CMakeLists.txt') }}
+        key: ${{ runner.os }}-deps-${{ hashFiles('CMakeLists.txt', 'mm/**/CMakeLists.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-deps-
         path: deps
     - name: Create deps folder
       run: mkdir -p deps
@@ -62,10 +65,13 @@ jobs:
     - name: Generate 2ship.o2r
       run: |
         export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+        export CCACHE_LOGFILE=${{ github.workspace }}/ccache.log
         ccache --zero-stats
         cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release
         cmake --build build-cmake --config Release --target Generate2ShipOtr --parallel 10
         ccache --show-stats
+        echo "=== ccache log (last 50 lines) ==="
+        tail -50 ccache.log || true
     - name: Upload 2ship.o2r
       uses: actions/upload-artifact@v4
       with:
@@ -86,7 +92,8 @@ jobs:
       with:
         create-symlink: true
         max-size: "1G"
-        key: ${{ runner.os }}-14-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'mm/**/*.m', 'mm/**/*.mm') }}
+        verbose: 2
+        key: ${{ runner.os }}-14-ccache-${{ hashFiles('CMakeLists.txt', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'mm/**/*.m', 'mm/**/*.mm', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp', 'libultraship/**/*.m', 'libultraship/**/*.mm') }}
         restore-keys: |
           ${{ runner.os }}-14-ccache-
     # Needed to apply sudo for macports cache restore
@@ -125,10 +132,13 @@ jobs:
     - name: Build 2Ship
       run: |
         export PATH="/usr/lib/ccache:/opt/homebrew/opt/ccache/libexec:/usr/local/opt/ccache/libexec:$PATH"
+        export CCACHE_LOGFILE=${{ github.workspace }}/ccache.log
         ccache --zero-stats
         cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
         cmake --build build-cmake --config Release --parallel 10
         ccache --show-stats
+        echo "=== ccache log (last 50 lines) ==="
+        tail -50 ccache.log || true
         (cd build-cmake && cpack)
 
         mv _packages/*.dmg 2Ship.dmg
@@ -157,14 +167,17 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         max-size: "1G"
-        key: ${{ runner.os }}-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp') }}
+        verbose: 2
+        key: ${{ runner.os }}-ccache-${{ hashFiles('CMakeLists.txt', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-
     - name: Restore Cached deps folder
       id: cache-deps-linux
       uses: actions/cache@v5
       with:
-        key: ${{ runner.os }}-deps-${{ hashFiles('mm/**/CMakeLists.txt') }}
+        key: ${{ runner.os }}-deps-${{ hashFiles('CMakeLists.txt', 'mm/**/CMakeLists.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-deps-
         path: deps
     - name: Create deps folder
       run: mkdir -p deps
@@ -216,10 +229,13 @@ jobs:
     - name: Build 2Ship
       run: |
         export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+        export CCACHE_LOGFILE=${{ github.workspace }}/ccache.log
         ccache --zero-stats
         cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release -DBUILD_REMOTE_CONTROL=1
         cmake --build build-cmake --config Release --parallel 10
         ccache --show-stats
+        echo "=== ccache log (last 50 lines) ==="
+        tail -50 ccache.log || true
         (cd build-cmake && cpack -G External)
 
         mv README.md readme.txt
@@ -262,7 +278,8 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         max-size: "1G"
-        key: ${{ runner.os }}-switch-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp') }}
+        verbose: 2
+        key: ${{ runner.os }}-switch-ccache-${{ hashFiles('CMakeLists.txt', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-switch-ccache-
     - name: Build 2ship
@@ -271,11 +288,14 @@ jobs:
         CCACHE_SLOPPINESS: include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
         CCACHE_BASEDIR: ${{ github.workspace }}
         CCACHE_NOHASHDIR: 1
+        CCACHE_LOGFILE: ${{ github.workspace }}/ccache.log
       run: |
         ccache --zero-stats
         cmake -H. -Bbuild-switch -GNinja -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/Switch.cmake -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
         cmake --build build-switch --target 2ship_nro --config Release --parallel 10
         ccache --show-stats
+        echo "=== ccache log (last 50 lines) ==="
+        tail -50 ccache.log || true
         wget -O gamecontrollerdb.txt https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt
 
         mv build-switch/mm/*.nro 2ship.nro
@@ -310,14 +330,15 @@ jobs:
       with:
         variant: sccache
         max-size: "2G"
-        key: ${{ runner.os }}-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp') }}
+        verbose: 2
+        key: ${{ runner.os }}-ccache-${{ hashFiles('CMakeLists.txt', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-
     - name: Restore Cached VCPKG folder
       id: cache-vcpkg
       uses: actions/cache@v5
       with:
-        key: ${{ runner.os }}-vcpkg-${{ hashFiles('mm/**/CMakeLists.txt') }}
+        key: ${{ runner.os }}-vcpkg-${{ hashFiles('CMakeLists.txt', 'mm/**/CMakeLists.txt') }}
         restore-keys: |
           ${{ runner.os }}-vcpkg-
         path: vcpkg

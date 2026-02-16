@@ -1442,11 +1442,13 @@ void Play_DrawMain(PlayState* this) {
                         gSPSetExtraGeometryMode(POLY_XLU_DISP++, G_EX_ALWAYS_EXECUTE_BRANCH);
                     }
 
+                    FrameProfiler_StartPhase(PROFILE_PHASE_SCENE_DRAW);
                     Scene_Draw(this);
                     if (this->roomCtx.unk78) {
                         Room_Draw(this, &this->roomCtx.curRoom, roomDrawFlags & 3);
                         Room_Draw(this, &this->roomCtx.prevRoom, roomDrawFlags & 3);
                     }
+                    FrameProfiler_EndPhase(PROFILE_PHASE_SCENE_DRAW);
 
                     if (CVarGetInteger("gEnhancements.Graphics.DisableSceneGeometryDistanceCheck", 0)) {
                         gSPClearExtraGeometryMode(POLY_OPA_DISP++, G_EX_ALWAYS_EXECUTE_BRANCH);
@@ -1669,7 +1671,9 @@ void Play_Main(GameState* thisx) {
         if (1) {
             this->state.gfxCtx = NULL;
         }
+        FrameProfiler_StartPhase(PROFILE_PHASE_PLAY_UPDATE);
         Play_Update(this);
+        FrameProfiler_EndPhase(PROFILE_PHASE_PLAY_UPDATE);
         this->state.gfxCtx = gfxCtx;
     }
 
@@ -1679,9 +1683,11 @@ void Play_Main(GameState* thisx) {
         if (1) {
             *CONTROLLER1(&this->state) = D_801F6C18;
         }
+        FrameProfiler_StartPhase(PROFILE_PHASE_PLAY_DRAW);
         FrameInterpolation_StartRecord();
         Play_Draw(this);
         FrameInterpolation_StopRecord();
+        FrameProfiler_EndPhase(PROFILE_PHASE_PLAY_DRAW);
         *CONTROLLER1(&this->state) = input;
     }
 

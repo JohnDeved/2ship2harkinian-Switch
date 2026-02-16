@@ -974,12 +974,14 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
 extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     // Wait for the *previous* frame's audio to finish before starting the new one.
     // This lets audio processing overlap with game logic instead of blocking after rendering.
+    FrameProfiler_StartPhase(PROFILE_PHASE_AUDIO_WAIT);
     {
         std::unique_lock<std::mutex> Lock(audio.mutex);
         while (audio.processing) {
             audio.cv_from_thread.wait(Lock);
         }
     }
+    FrameProfiler_EndPhase(PROFILE_PHASE_AUDIO_WAIT);
 
     // Now kick off this frame's audio processing
     {
@@ -1033,7 +1035,9 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     }
 
     FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
+    FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
     RunCommands(commands, mtx_replacements);
+    FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
     FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
 
     last_fps = fps;

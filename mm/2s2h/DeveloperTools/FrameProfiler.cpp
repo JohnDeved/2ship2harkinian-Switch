@@ -100,8 +100,8 @@ extern "C" int FrameProfiler_IsEnabled(void) {
 // ── Phase names for display ────────────────────────────────────────────
 
 static const char* sPhaseNames[PROFILE_PHASE_MAX] = {
-    "Collision AT", "Collision OC", "Collision Damage", "Actor Update", "Effects",
-    "Actor Draw",   "Frame Interp", "GFX Commands",     "Total Frame",
+    "Collision AT", "Collision OC", "Collision Damage", "Actor Update", "Effects",    "Actor Draw",   "Scene Draw",
+    "Play Update",  "Play Draw",    "Frame Interp",     "Audio Wait",   "DL Process", "GFX Commands", "Total Frame",
 };
 
 // Core assignment labels for display
@@ -112,7 +112,12 @@ static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
     "Core 0", // Actor Update
     "Core 1", // Effects (worker thread)
     "Core 0", // Actor Draw
+    "Core 0", // Scene Draw
+    "Core 0", // Play Update
+    "Core 0", // Play Draw
     "Core 0", // Frame Interp
+    "Core 0", // Audio Wait
+    "Core 0", // DL Process
     "Core 0", // GFX Commands
     "Core 0", // Total
 };
@@ -163,12 +168,13 @@ static void FrameProfiler_ExportSnapshot(void) {
     }
     out << std::endl;
 
-    float core0Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_UPDATE) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_DRAW) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_GFX_COMMANDS);
+    float core0Ms =
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_UPDATE) +
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_DRAW) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_SCENE_DRAW) +
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_AUDIO_WAIT);
     float core1Ms =
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_EFFECTS);
     float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
@@ -236,12 +242,13 @@ void FrameProfilerWindow::DrawElement() {
     ImGui::Separator();
 
     // Breakdown summary
-    float core0Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_UPDATE) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_DRAW) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_GFX_COMMANDS);
+    float core0Ms =
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_UPDATE) +
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_DRAW) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_SCENE_DRAW) +
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_AUDIO_WAIT);
     float core1Ms =
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_EFFECTS);
 

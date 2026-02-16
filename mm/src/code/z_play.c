@@ -49,6 +49,27 @@ u8 sMotionBlurStatus;
 #include "2s2h/collision_worker.h"
 #include <string.h>
 
+// Task wrapper for CollisionCheck_OC on the worker thread
+typedef struct {
+    PlayState* play;
+    CollisionCheckContext* colChkCtx;
+} OcTaskArgs;
+
+static void OcTask(void* arg) {
+    OcTaskArgs* args = (OcTaskArgs*)arg;
+    CollisionCheck_OC(args->play, args->colChkCtx);
+}
+
+// Task wrapper for running all effect updates on the worker thread.
+// Effect_UpdateAll, EffectSs_UpdateAll, and EffFootmark_Update are independent
+// from camera/environment/UI updates, so they can run concurrently.
+static void EffectsTask(void* arg) {
+    PlayState* play = (PlayState*)arg;
+    Effect_UpdateAll(play);
+    EffectSs_UpdateAll(play);
+    EffFootmark_Update(play);
+}
+
 s32 gDbgCamEnabled = false;
 u8 D_801D0D54 = false;
 
@@ -1046,9 +1067,10 @@ void Play_UpdateMain(PlayState* this) {
                 } else {
                     Room_ProcessRoomRequest(this, &this->roomCtx);
                     // Run OC (O(n^2) pairwise) on worker thread while AT runs on main thread
-                    CollisionWorker_SubmitOC(this, &this->colChkCtx);
+                    OcTaskArgs ocArgs = { this, &this->colChkCtx };
+                    TaskWorker_Submit(OcTask, &ocArgs);
                     CollisionCheck_AT(this, &this->colChkCtx);
-                    CollisionWorker_WaitOC();
+                    TaskWorker_Wait();
                     CollisionCheck_Damage(this, &this->colChkCtx);
                     CollisionCheck_ClearContext(this, &this->colChkCtx);
                     if (!this->haltAllActors) {
@@ -1056,9 +1078,9 @@ void Play_UpdateMain(PlayState* this) {
                     }
                     Cutscene_UpdateManual(this, &this->csCtx);
                     Cutscene_UpdateScripted(this, &this->csCtx);
-                    Effect_UpdateAll(this);
-                    EffectSs_UpdateAll(this);
-                    EffFootmark_Update(this);
+                    // Run effects on worker thread while main thread continues
+                    // with room/skybox/message/interface updates (independent systems)
+                    TaskWorker_Submit(EffectsTask, this);
                 }
             } else {
                 Rumble_SetUpdateEnabled(false);
@@ -1102,6 +1124,10 @@ void Play_UpdateMain(PlayState* this) {
 
     Environment_Update(this, &this->envCtx, &this->lightCtx, &this->pauseCtx, &this->msgCtx, &this->gameOverCtx,
                        this->state.gfxCtx);
+
+    // Wait for effects worker to complete (submitted after cutscene updates above).
+    // Effects must finish before the draw phase begins.
+    TaskWorker_Wait();
 
     if (this->sramCtx.status != 0) {
         if (GameInteractor_Should(VB_SAVE_USE_OWL_SAVE_TIMING, gSaveContext.save.isOwlSave)) {

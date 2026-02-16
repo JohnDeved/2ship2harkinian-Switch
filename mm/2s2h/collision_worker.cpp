@@ -4,8 +4,6 @@
 #include <condition_variable>
 #include <thread>
 
-extern "C" void CollisionCheck_OC(struct PlayState* play, CollisionCheckContext* colChkCtx);
-
 static struct {
     std::thread thread;
     std::mutex mutex;
@@ -15,70 +13,70 @@ static struct {
     bool has_work{false};
     bool work_done{true};
 
-    // Work parameters
-    struct PlayState* play;
-    CollisionCheckContext* colChkCtx;
-} oc_worker;
+    // Current task
+    void (*task)(void*);
+    void* arg;
+} worker;
 
-static void CollisionWorker_Thread() {
-    std::unique_lock<std::mutex> lock(oc_worker.mutex);
-    while (oc_worker.running) {
-        while (!oc_worker.has_work && oc_worker.running) {
-            oc_worker.cv_submit.wait(lock);
+static void TaskWorker_Thread() {
+    std::unique_lock<std::mutex> lock(worker.mutex);
+    while (worker.running) {
+        while (!worker.has_work && worker.running) {
+            worker.cv_submit.wait(lock);
         }
-        if (!oc_worker.running) {
+        if (!worker.running) {
             break;
         }
 
-        // Capture work params and release lock during execution
-        struct PlayState* play = oc_worker.play;
-        CollisionCheckContext* colChkCtx = oc_worker.colChkCtx;
+        // Capture task and release lock during execution
+        void (*task)(void*) = worker.task;
+        void* arg = worker.arg;
         lock.unlock();
 
-        CollisionCheck_OC(play, colChkCtx);
+        task(arg);
 
         lock.lock();
-        oc_worker.has_work = false;
-        oc_worker.work_done = true;
-        oc_worker.cv_done.notify_one();
+        worker.has_work = false;
+        worker.work_done = true;
+        worker.cv_done.notify_one();
     }
 }
 
-static std::once_flag oc_init_flag;
+static std::once_flag worker_init_flag;
 
-extern "C" void CollisionWorker_Init(void) {
-    std::call_once(oc_init_flag, [] {
-        std::unique_lock<std::mutex> lock(oc_worker.mutex);
-        oc_worker.running = true;
-        oc_worker.thread = std::thread(CollisionWorker_Thread);
+extern "C" void TaskWorker_Init(void) {
+    std::call_once(worker_init_flag, [] {
+        std::unique_lock<std::mutex> lock(worker.mutex);
+        worker.running = true;
+        worker.thread = std::thread(TaskWorker_Thread);
     });
 }
 
-extern "C" void CollisionWorker_Destroy(void) {
+extern "C" void TaskWorker_Destroy(void) {
     {
-        std::unique_lock<std::mutex> lock(oc_worker.mutex);
-        oc_worker.running = false;
+        std::unique_lock<std::mutex> lock(worker.mutex);
+        worker.running = false;
     }
-    oc_worker.cv_submit.notify_all();
-    if (oc_worker.thread.joinable()) {
-        oc_worker.thread.join();
+    worker.cv_submit.notify_all();
+    if (worker.thread.joinable()) {
+        worker.thread.join();
     }
 }
 
-extern "C" void CollisionWorker_SubmitOC(struct PlayState* play, CollisionCheckContext* colChkCtx) {
+extern "C" void TaskWorker_Submit(void (*task)(void*), void* arg) {
     {
-        std::unique_lock<std::mutex> lock(oc_worker.mutex);
-        oc_worker.play = play;
-        oc_worker.colChkCtx = colChkCtx;
-        oc_worker.has_work = true;
-        oc_worker.work_done = false;
+        std::unique_lock<std::mutex> lock(worker.mutex);
+        worker.task = task;
+        worker.arg = arg;
+        worker.has_work = true;
+        worker.work_done = false;
     }
-    oc_worker.cv_submit.notify_one();
+    worker.cv_submit.notify_one();
 }
 
-extern "C" void CollisionWorker_WaitOC(void) {
-    std::unique_lock<std::mutex> lock(oc_worker.mutex);
-    while (!oc_worker.work_done) {
-        oc_worker.cv_done.wait(lock);
+extern "C" void TaskWorker_Wait(void) {
+    std::unique_lock<std::mutex> lock(worker.mutex);
+    while (!worker.work_done) {
+        worker.cv_done.wait(lock);
     }
 }

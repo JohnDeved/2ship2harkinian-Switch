@@ -738,7 +738,7 @@ extern "C" void InitOTR() {
 
     OTRMessage_Init();
     OTRAudio_Init();
-    CollisionWorker_Init();
+    TaskWorker_Init();
     OTRExtScanner();
     PlayerCustomFlipbooks_Patch();
 
@@ -778,7 +778,7 @@ extern "C" void SaveManager_ThreadPoolWait() {
 
 extern "C" void DeinitOTR() {
     SaveManager_ThreadPoolWait();
-    CollisionWorker_Destroy();
+    TaskWorker_Destroy();
     OTRAudio_Exit();
 #ifdef ENABLE_CROWD_CONTROL
     CrowdControl::Instance->Disable();

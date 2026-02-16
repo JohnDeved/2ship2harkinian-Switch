@@ -8,25 +8,34 @@ extern "C" {
 #endif
 
 /**
- * Initialize the collision worker thread. Called once at startup.
+ * General-purpose worker thread for offloading CPU work to idle cores.
+ * Used for collision, effects, and other independent update phases.
+ * Only one task may be in-flight at a time (submit → wait → submit → wait).
  */
-void CollisionWorker_Init(void);
 
 /**
- * Shutdown the collision worker thread. Called at exit.
+ * Initialize the worker thread. Called once at startup.
  */
-void CollisionWorker_Destroy(void);
+void TaskWorker_Init(void);
 
 /**
- * Submit CollisionCheck_OC to run on the worker thread.
- * Returns immediately; use CollisionWorker_WaitOC() to synchronize.
+ * Shutdown the worker thread. Called at exit.
  */
-void CollisionWorker_SubmitOC(struct PlayState* play, CollisionCheckContext* colChkCtx);
+void TaskWorker_Destroy(void);
 
 /**
- * Wait for the OC collision work to complete.
+ * Submit a task to run on the worker thread.
+ * Only one task can be in-flight at a time. The caller must call
+ * TaskWorker_Wait() before submitting another task.
+ * @param task  Function pointer to execute on the worker thread
+ * @param arg   Opaque argument passed to the task function
  */
-void CollisionWorker_WaitOC(void);
+void TaskWorker_Submit(void (*task)(void*), void* arg);
+
+/**
+ * Block until the current in-flight task completes.
+ */
+void TaskWorker_Wait(void);
 
 #ifdef __cplusplus
 }

@@ -675,6 +675,24 @@ void BenMenu::AddSettings() {
                      .Format("%.1f")
                      .Step(0.1f));
 
+    AddWidget(path, "FPS Counter", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Show FPS", WIDGET_CVAR_CHECKBOX)
+        .CVar("gWindows.FpsOverlay")
+        .WindowName("FPS Overlay")
+        .Options(CheckboxOptions().Tooltip("Displays a real-time FPS counter on screen."));
+    AddWidget(path, "Hide Window Background", WIDGET_CVAR_CHECKBOX)
+        .CVar("gFpsOverlay.Background")
+        .Options(CheckboxOptions().Tooltip("Hides the background of the FPS Overlay window."));
+    AddWidget(path, "Scale: %.1fx", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gFpsOverlay.Scale")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjust the Scale for the FPS Overlay window.")
+                     .Min(1.0f)
+                     .Max(5.0f)
+                     .DefaultValue(1.0f)
+                     .Format("%.1f")
+                     .Step(0.1f));
+
     path.column = SECTION_COLUMN_1;
     path.sidebarName = "Presets";
     AddSidebarEntry("Settings", "Presets", 1);

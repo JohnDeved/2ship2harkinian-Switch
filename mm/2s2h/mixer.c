@@ -174,6 +174,27 @@ void aInterleaveImpl(uint16_t dest, uint16_t left, uint16_t right, uint16_t c) {
     int16_t* l = BUF_S16(left);
     int16_t* r = BUF_S16(right);
     int16_t* d = BUF_S16(dest);
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    while (count >= 2) {
+        const int16x8_t lv = vld1q_s16(l);
+        const int16x8_t rv = vld1q_s16(r);
+        const int16x8x2_t zipped = vzipq_s16(lv, rv);
+        vst1q_s16(d, zipped.val[0]);
+        vst1q_s16(d + 8, zipped.val[1]);
+        l += 8;
+        r += 8;
+        d += 16;
+        count -= 2;
+    }
+    if (count > 0) {
+        const int16x4_t lv = vld1_s16(l);
+        const int16x4_t rv = vld1_s16(r);
+        const int16x4x2_t zipped = vzip_s16(lv, rv);
+        vst1_s16(d, zipped.val[0]);
+        vst1_s16(d + 4, zipped.val[1]);
+    }
+    return;
+#endif
     while (count > 0) {
         int16_t l0 = *l++;
         int16_t l1 = *l++;
@@ -645,6 +666,20 @@ void aFilterImpl(uint8_t flags, uint16_t count_or_buf, int16_t* state_or_filter)
 
         do {
             memcpy(tmp + 8, buf, 8 * sizeof(int16_t));
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            {
+                int16_t rev[8];
+                for (int k = 0; k < 8; k++) rev[k] = rspa.filter[7 - k];
+                const int16x8_t filt_rev = vld1q_s16(rev);
+                for (int i = 0; i < 8; i++) {
+                    const int16x8_t s = vld1q_s16(&tmp[i]);
+                    int32x4_t prod = vmull_s16(vget_low_s16(s), vget_low_s16(filt_rev));
+                    prod = vmlal_s16(prod, vget_high_s16(s), vget_high_s16(filt_rev));
+                    int64_t sample = 0x4000 + (int64_t)vaddvq_s32(prod);
+                    buf[i] = clamp16((int32_t)(sample >> 15));
+                }
+            }
+#else
             for (int i = 0; i < 8; i++) {
                 int64_t sample = 0x4000; // round term
                 for (int j = 0; j < 8; j++) {
@@ -652,6 +687,7 @@ void aFilterImpl(uint8_t flags, uint16_t count_or_buf, int16_t* state_or_filter)
                 }
                 buf[i] = clamp16((int32_t)(sample >> 15));
             }
+#endif
             memcpy(tmp, tmp + 8, 8 * sizeof(int16_t));
 
             buf += 8;

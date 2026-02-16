@@ -19,7 +19,16 @@ execute_process(
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_BRANCH
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
 )
+
+# In CI (detached HEAD), git branch --show-current returns empty.
+# Fall back to GITHUB_REF_NAME which GitHub Actions sets automatically.
+if(NOT GIT_BRANCH OR GIT_BRANCH STREQUAL "")
+    if(DEFINED ENV{GITHUB_REF_NAME})
+        set(GIT_BRANCH "$ENV{GITHUB_REF_NAME}")
+    endif()
+endif()
 
 set(CMAKE_PROJECT_GIT_BRANCH "${GIT_BRANCH}" CACHE STRING "Git branch" FORCE)
 
@@ -28,7 +37,15 @@ execute_process(
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE GIT_COMMIT_HASH
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
 )
+
+# Fall back to GITHUB_SHA if git rev-parse fails
+if(NOT GIT_COMMIT_HASH OR GIT_COMMIT_HASH STREQUAL "")
+    if(DEFINED ENV{GITHUB_SHA})
+        set(GIT_COMMIT_HASH "$ENV{GITHUB_SHA}")
+    endif()
+endif()
 
 # Get only the first 7 characters of the hash
 string(SUBSTRING "${GIT_COMMIT_HASH}" 0 7 SHORT_COMMIT_HASH)

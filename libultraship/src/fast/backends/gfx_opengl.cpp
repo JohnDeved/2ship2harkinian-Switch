@@ -61,6 +61,14 @@ void GfxRenderingAPIOGL::SetUniforms(ShaderProgram* prg) const {
 
 void GfxRenderingAPIOGL::SetPerDrawUniforms() {
     if (mCurrentShaderProgram->usedTextures[0] || mCurrentShaderProgram->usedTextures[1]) {
+        // Skip redundant uniform uploads when texture IDs haven't changed
+        if (mCurrentTextureIds[0] == mLastUniformTextureIds[0] &&
+            mCurrentTextureIds[1] == mLastUniformTextureIds[1]) {
+            return;
+        }
+        mLastUniformTextureIds[0] = mCurrentTextureIds[0];
+        mLastUniformTextureIds[1] = mCurrentTextureIds[1];
+
         GLint filtering[2] = { textures[mCurrentTextureIds[0]].filtering, textures[mCurrentTextureIds[1]].filtering };
         glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
 
@@ -92,6 +100,9 @@ void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
         mStats->shaderSwitches++;
     }
     glUseProgram(new_prg->openglProgramId);
+    // Invalidate uniform cache on shader switch (uniform locations differ per program)
+    mLastUniformTextureIds[0] = UINT32_MAX;
+    mLastUniformTextureIds[1] = UINT32_MAX;
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     // Bind per-shader VAO instead of reconfiguring attribs each time.
     glBindVertexArray(new_prg->vao);
@@ -678,7 +689,22 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     SetPerDrawUniforms();
 
     // printf("flushing %d tris\n", buf_vbo_num_tris);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * buf_vbo_len, buf_vbo, GL_STREAM_DRAW);
+    const size_t uploadBytes = sizeof(float) * buf_vbo_len;
+#if defined(__SWITCH__) || defined(USE_OPENGLES)
+    // Orphan + SubData pattern: avoids driver reallocation on every draw.
+    // First call (or size increase) uses glBufferData to allocate; subsequent
+    // calls orphan the old buffer and write just the used portion.
+    if (uploadBytes > mVboAllocatedSize) {
+        glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
+        mVboAllocatedSize = uploadBytes;
+    } else {
+        // Orphan the buffer (NULL data) to allow driver to pipeline, then upload
+        glBufferData(GL_ARRAY_BUFFER, mVboAllocatedSize, NULL, GL_STREAM_DRAW);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, uploadBytes, buf_vbo);
+    }
+#else
+    glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
+#endif
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
 }
 

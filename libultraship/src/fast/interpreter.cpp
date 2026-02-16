@@ -1807,169 +1807,203 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRapi->SetUseAlpha(use_alpha);
         mRenderingState.alpha_blend = use_alpha;
     }
-    uint8_t numInputs;
-    bool usedTextures[2];
-
-    mRapi->ShaderGetInfo(prg, &numInputs, usedTextures);
+    uint8_t numInputs = prg->numInputs;
+    bool usedTextures[2] = { prg->usedTextures[0], prg->usedTextures[1] };
 
     struct GfxClipParameters clip_parameters = mRapi->GetClipParameters();
 
+    // Pre-compute texture parameters that are constant across all 3 vertices
+    const bool linearFilter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
+    const float linearOffset = (linearFilter && !is_rect) ? 0.5f : 0.0f;
+    float invTexWidth[2], invTexHeight[2];
+    float clampSVal[2], clampTVal[2];
+    bool clampS[2], clampT[2];
+    int shifts_arr[2], shiftt_arr[2];
+    float ulsOffset[2], ultOffset[2];
+    for (int t = 0; t < 2; t++) {
+        if (!usedTextures[t]) continue;
+        uint32_t tile = mRdp->first_tile_index + t;
+        invTexWidth[t] = 1.0f / tex_width[t];
+        invTexHeight[t] = 1.0f / tex_height[t];
+        clampS[t] = (tm & (1 << (2 * t))) != 0;
+        clampT[t] = (tm & (1 << (2 * t + 1))) != 0;
+        if (clampS[t]) clampSVal[t] = (tex_width2[t] - 0.5f) * invTexWidth[t];
+        if (clampT[t]) clampTVal[t] = (tex_height2[t] - 0.5f) * invTexHeight[t];
+        shifts_arr[t] = mRdp->texture_tile[tile].shifts;
+        shiftt_arr[t] = mRdp->texture_tile[tile].shiftt;
+        ulsOffset[t] = mRdp->texture_tile[tile].uls / 4.0f;
+        ultOffset[t] = mRdp->texture_tile[tile].ult / 4.0f;
+    }
+
+    // Pre-compute constant color combiner inputs (everything except G_CCMUX_SHADE)
+    // These are the same for all 3 vertices, so we compute the float values once
+    constexpr float INV_255 = 1.0f / 255.0f;
+    const int numAlphaPasses = use_alpha ? 2 : 1;
+
+    // Pre-compute per-input colors that don't depend on the vertex
+    // inputColorRGB[j] and inputAlpha[j] hold pre-computed float values
+    // isShadeInput[k][j] = true means we need the per-vertex color
+    struct PrecomputedInput {
+        float r, g, b, a;
+        bool isShade;       // needs per-vertex color
+        bool isLodFraction; // needs per-vertex LOD computation
+    };
+    PrecomputedInput precomputed[2][7]; // [k=color/alpha pass][j=input]
+    for (int k = 0; k < numAlphaPasses; k++) {
+        for (int j = 0; j < numInputs; j++) {
+            PrecomputedInput& pc = precomputed[k][j];
+            pc.isShade = false;
+            pc.isLodFraction = false;
+            switch (comb->shader_input_mapping[k][j]) {
+                case G_CCMUX_PRIMITIVE:
+                    pc.r = mRdp->prim_color.r * INV_255;
+                    pc.g = mRdp->prim_color.g * INV_255;
+                    pc.b = mRdp->prim_color.b * INV_255;
+                    pc.a = mRdp->prim_color.a * INV_255;
+                    break;
+                case G_CCMUX_SHADE:
+                    pc.isShade = true;
+                    break;
+                case G_CCMUX_ENVIRONMENT:
+                    pc.r = mRdp->env_color.r * INV_255;
+                    pc.g = mRdp->env_color.g * INV_255;
+                    pc.b = mRdp->env_color.b * INV_255;
+                    pc.a = mRdp->env_color.a * INV_255;
+                    break;
+                case G_CCMUX_PRIMITIVE_ALPHA:
+                    pc.r = pc.g = pc.b = mRdp->prim_color.a * INV_255;
+                    pc.a = mRdp->prim_color.a * INV_255;
+                    break;
+                case G_CCMUX_ENV_ALPHA:
+                    pc.r = pc.g = pc.b = mRdp->env_color.a * INV_255;
+                    pc.a = mRdp->env_color.a * INV_255;
+                    break;
+                case G_CCMUX_PRIM_LOD_FRAC:
+                    pc.r = pc.g = pc.b = mRdp->prim_lod_fraction * INV_255;
+                    pc.a = mRdp->prim_lod_fraction * INV_255;
+                    break;
+                case G_CCMUX_LOD_FRACTION:
+                    pc.isLodFraction = true;
+                    if (mRdp->other_mode_l & G_TL_LOD) {
+                        float distance_frac = (v1->w - 3000.0f) / 3000.0f;
+                        if (distance_frac < 0.0f) distance_frac = 0.0f;
+                        if (distance_frac > 1.0f) distance_frac = 1.0f;
+                        pc.r = pc.g = pc.b = pc.a = distance_frac;
+                    } else {
+                        pc.r = pc.g = pc.b = pc.a = 1.0f;
+                    }
+                    break;
+                case G_ACMUX_PRIM_LOD_FRAC:
+                    pc.r = pc.g = pc.b = 0.0f;
+                    pc.a = mRdp->prim_lod_fraction * INV_255;
+                    break;
+                default:
+                    pc.r = pc.g = pc.b = pc.a = 0.0f;
+                    break;
+            }
+        }
+    }
+
+    // Pre-compute fog color floats (constant across vertices)
+    float fogR, fogG, fogB;
+    if (use_fog) {
+        fogR = mRdp->fog_color.r * INV_255;
+        fogG = mRdp->fog_color.g * INV_255;
+        fogB = mRdp->fog_color.b * INV_255;
+    }
+
+    // Pre-compute grayscale color floats (constant across vertices)
+    float grayR, grayG, grayB, grayA;
+    if (use_grayscale) {
+        grayR = mRdp->grayscale_color.r * INV_255;
+        grayG = mRdp->grayscale_color.g * INV_255;
+        grayB = mRdp->grayscale_color.b * INV_255;
+        grayA = mRdp->grayscale_color.a * INV_255;
+    }
+
+    // Write the float pointer once to avoid repeated member access
+    float* __restrict vbo = mBufVbo + mBufVboLen;
+
     for (int i = 0; i < 3; i++) {
-        float z = v_arr[i]->z, w = v_arr[i]->w;
+        const struct LoadedVertex* __restrict vtx = v_arr[i];
+        float z = vtx->z, w = vtx->w;
         if (clip_parameters.z_is_from_0_to_1) {
-            z = (z + w) / 2.0f;
+            z = (z + w) * 0.5f;
         }
 
-        mBufVbo[mBufVboLen++] = v_arr[i]->x;
-        mBufVbo[mBufVboLen++] = clip_parameters.invertY ? -v_arr[i]->y : v_arr[i]->y;
-        mBufVbo[mBufVboLen++] = z;
-        mBufVbo[mBufVboLen++] = w;
+        *vbo++ = vtx->x;
+        *vbo++ = clip_parameters.invertY ? -vtx->y : vtx->y;
+        *vbo++ = z;
+        *vbo++ = w;
 
         for (int t = 0; t < 2; t++) {
-            if (!usedTextures[t]) {
-                continue;
-            }
-            float u = v_arr[i]->u / 32.0f;
-            float v = v_arr[i]->v / 32.0f;
+            if (!usedTextures[t]) continue;
 
-            int shifts = mRdp->texture_tile[mRdp->first_tile_index + t].shifts;
-            int shiftt = mRdp->texture_tile[mRdp->first_tile_index + t].shiftt;
+            float u = vtx->u * (1.0f / 32.0f);
+            float v = vtx->v * (1.0f / 32.0f);
+
+            const int shifts = shifts_arr[t];
+            const int shiftt = shiftt_arr[t];
             if (shifts != 0) {
-                if (shifts <= 10) {
-                    u /= 1 << shifts;
-                } else {
-                    u *= 1 << (16 - shifts);
-                }
+                u = (shifts <= 10) ? u / (1 << shifts) : u * (1 << (16 - shifts));
             }
             if (shiftt != 0) {
-                if (shiftt <= 10) {
-                    v /= 1 << shiftt;
-                } else {
-                    v *= 1 << (16 - shiftt);
-                }
+                v = (shiftt <= 10) ? v / (1 << shiftt) : v * (1 << (16 - shiftt));
             }
 
-            u -= mRdp->texture_tile[mRdp->first_tile_index + t].uls / 4.0f;
-            v -= mRdp->texture_tile[mRdp->first_tile_index + t].ult / 4.0f;
+            u = (u - ulsOffset[t] + linearOffset) * invTexWidth[t];
+            v = (v - ultOffset[t] + linearOffset) * invTexHeight[t];
 
-            if ((mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT) {
-                // Linear filter adds 0.5f to the coordinates
-                if (!is_rect) {
-                    u += 0.5f;
-                    v += 0.5f;
-                }
-            }
+            *vbo++ = u;
+            *vbo++ = v;
 
-            mBufVbo[mBufVboLen++] = u / tex_width[t];
-            mBufVbo[mBufVboLen++] = v / tex_height[t];
-
-            bool clampS = tm & (1 << 2 * t);
-            bool clampT = tm & (1 << 2 * t + 1);
-
-            if (clampS) {
-                mBufVbo[mBufVboLen++] = (tex_width2[t] - 0.5f) / tex_width[t];
-            }
-
-            if (clampT) {
-                mBufVbo[mBufVboLen++] = (tex_height2[t] - 0.5f) / tex_height[t];
-            }
+            if (clampS[t]) *vbo++ = clampSVal[t];
+            if (clampT[t]) *vbo++ = clampTVal[t];
         }
 
         if (use_fog) {
-            mBufVbo[mBufVboLen++] = mRdp->fog_color.r / 255.0f;
-            mBufVbo[mBufVboLen++] = mRdp->fog_color.g / 255.0f;
-            mBufVbo[mBufVboLen++] = mRdp->fog_color.b / 255.0f;
-            mBufVbo[mBufVboLen++] = v_arr[i]->color.a / 255.0f; // fog factor (not alpha)
+            *vbo++ = fogR;
+            *vbo++ = fogG;
+            *vbo++ = fogB;
+            *vbo++ = vtx->color.a * INV_255;
         }
 
         if (use_grayscale) {
-            mBufVbo[mBufVboLen++] = mRdp->grayscale_color.r / 255.0f;
-            mBufVbo[mBufVboLen++] = mRdp->grayscale_color.g / 255.0f;
-            mBufVbo[mBufVboLen++] = mRdp->grayscale_color.b / 255.0f;
-            mBufVbo[mBufVboLen++] = mRdp->grayscale_color.a / 255.0f; // lerp interpolation factor (not alpha)
+            *vbo++ = grayR;
+            *vbo++ = grayG;
+            *vbo++ = grayB;
+            *vbo++ = grayA;
         }
 
         for (int j = 0; j < numInputs; j++) {
-            RGBA* color;
-            RGBA tmp;
-            for (int k = 0; k < 1 + (use_alpha ? 1 : 0); k++) {
-                switch (comb->shader_input_mapping[k][j]) {
-                        // Note: CCMUX constants and ACMUX constants used here have same value, which is why this works
-                        // (except LOD fraction).
-                    case G_CCMUX_PRIMITIVE:
-                        color = &mRdp->prim_color;
-                        break;
-                    case G_CCMUX_SHADE:
-                        color = &v_arr[i]->color;
-                        break;
-                    case G_CCMUX_ENVIRONMENT:
-                        color = &mRdp->env_color;
-                        break;
-                    case G_CCMUX_PRIMITIVE_ALPHA: {
-                        tmp.r = tmp.g = tmp.b = mRdp->prim_color.a;
-                        color = &tmp;
-                        break;
-                    }
-                    case G_CCMUX_ENV_ALPHA: {
-                        tmp.r = tmp.g = tmp.b = mRdp->env_color.a;
-                        color = &tmp;
-                        break;
-                    }
-                    case G_CCMUX_PRIM_LOD_FRAC: {
-                        tmp.r = tmp.g = tmp.b = mRdp->prim_lod_fraction;
-                        color = &tmp;
-                        break;
-                    }
-                    case G_CCMUX_LOD_FRACTION: {
-                        if (mRdp->other_mode_l & G_TL_LOD) {
-                            // "Hack" that works for Bowser - Peach painting
-                            float distance_frac = (v1->w - 3000.0f) / 3000.0f;
-                            if (distance_frac < 0.0f) {
-                                distance_frac = 0.0f;
-                            }
-                            if (distance_frac > 1.0f) {
-                                distance_frac = 1.0f;
-                            }
-                            tmp.r = tmp.g = tmp.b = tmp.a = distance_frac * 255.0f;
-                        } else {
-                            tmp.r = tmp.g = tmp.b = tmp.a = 255.0f;
-                        }
-                        color = &tmp;
-                        break;
-                    }
-                    case G_ACMUX_PRIM_LOD_FRAC:
-                        tmp.a = mRdp->prim_lod_fraction;
-                        color = &tmp;
-                        break;
-                    default:
-                        memset(&tmp, 0, sizeof(tmp));
-                        color = &tmp;
-                        break;
-                }
+            for (int k = 0; k < numAlphaPasses; k++) {
+                const PrecomputedInput& pc = precomputed[k][j];
                 if (k == 0) {
-                    mBufVbo[mBufVboLen++] = color->r / 255.0f;
-                    mBufVbo[mBufVboLen++] = color->g / 255.0f;
-                    mBufVbo[mBufVboLen++] = color->b / 255.0f;
-                } else {
-                    if (use_fog && color == &v_arr[i]->color) {
-                        // Shade alpha is 100% for fog
-                        mBufVbo[mBufVboLen++] = 1.0f;
+                    if (pc.isShade) {
+                        *vbo++ = vtx->color.r * INV_255;
+                        *vbo++ = vtx->color.g * INV_255;
+                        *vbo++ = vtx->color.b * INV_255;
                     } else {
-                        mBufVbo[mBufVboLen++] = color->a / 255.0f;
+                        *vbo++ = pc.r;
+                        *vbo++ = pc.g;
+                        *vbo++ = pc.b;
+                    }
+                } else {
+                    if (use_fog && pc.isShade) {
+                        *vbo++ = 1.0f;
+                    } else if (pc.isShade) {
+                        *vbo++ = vtx->color.a * INV_255;
+                    } else {
+                        *vbo++ = pc.a;
                     }
                 }
             }
         }
-
-        // struct RGBA *color = &v_arr[i]->color;
-        // mBufVbo[mBufVboLen++] = color->r / 255.0f;
-        // mBufVbo[mBufVboLen++] = color->g / 255.0f;
-        // mBufVbo[mBufVboLen++] = color->b / 255.0f;
-        // mBufVbo[mBufVboLen++] = color->a / 255.0f;
     }
 
+    mBufVboLen = (size_t)(vbo - mBufVbo);
+
     if (++mBufVboNumTris == MAX_TRI_BUFFER) {
-        // if (++mBufVbo_num_tris == 1) {
         Flush();
     }
 }

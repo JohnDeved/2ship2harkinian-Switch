@@ -116,9 +116,15 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     ShaderProgram* mCurrentShaderProgram;
 
     GLuint mOpenglVbo = 0;
+#if defined(__SWITCH__) || defined(USE_OPENGLES)
+    size_t mVboAllocatedSize = 0; // Track allocated VBO size for orphan+subdata pattern
+#endif
 #if defined(__APPLE__) || defined(USE_OPENGLES)
     GLuint mOpenglVao;
 #endif
+
+    // Cache state to skip redundant SetPerDrawUniforms calls
+    uint32_t mLastUniformTextureIds[2] = { UINT32_MAX, UINT32_MAX };
 
     uint32_t mFrameCount = 0;
 

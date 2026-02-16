@@ -983,6 +983,7 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_VERTICES_SUBMITTED, (float)stats.verticesSubmitted);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED, (float)stats.trianglesSubmitted);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TOTAL_MS, (float)stats.timeTotal / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DISPATCH_MS, (float)stats.timeGbiDispatch / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TRI_MS, (float)stats.timeTriProcessing / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEX_MS, (float)stats.timeTextureSetup / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)stats.timeShaderSetup / 1000000.0f);

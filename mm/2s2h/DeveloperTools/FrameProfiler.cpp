@@ -297,8 +297,9 @@ static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
     "DL Iterations",      "DL Commands",       "Triangles",          "Vertices",         "Tex Loads",
     "Matrix Loads",       "Pipe Syncs",        "DL Subcalls",        "SetCombine",       "GL Draw Calls",
     "GL Batch Flushes",   "GL State Flushes",  "GL Shader Switches", "GL Shader Compiles", "GL Texture Binds",
-    "GL Tex Cache Miss",  "GL Vert Submitted", "GL Tri Submitted",   "GL Time Total ms", "GL Time Tri ms",
-    "GL Time Tex ms",     "GL Time Shader ms", "GL Time Draw ms",    "GL Time Vtx ms",   "GL Avg Batch Size",
+    "GL Tex Cache Miss",  "GL Vert Submitted", "GL Tri Submitted",   "GL Time Total ms", "GL Time Dispatch ms",
+    "GL Time Tri ms",     "GL Time Tex ms",    "GL Time Shader ms",  "GL Time Draw ms",  "GL Time Vtx ms",
+    "GL Avg Batch Size",
 };
 
 // ── Helper functions ───────────────────────────────────────────────────
@@ -397,6 +398,7 @@ static void FrameProfiler_ExportSnapshot(void) {
     float glVerts = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_VERTICES_SUBMITTED);
     float glTris = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED);
     float glTimeTotal = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TOTAL_MS);
+    float glTimeDispatch = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DISPATCH_MS);
     float glTimeTri = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TRI_MS);
     float glTimeTex = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TEX_MS);
     float glTimeShader = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_SHADER_MS);
@@ -420,7 +422,8 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "GL Texture Binds: " << glTextureBinds << "  (cache misses: " << glTextureMisses << ")" << std::endl;
     out << "GL Triangles Submitted: " << glTris << "  Vertices Submitted: " << glVerts << std::endl;
     out << "GL Avg Batch Size: " << glAvgBatch << " tris/draw" << std::endl;
-    out << "GL Timing (ms): total=" << glTimeTotal << " tri=" << glTimeTri << " tex=" << glTimeTex
+    out << "GL Timing (ms): total=" << glTimeTotal << " dispatch=" << glTimeDispatch << " tri=" << glTimeTri
+        << " tex=" << glTimeTex
         << " shader=" << glTimeShader << " draw=" << glTimeDraw << " vtx=" << glTimeVtx << std::endl;
 
     float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
@@ -586,6 +589,7 @@ void FrameProfilerWindow::DrawElement() {
     float glVerts = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_VERTICES_SUBMITTED);
     float glTris = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED);
     float glTimeTotal = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TOTAL_MS);
+    float glTimeDispatch = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DISPATCH_MS);
     float glTimeTri = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TRI_MS);
     float glTimeTex = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TEX_MS);
     float glTimeShader = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_SHADER_MS);
@@ -605,8 +609,8 @@ void FrameProfilerWindow::DrawElement() {
     ImGui::Text("GL Shader Switches: %.0f (compiles: %.0f)", glShaderSwitches, glShaderCompiles);
     ImGui::Text("GL Texture Binds: %.0f (cache misses: %.0f)", glTextureBinds, glTextureMisses);
     ImGui::Text("GL Submitted: %.0f tris, %.0f verts  Avg batch: %.1f tris/draw", glTris, glVerts, glAvgBatch);
-    ImGui::Text("GL Time: total %.2f  tri %.2f  tex %.2f  shader %.2f  draw %.2f  vtx %.2f ms", glTimeTotal,
-                glTimeTri, glTimeTex, glTimeShader, glTimeDraw, glTimeVtx);
+    ImGui::Text("GL Time: total %.2f  dispatch %.2f  tri %.2f  tex %.2f  shader %.2f  draw %.2f  vtx %.2f ms",
+                glTimeTotal, glTimeDispatch, glTimeTri, glTimeTex, glTimeShader, glTimeDraw, glTimeVtx);
 
     // Cost-per-unit estimates
     float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);

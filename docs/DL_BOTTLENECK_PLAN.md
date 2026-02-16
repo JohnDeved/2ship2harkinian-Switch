@@ -169,7 +169,7 @@ The game profiler now reads Fast3D internal stats each `DrawAndRunGraphicsComman
   - Actual GL draw calls vs estimated draw calls
   - Batch flushes and state-change flushes
   - Shader switches/compiles and texture bind/cache-miss behavior
-  - Internal timing breakdown (tri/tex/shader/draw/vtx)
+  - Internal timing breakdown (dispatch/tri/tex/shader/draw/vtx)
 
 ---
 

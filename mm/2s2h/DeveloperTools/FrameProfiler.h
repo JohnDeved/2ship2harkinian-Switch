@@ -36,6 +36,14 @@ typedef enum {
 
 typedef enum {
     PROFILE_COUNTER_DL_ITERATIONS, // number of DrawAndRunGraphicsCommands calls per frame
+    PROFILE_COUNTER_DL_COMMANDS,   // total GBI commands processed per frame
+    PROFILE_COUNTER_DL_TRIANGLES,  // G_TRI1 + 2*G_TRI2 triangle count
+    PROFILE_COUNTER_DL_VERTICES,   // total vertices loaded (from G_VTX)
+    PROFILE_COUNTER_DL_TEX_LOADS,  // G_SETTIMG (texture image source changes)
+    PROFILE_COUNTER_DL_MTX_LOADS,  // G_MTX (matrix push/loads)
+    PROFILE_COUNTER_DL_PIPE_SYNCS, // G_RDPPIPESYNC (RDP state barrier)
+    PROFILE_COUNTER_DL_SUBCALLS,   // G_DL (display list call/branch)
+    PROFILE_COUNTER_DL_SETCOMBINE, // G_SETCOMBINE (shader/combiner changes)
     PROFILE_COUNTER_MAX
 } ProfileCounter;
 
@@ -46,6 +54,7 @@ float FrameProfiler_GetPhaseAvgMs(ProfilePhase phase);
 void FrameProfiler_AddCounter(ProfileCounter counter, float value);
 float FrameProfiler_GetCounterAvg(ProfileCounter counter);
 int FrameProfiler_IsEnabled(void);
+void FrameProfiler_ScanDisplayList(void* commands);
 
 #ifdef __cplusplus
 }

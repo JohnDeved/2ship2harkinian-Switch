@@ -117,6 +117,87 @@ extern "C" int FrameProfiler_IsEnabled(void) {
     return sEnabled.load(std::memory_order_relaxed);
 }
 
+// ── GBI Display List Scanner ───────────────────────────────────────────
+// Walk the top-level display list and count commands by type.
+// This scans word0 opcodes WITHOUT recursing into sub-display-lists (G_DL),
+// since the Fast3D interpreter handles those. We count top-level commands only,
+// which is fast and gives a useful complexity estimate.
+//
+// N64 Gfx command: word0 bits[31:24] = opcode, word1 = parameters.
+// We use uint32_t pairs to avoid depending on the Gfx type here.
+
+extern "C" void FrameProfiler_ScanDisplayList(void* commands) {
+    if (!sEnabled.load(std::memory_order_relaxed) || commands == NULL)
+        return;
+
+    const uint32_t* cmd = (const uint32_t*)commands;
+    int totalCmds = 0;
+    int triangles = 0;
+    int vertices = 0;
+    int texLoads = 0;
+    int mtxLoads = 0;
+    int pipeSyncs = 0;
+    int subcalls = 0;
+    int setCombine = 0;
+
+    // Safety limit to avoid infinite loops on malformed DLs
+    static const int MAX_COMMANDS = 100000;
+
+    for (int i = 0; i < MAX_COMMANDS; i++) {
+        uint32_t w0 = cmd[0];
+        uint8_t opcode = (w0 >> 24) & 0xFF;
+        totalCmds++;
+
+        switch (opcode) {
+            case 0x05: // G_TRI1
+                triangles += 1;
+                break;
+            case 0x06: // G_TRI2
+                triangles += 2;
+                break;
+            case 0x01: // G_VTX
+                // F3DEX2 format: bits[19:12] = vertex count (n), extracted as 8 bits at shift 12
+                vertices += ((w0 >> 12) & 0xFF);
+                break;
+            case 0xFD: // G_SETTIMG
+            case 0x23: // G_SETTIMG_OTR_HASH (custom)
+            case 0x24: // G_SETTIMG_OTR_FILEPATH (custom)
+                texLoads++;
+                break;
+            case 0xDA: // G_MTX
+            case 0x20: // G_MTX_OTR (custom)
+                mtxLoads++;
+                break;
+            case 0xE7: // G_RDPPIPESYNC
+                pipeSyncs++;
+                break;
+            case 0xDE: // G_DL
+            case 0x21: // G_DL_OTR_HASH (custom)
+            case 0x22: // G_DL_OTR_FILEPATH (custom)
+                subcalls++;
+                break;
+            case 0xFC: // G_SETCOMBINE
+                setCombine++;
+                break;
+            case 0xDF: // G_ENDDL
+                goto done;
+            default:
+                break;
+        }
+        cmd += 2; // each Gfx command is 2 uint32_t (8 bytes)
+    }
+
+done:
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_COMMANDS, (float)totalCmds);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_TRIANGLES, (float)triangles);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_VERTICES, (float)vertices);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_TEX_LOADS, (float)texLoads);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_MTX_LOADS, (float)mtxLoads);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_PIPE_SYNCS, (float)pipeSyncs);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_SUBCALLS, (float)subcalls);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_SETCOMBINE, (float)setCombine);
+}
+
 // ── Phase names for display ────────────────────────────────────────────
 
 static const char* sPhaseNames[PROFILE_PHASE_MAX] = {
@@ -143,7 +224,8 @@ static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
 };
 
 static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
-    "DL Iterations",
+    "DL Iterations", "DL Commands", "Triangles",   "Vertices",   "Tex Loads",
+    "Matrix Loads",  "Pipe Syncs",  "DL Subcalls", "SetCombine",
 };
 
 // ── Helper functions ───────────────────────────────────────────────────
@@ -222,10 +304,33 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << std::endl;
 
     // Counters
-    out << "--- Counters ---" << std::endl;
-    for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
-        float avg = FrameProfiler_GetCounterAvg((ProfileCounter)i);
-        out << sCounterNames[i] << ": " << avg << std::endl;
+    out << "--- Display List Statistics ---" << std::endl;
+    float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
+    float dlCmds = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_COMMANDS);
+    float tris = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_TRIANGLES);
+    float verts = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_VERTICES);
+    float texLoads = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_TEX_LOADS);
+    float mtxLoads = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_MTX_LOADS);
+    float pipeSyncs = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_PIPE_SYNCS);
+    float subcalls = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_SUBCALLS);
+    float setCombine = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_SETCOMBINE);
+
+    out << "DL Iterations: " << dlIter << std::endl;
+    out << "Top-Level Commands: " << dlCmds << std::endl;
+    out << "Triangles: " << tris << std::endl;
+    out << "Vertices: " << verts << std::endl;
+    out << "Texture Loads (SETTIMG): " << texLoads << std::endl;
+    out << "Matrix Loads (MTX): " << mtxLoads << std::endl;
+    out << "Pipe Syncs: " << pipeSyncs << std::endl;
+    out << "DL Subcalls: " << subcalls << std::endl;
+    out << "SetCombine (shader changes): " << setCombine << std::endl;
+
+    float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
+    if (dlMs > 0.1f && tris > 0.0f) {
+        out << "Cost per triangle: " << (dlMs * 1000.0f / tris) << " us" << std::endl;
+        if (dlCmds > 0) {
+            out << "Cost per command: " << (dlMs * 1000.0f / dlCmds) << " us" << std::endl;
+        }
     }
     out << std::endl;
 
@@ -342,10 +447,33 @@ void FrameProfilerWindow::DrawElement() {
 
     ImGui::Separator();
 
-    // Counters
-    for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
-        float avg = FrameProfiler_GetCounterAvg((ProfileCounter)i);
-        ImGui::Text("%-18s %.1f", sCounterNames[i], avg);
+    // DL Rendering Statistics
+    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "--- Display List Stats (per frame avg) ---");
+
+    float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
+    float dlCmds = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_COMMANDS);
+    float tris = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_TRIANGLES);
+    float verts = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_VERTICES);
+    float texLoads = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_TEX_LOADS);
+    float mtxLoads = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_MTX_LOADS);
+    float pipeSyncs = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_PIPE_SYNCS);
+    float subcalls = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_SUBCALLS);
+    float setCombine = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_SETCOMBINE);
+
+    ImGui::Text("DL Iterations: %.0f   Top-Level Commands: %.0f", dlIter, dlCmds);
+    ImGui::Text("Triangles: %.0f   Vertices: %.0f", tris, verts);
+    ImGui::Text("Tex Loads: %.0f   Matrix Loads: %.0f   SetCombine: %.0f", texLoads, mtxLoads, setCombine);
+    ImGui::Text("Pipe Syncs: %.0f   DL Subcalls: %.0f", pipeSyncs, subcalls);
+
+    // Cost-per-unit estimates (helps identify what to optimize)
+    float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
+    if (dlMs > 0.1f && tris > 0.0f) {
+        float usPerTri = (dlMs * 1000.0f) / tris;
+        ImGui::Text("Cost: %.1f us/tri", usPerTri);
+        if (dlCmds > 0.0f) {
+            ImGui::SameLine();
+            ImGui::Text("  %.1f us/cmd", (dlMs * 1000.0f) / dlCmds);
+        }
     }
 
     // Unaccounted time
@@ -381,11 +509,22 @@ void FrameProfilerWindow::DrawElement() {
 
         if (worstPhase == PROFILE_PHASE_DL_PROCESS) {
             ImGui::TextWrapped("The display list interpreter (libultraship Fast3D) dominates frame time. "
-                               "This is CPU-bound N64 DL-to-GL translation running single-threaded on Core 0. "
-                               "Game logic optimizations (BgCheck, actors, etc.) will have minimal impact.");
-            ImGui::TextWrapped("Priority actions: (1) Optimize Fast3D interpreter in libultraship, "
-                               "(2) Move DL processing to a dedicated render thread, "
-                               "(3) Reduce DL complexity (draw distance, LOD).");
+                               "This is CPU-bound N64 DL-to-GL translation running single-threaded on Core 0.");
+            if (dlMs > 0.1f && tris > 0.0f) {
+                float usPerTri = (dlMs * 1000.0f) / tris;
+                if (usPerTri > 5.0f) {
+                    ImGui::TextWrapped("At %.0f us/tri, per-triangle overhead is high. This suggests draw call "
+                                       "overhead or state changes dominate (not raw vertex throughput). "
+                                       "Focus: batch draw calls, reduce SetCombine/PipeSync count.",
+                                       usPerTri);
+                } else {
+                    ImGui::TextWrapped("At %.0f us/tri, per-triangle cost is moderate. "
+                                       "Reducing triangle count (LOD, draw distance) would help.",
+                                       usPerTri);
+                }
+            }
+            ImGui::TextWrapped("Priority: (1) Profile inside Fast3D interpreter (libultraship), "
+                               "(2) Render thread offload, (3) Reduce DL complexity.");
         } else if (worstPhase == PROFILE_PHASE_ACTOR_UPDATE) {
             ImGui::TextWrapped("Actor updates are the bottleneck. Consider parallelizing BgCheck queries "
                                "across worker threads (Phase 3 in optimization plan).");

@@ -13,6 +13,8 @@ extern "C" {
 #include "gfx.h"
 }
 
+#include "build.h"
+
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -338,7 +340,19 @@ static void FrameProfiler_ExportSnapshot(void) {
     char timeBuf[64];
     std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tmBuf);
 
-    std::string filename = "profiler_snapshot_" + std::string(timeBuf) + ".txt";
+    // Build git info for filename and header
+    std::string branch = (gGitBranch[0] != '\0') ? gGitBranch : "unknown";
+    std::string commitFull = (gGitCommitHash[0] != '\0') ? gGitCommitHash : "unknown";
+    std::string commitShort = (commitFull.size() > 7) ? commitFull.substr(0, 7) : commitFull;
+
+    // Sanitize branch name for filename (replace / and spaces with -)
+    std::string branchSafe = branch;
+    for (char& c : branchSafe) {
+        if (c == '/' || c == '\\' || c == ' ' || c == ':')
+            c = '-';
+    }
+
+    std::string filename = "profiler_" + branchSafe + "_" + commitShort + "_" + std::string(timeBuf) + ".txt";
     std::string filepath = Ship::Context::GetPathRelativeToAppDirectory(filename);
 
     std::ofstream out(filepath);
@@ -353,6 +367,20 @@ static void FrameProfiler_ExportSnapshot(void) {
 
     out << "=== 2S2H Frame Profiler Snapshot ===" << std::endl;
     out << "Timestamp: " << timeBuf << std::endl;
+    out << "Branch: " << branch << std::endl;
+    out << "Commit: " << commitFull << std::endl;
+    out << "Build: " << gBuildVersion << " (" << gBuildDate << ")" << std::endl;
+#ifdef __SWITCH__
+    out << "Platform: Nintendo Switch (NX)" << std::endl;
+#elif defined(_WIN32)
+    out << "Platform: Windows" << std::endl;
+#elif defined(__APPLE__)
+    out << "Platform: macOS" << std::endl;
+#elif defined(__linux__)
+    out << "Platform: Linux" << std::endl;
+#else
+    out << "Platform: Unknown" << std::endl;
+#endif
     out << std::endl;
 
     out << "--- Summary (60-frame average) ---" << std::endl;
@@ -433,14 +461,30 @@ static void FrameProfiler_ExportSnapshot(void) {
         << " tex=" << glTimeTex << " shader=" << glTimeShader << " draw=" << glTimeDraw << " vtx=" << glTimeVtx
         << " mtx=" << glTimeMtx << " depth=" << glTimeDepth << " setup=" << glTimeSetup << std::endl;
 
+    // GL timing percentage breakdown
+    if (glTimeTotal > 0.01f) {
+        out << "GL Time% of DL: tri=" << (glTimeTri / glTimeTotal * 100.0f) << "%"
+            << " draw=" << (glTimeDraw / glTimeTotal * 100.0f) << "%"
+            << " vtx=" << (glTimeVtx / glTimeTotal * 100.0f) << "%"
+            << " tex=" << (glTimeTex / glTimeTotal * 100.0f) << "%"
+            << " mtx=" << (glTimeMtx / glTimeTotal * 100.0f) << "%"
+            << " dispatch=" << (glTimeDispatch / glTimeTotal * 100.0f) << "%"
+            << " depth=" << (glTimeDepth / glTimeTotal * 100.0f) << "%"
+            << " setup=" << (glTimeSetup / glTimeTotal * 100.0f) << "%"
+            << " shader=" << (glTimeShader / glTimeTotal * 100.0f) << "%" << std::endl;
+    }
+
     float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
-    if (dlMs > 0.1f && tris > 0.0f) {
-        out << "Cost per triangle: " << (dlMs * 1000.0f / tris) << " us" << std::endl;
+    if (dlMs > 0.1f && glTris > 0.0f) {
+        out << "Cost per GL triangle: " << (dlMs * 1000.0f / glTris) << " us" << std::endl;
         if (dlCmds > 0) {
-            out << "Cost per command: " << (dlMs * 1000.0f / dlCmds) << " us" << std::endl;
+            out << "Cost per DL command: " << (dlMs * 1000.0f / dlCmds) << " us" << std::endl;
         }
-        if (pipeSyncs > 0) {
-            out << "Cost per draw call: " << (dlMs * 1000.0f / pipeSyncs) << " us" << std::endl;
+        if (glDrawCalls > 0) {
+            out << "Cost per GL draw call: " << (dlMs * 1000.0f / glDrawCalls) << " us" << std::endl;
+        }
+        if (glShaderSwitches > 0) {
+            out << "Cost per shader switch: " << (dlMs * 1000.0f / glShaderSwitches) << " us" << std::endl;
         }
     }
     out << std::endl;
@@ -497,6 +541,23 @@ static void FrameProfiler_ExportSnapshot(void) {
             out << "Game logic optimizations (BgCheck, actors, etc.) will have minimal impact." << std::endl;
             out << "Priority: (1) Optimize Fast3D interpreter, (2) Render thread offload, (3) Reduce DL complexity."
                 << std::endl;
+            // Identify top GL sub-phase
+            struct { const char* name; float ms; } glPhases[] = {
+                {"tri (VBO fill)", glTimeTri}, {"draw (GL submit)", glTimeDraw},
+                {"vtx (vertex transform)", glTimeVtx}, {"tex (texture setup)", glTimeTex},
+                {"mtx (matrix ops)", glTimeMtx}, {"dispatch (cmd walk)", glTimeDispatch},
+                {"depth (pixel readback)", glTimeDepth}, {"setup (frame init)", glTimeSetup},
+                {"shader (compile/switch)", glTimeShader}
+            };
+            float topMs = 0;
+            const char* topName = "";
+            for (auto& p : glPhases) {
+                if (p.ms > topMs) { topMs = p.ms; topName = p.name; }
+            }
+            if (topMs > 0.01f) {
+                out << "Top GL sub-phase: " << topName << " (" << topMs << " ms, "
+                    << (glTimeTotal > 0.01f ? topMs / glTimeTotal * 100.0f : 0.0f) << "% of DL)" << std::endl;
+            }
         } else if (worstPhase == PROFILE_PHASE_ACTOR_UPDATE) {
             out << "Actor updates dominate. Parallelize BgCheck queries across worker threads." << std::endl;
         } else if (worstPhase == PROFILE_PHASE_ACTOR_DRAW) {

@@ -261,9 +261,9 @@ Play Update:    0.5ms  █░░░░░░░░░░░░░░░░░░
 
 | Item | Details |
 |------|---------|
-| **Pixel-depth quantization** | Reduce per-pixel depth precision to improve fill rate |
+| **Pixel-depth quantization** | Round pixel coordinates to integers to improve depth-query cache hit rate |
 | **MAX_TRI_BUFFER increase** | Larger triangle buffers to reduce flush frequency |
-| **VAO-per-shader caching** | Cache vertex array objects per shader to avoid rebinding |
+| **VAO-per-shader caching** | Cache vertex array objects per shader to avoid reconfiguring vertex attributes on each shader switch |
 | **Container pre-allocation** | Pre-allocate STL containers to reduce allocation overhead |
 | **Core affinity fixes** | Correct thread-to-core pinning for worker pool |
 

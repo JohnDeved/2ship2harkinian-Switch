@@ -283,6 +283,11 @@ jobs:
           ${{ runner.os }}-switch-ccache-${{ github.ref }}
           ${{ runner.os }}-switch-ccache-
     - name: Build 2ship
+      env:
+        CCACHE_COMPILERCHECK: content
+        CCACHE_SLOPPINESS: include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
+        CCACHE_BASEDIR: ${{ github.workspace }}
+        CCACHE_NOHASHDIR: 1
       run: |
         cmake -H. -Bbuild-switch -GNinja -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/Switch.cmake -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
         cmake --build build-switch --target 2ship_nro --config Release -j3

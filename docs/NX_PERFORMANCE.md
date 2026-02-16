@@ -256,6 +256,9 @@ Play Update:    0.5ms  █░░░░░░░░░░░░░░░░░░
 | **Fast3D Profiling** | Internal counters and timing in interpreter + OpenGL backend, game-side integration |
 | **Worker Pool on Cores 1+3** | `TaskWorkerPool` with 2 threads pinned to cores 1 and 3 |
 | **Parallel Collision** | AT on main thread, OC dispatched to worker thread |
+| **NEON vertex transform** | NEON-optimized 4×4 matrix-vector multiply in `GfxSpVertex` for vertex position and world_pos |
+| **NEON matrix multiply** | NEON-optimized 4×4 × 4×4 `MatrixMul` using fused multiply-add |
+| **NEON texture decode** | NEON fast paths for RGBA16, IA8, and I8 texture format conversion (8-16 pixels per iteration) |
 
 ### 🔧 IN PROGRESS
 
@@ -276,7 +279,7 @@ Play Update:    0.5ms  █░░░░░░░░░░░░░░░░░░
 | HIGH | **Uber-shader** | Single shader with uniform-based combiner mode selection, eliminating `glUseProgram` switches. |
 | HIGH | **Shader prewarm** | Pre-compile all shader variants at load time. Eliminates runtime compilation stalls. |
 | MEDIUM | **VBO streaming** | Persistent mapped buffers to eliminate per-frame VBO uploads. |
-| MEDIUM | **NEON texture paths** | Use ARM NEON SIMD for texture decode/conversion in the Fast3D interpreter. |
+| MEDIUM | **NEON CI4/CI8 textures** | NEON-optimize palette-indexed texture conversion (CI4/CI8 with table lookups). |
 | MEDIUM | **Texture bind reduction** | Texture atlas and improved LRU cache to minimize `glBindTexture` calls. |
 | MEDIUM | **DL caching** | Cache GL command sequences for static scene geometry. Skip re-interpretation on subsequent frames. |
 | LOW | **Draw distance CVar** | Cull distant actors before DL generation. |
@@ -301,6 +304,8 @@ Phase 2: Core Utilization                              ✅ COMPLETE
   └─ Parallel collision (AT main, OC worker)
 
 Phase 3: Fast3D Interpreter Optimization               ← CURRENT FOCUS
+  ├─ NEON vertex transform (MatrixMul, GfxSpVertex)   ✅ DONE
+  ├─ NEON texture decode (RGBA16, IA8, I8)             ✅ DONE
   ├─ Draw call batching (reduce GL driver overhead)
   ├─ Shader prewarm (eliminate runtime compilation)
   ├─ Uber-shader (eliminate glUseProgram switches)
@@ -327,7 +332,10 @@ Phase 5: Game Logic Optimization (low priority — only ~6ms)
 
 - **Branch prediction**: Modest predictor. The GBI command dispatch `switch()` may suffer mispredictions. Consider computed goto or function pointer table.
 - **Cache pressure**: 32 KB L1D per core. Large DL buffers (OPA is ~209 KB) exceed L1. Streaming access helps but DL subcall jumps may thrash cache.
-- **NEON**: 128-bit SIMD, already used for matrix ops. Could extend to vertex batch processing and texture decode.
+- **NEON**: 128-bit SIMD (4× float32 or 16× uint8 lanes). Used for:
+  - Game-side: `sys_matrix.c`, `z_skin_matrix.c`, `z_skelanime.c`, `mixer.c`, `FrameInterpolation.cpp`
+  - Fast3D interpreter: `MatrixMul` (4×4), `GfxSpVertex` (position + world_pos transform), texture decode (RGBA16, IA8, I8)
+  - Key intrinsics: `vmulq_n_f32`/`vmlaq_n_f32` for FMA, `vst4_u8`/`vst4q_u8` for interleaved stores, `vrev16q_u8` for endian swap
 
 ### Maxwell GPU
 

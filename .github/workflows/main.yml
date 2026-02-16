@@ -19,7 +19,7 @@ jobs:
       with:
         max-size: "500M"
         verbose: 2
-        key: ${{ runner.os }}-otr-ccache-${{ hashFiles('CMakeLists.txt', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
+        key: ${{ runner.os }}-otr-ccache-${{ hashFiles('CMakeLists.txt', 'CMake/**/*.cmake', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-otr-ccache-
     - name: Install dependencies
@@ -93,7 +93,7 @@ jobs:
         create-symlink: true
         max-size: "1G"
         verbose: 2
-        key: ${{ runner.os }}-14-ccache-${{ hashFiles('CMakeLists.txt', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'mm/**/*.m', 'mm/**/*.mm', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp', 'libultraship/**/*.m', 'libultraship/**/*.mm') }}
+        key: ${{ runner.os }}-14-ccache-${{ hashFiles('CMakeLists.txt', 'CMake/**/*.cmake', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'mm/**/*.m', 'mm/**/*.mm', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp', 'libultraship/**/*.m', 'libultraship/**/*.mm') }}
         restore-keys: |
           ${{ runner.os }}-14-ccache-
     # Needed to apply sudo for macports cache restore
@@ -168,7 +168,7 @@ jobs:
       with:
         max-size: "1G"
         verbose: 2
-        key: ${{ runner.os }}-ccache-${{ hashFiles('CMakeLists.txt', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
+        key: ${{ runner.os }}-ccache-${{ hashFiles('CMakeLists.txt', 'CMake/**/*.cmake', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-
     - name: Restore Cached deps folder
@@ -279,7 +279,7 @@ jobs:
       with:
         max-size: "1G"
         verbose: 2
-        key: ${{ runner.os }}-switch-ccache-${{ hashFiles('CMakeLists.txt', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
+        key: ${{ runner.os }}-switch-ccache-${{ hashFiles('CMakeLists.txt', 'CMake/**/*.cmake', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-switch-ccache-
     - name: Build 2ship
@@ -331,7 +331,7 @@ jobs:
         variant: sccache
         max-size: "2G"
         verbose: 2
-        key: ${{ runner.os }}-ccache-${{ hashFiles('CMakeLists.txt', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
+        key: ${{ runner.os }}-ccache-${{ hashFiles('CMakeLists.txt', 'CMake/**/*.cmake', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-
     - name: Restore Cached VCPKG folder

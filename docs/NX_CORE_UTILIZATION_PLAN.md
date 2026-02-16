@@ -235,33 +235,79 @@ Based on the architecture analysis, here are the concrete changes ordered by **i
 
 ---
 
-## 4. Implementation Order
+## 4. Profiler Results (Actual Measurements)
+
+Real-world profiler data from Switch hardware (60-frame average):
+
+```
+Total Frame:    57.8 ms (17.3 FPS)
+DL Process:     48.7 ms (84.2%)  ← DOMINANT BOTTLENECK
+Play Draw:       5.1 ms ( 8.8%)
+Frame Interp:    1.9 ms ( 3.4%)
+Play Update:     0.5 ms ( 0.9%)
+Audio Wait:      0.0 ms ( 0.0%)
+Unaccounted:     1.6 ms ( 2.7%)
+
+Core 0 Active:  53.6 ms
+Core 1 Active:   0.01 ms (essentially idle)
+DL Iterations:   1.0 per frame
+```
+
+### Key Finding
+
+**The bottleneck is NOT game logic.** The display list interpreter (`DrawAndRunGraphicsCommands` in libultraship's Fast3D backend) consumes 84% of frame time with a single call per frame. Game logic (actors, collision, effects) totals only ~5.6ms — well within the 16.6ms budget.
+
+GPU utilization is ~30%, confirming the CPU can't feed display list commands to the GPU fast enough. The ARM Cortex-A57 at ~1GHz spends 49ms translating N64 display lists to OpenGL ES commands.
+
+### Revised Priorities
+
+The original plan focused on parallelizing game logic (Phases 3-5). While those optimizations are still valid, they target only ~9ms of a 58ms frame. **The rendering backend must be addressed first.**
+
+---
+
+## 5. Implementation Order
 
 ```
 Phase 1: Instrumentation ✅ IMPLEMENTED
   ├─ [1] ✅ Add FrameProfiler with timing points (FrameProfiler.cpp/h)
   ├─ [2] ✅ Add on-screen overlay display (ImGui window in Dev Tools menu)
-  └─ [3] Per-actor cost tracking via GameInteractor hooks (future)
+  ├─ [3] ✅ Automated bottleneck analysis with percentage breakdown
+  ├─ [4] ✅ Counter tracking (DL iterations per frame)
+  ├─ [5] ✅ Snapshot export with analysis section
+  └─ [6] Per-actor cost tracking via GameInteractor hooks (future)
 
 Phase 2: Core 3 Activation ✅ IMPLEMENTED
-  └─ [4] ✅ TaskWorkerPool with 2 threads on cores 1+3
+  └─ [7] ✅ TaskWorkerPool with 2 threads on cores 1+3
 
 Phase 2b: Parallel Collision ✅ IMPLEMENTED
-  └─ [11] ✅ AT+OC dispatched in parallel via TaskWorkerPool_Submit2
+  └─ [8] ✅ AT on main thread, OC on worker thread
 
-Phase 3: Actor BgCheck Parallelization (future)
-  ├─ [5] Batch BgCheck queries in Actor_UpdateAll
-  ├─ [6] Dispatch batches to worker pool
-  └─ [7] Validate with profiler — measure improvement
+Phase 3: Fast3D Interpreter Optimization (HIGH PRIORITY — 84% of frame)
+  ├─ [9] Profile inside DrawAndRunGraphicsCommands (requires libultraship changes)
+  │      Break down: DL walking, texture binds, shader switches, draw calls, buffer swap
+  ├─ [10] Batch small draw calls — reduce GL driver overhead
+  ├─ [11] Texture atlas / bind reduction — minimize state changes
+  ├─ [12] Vertex batching — aggregate small triangles into fewer draw calls
+  └─ [13] Display list caching — skip re-interpretation for static scene geometry
 
-Phase 4: Draw Phase Optimization (future)
-  ├─ [8] Separate skeleton/matrix prep from display list generation
-  ├─ [9] Parallelize matrix prep on worker pool
-  └─ [10] Validate with profiler
+Phase 4: Render Thread Offload (HIGH PRIORITY — unlocks parallelism)
+  ├─ [14] Move DrawAndRunGraphicsCommands to a dedicated render thread (Core 1)
+  │      Overlap: Core 0 generates frame N+1's DL while Core 1 renders frame N
+  ├─ [15] Double-buffer display lists (already have gGfxPools[0]/[1])
+  └─ [16] Validate frame pacing and synchronization
+  Expected: 58ms → ~49ms (9ms game logic runs in parallel with 49ms render)
 
-Phase 5: Additional Optimizations (future)
-  ├─ [12] Async frame interpolation segments
-  └─ [13] (Optional) Audio thread work stealing
+Phase 5: Game Logic Optimization (LOWER PRIORITY — only 9ms total)
+  ├─ [17] Batch BgCheck queries in Actor_UpdateAll
+  ├─ [18] Dispatch batches to worker pool
+  ├─ [19] Separate skeleton/matrix prep from DL generation
+  ├─ [20] Parallelize matrix prep on worker pool
+  └─ [21] Validate with profiler
+
+Phase 6: Additional Optimizations (future)
+  ├─ [22] Async frame interpolation segments
+  ├─ [23] DL complexity reduction (draw distance CVars, LOD)
+  └─ [24] (Optional) Audio thread work stealing
 ```
 
 ---

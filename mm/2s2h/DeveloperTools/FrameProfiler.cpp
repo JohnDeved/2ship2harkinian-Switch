@@ -48,6 +48,7 @@ static inline uint64_t ProfileGetNs(void) {
 
 static uint64_t sPhaseStart[PROFILE_PHASE_MAX];
 static float sPhaseRing[PROFILE_PHASE_MAX][PROFILE_RING_SIZE]; // ms per frame
+static float sCounterRing[PROFILE_COUNTER_MAX][PROFILE_RING_SIZE];
 static std::atomic<int> sRingIndex{ 0 };
 static std::atomic<int> sEnabled{ 0 };
 static int sDrawCountdown = 0; // main-thread only
@@ -75,6 +76,9 @@ extern "C" void FrameProfiler_EndFrame(void) {
     for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
         sPhaseRing[i][next] = 0.0f;
     }
+    for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
+        sCounterRing[i][next] = 0.0f;
+    }
     sRingIndex.store(next, std::memory_order_relaxed);
 
     // Auto-disable when window hasn't drawn recently
@@ -89,6 +93,22 @@ extern "C" float FrameProfiler_GetPhaseAvgMs(ProfilePhase phase) {
     float sum = 0.0f;
     for (int i = 0; i < PROFILE_RING_SIZE; i++) {
         sum += sPhaseRing[phase][i];
+    }
+    return sum / PROFILE_RING_SIZE;
+}
+
+extern "C" void FrameProfiler_AddCounter(ProfileCounter counter, float value) {
+    if (!sEnabled.load(std::memory_order_relaxed))
+        return;
+    // Note: Counters are assumed to be incremented from the main thread only.
+    // If a counter is used from worker threads, it must be made atomic.
+    sCounterRing[counter][sRingIndex.load(std::memory_order_relaxed)] += value;
+}
+
+extern "C" float FrameProfiler_GetCounterAvg(ProfileCounter counter) {
+    float sum = 0.0f;
+    for (int i = 0; i < PROFILE_RING_SIZE; i++) {
+        sum += sCounterRing[counter][i];
     }
     return sum / PROFILE_RING_SIZE;
 }
@@ -121,6 +141,29 @@ static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
     "Core 0", // GFX Commands
     "Core 0", // Total
 };
+
+static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
+    "DL Iterations",
+};
+
+// ── Helper functions ───────────────────────────────────────────────────
+
+static const float PROFILE_TARGET_FRAME_MS = 16.6f;
+
+// Returns true for leaf phases (not parent/aggregate phases) used for bottleneck detection
+static bool IsLeafPhase(int phase) {
+    return phase != PROFILE_PHASE_TOTAL_FRAME && phase != PROFILE_PHASE_PLAY_UPDATE &&
+           phase != PROFILE_PHASE_PLAY_DRAW && phase != PROFILE_PHASE_GFX_COMMANDS;
+}
+
+// Sum of top-level non-overlapping phases (for computing unaccounted time)
+static float GetAccountedTimeMs(void) {
+    return FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_PLAY_UPDATE) +
+           FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_PLAY_DRAW) +
+           FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_AUDIO_WAIT) +
+           FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
+           FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
+}
 
 // ── Snapshot export ─────────────────────────────────────────────────────
 
@@ -162,10 +205,35 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << std::endl;
 
     out << "--- Per-Phase Breakdown ---" << std::endl;
+    int worstPhase = -1;
+    float worstMs = 0.0f;
     for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
         float ms = FrameProfiler_GetPhaseAvgMs((ProfilePhase)i);
-        out << sPhaseCoreLabels[i] << "  " << sPhaseNames[i] << ": " << ms << " ms" << std::endl;
+        float pct = (totalMs > 0.01f) ? (ms / totalMs * 100.0f) : 0.0f;
+        out << sPhaseCoreLabels[i] << "  " << sPhaseNames[i] << ": " << ms << " ms (" << pct << "%)" << std::endl;
+        // Track worst leaf phase
+        if (IsLeafPhase(i)) {
+            if (ms > worstMs) {
+                worstMs = ms;
+                worstPhase = i;
+            }
+        }
     }
+    out << std::endl;
+
+    // Counters
+    out << "--- Counters ---" << std::endl;
+    for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
+        float avg = FrameProfiler_GetCounterAvg((ProfileCounter)i);
+        out << sCounterNames[i] << ": " << avg << std::endl;
+    }
+    out << std::endl;
+
+    // Unaccounted time
+    float accountedMs = GetAccountedTimeMs();
+    float unaccountedMs = totalMs - accountedMs;
+    float unaccountedPct = (totalMs > 0.01f) ? (unaccountedMs / totalMs * 100.0f) : 0.0f;
+    out << "Unaccounted: " << unaccountedMs << " ms (" << unaccountedPct << "%)" << std::endl;
     out << std::endl;
 
     float core0Ms =
@@ -183,6 +251,28 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "Core 0 Active: " << core0Ms << " ms" << std::endl;
     out << "Core 1 Active: " << core1Ms << " ms" << std::endl;
     out << "Utilization Ratio: " << (imbalance * 100.0f) << "%" << std::endl;
+    out << std::endl;
+
+    // Automated analysis
+    out << "--- Analysis ---" << std::endl;
+    if (worstPhase >= 0 && totalMs > 0.01f) {
+        float worstPct = worstMs / totalMs * 100.0f;
+        out << "Bottleneck: " << sPhaseNames[worstPhase] << " (" << worstMs << " ms, " << worstPct << "% of frame)"
+            << std::endl;
+        if (worstPhase == PROFILE_PHASE_DL_PROCESS) {
+            out << "The display list interpreter (libultraship Fast3D) dominates frame time." << std::endl;
+            out << "This is CPU-bound N64 DL-to-GL translation running single-threaded on Core 0." << std::endl;
+            out << "Game logic optimizations (BgCheck, actors, etc.) will have minimal impact." << std::endl;
+            out << "Priority: (1) Optimize Fast3D interpreter, (2) Render thread offload, (3) Reduce DL complexity."
+                << std::endl;
+        } else if (worstPhase == PROFILE_PHASE_ACTOR_UPDATE) {
+            out << "Actor updates dominate. Parallelize BgCheck queries across worker threads." << std::endl;
+        } else if (worstPhase == PROFILE_PHASE_ACTOR_DRAW) {
+            out << "Actor draw (skeleton/matrix) dominates. Pre-compute matrices on worker threads." << std::endl;
+        } else if (worstPhase == PROFILE_PHASE_FRAME_INTERP) {
+            out << "Frame interpolation dominates. Consider parallel segment processing." << std::endl;
+        }
+    }
     out << std::endl;
 
     // Raw ring buffer data for detailed analysis
@@ -220,28 +310,53 @@ void FrameProfilerWindow::DrawElement() {
     float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
     float fps = (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
 
-    ImGui::Text("Frame: %.1f ms  (%.0f FPS)  Target: 16.6 ms (60 FPS)", totalMs, fps);
+    ImGui::Text("Frame: %.1f ms  (%.0f FPS)  Target: %.1f ms (60 FPS)", totalMs, fps, PROFILE_TARGET_FRAME_MS);
     ImGui::Separator();
 
-    // Bar chart-style display
-    float maxMs = 16.6f; // target frame time for reference
+    // Bar chart with percentages
+    float maxMs = totalMs > PROFILE_TARGET_FRAME_MS ? totalMs : PROFILE_TARGET_FRAME_MS;
+    int worstPhase = -1;
+    float worstMs = 0.0f;
     for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
         if (i == PROFILE_PHASE_TOTAL_FRAME)
-            continue; // shown above
+            continue;
 
         float ms = FrameProfiler_GetPhaseAvgMs((ProfilePhase)i);
         float frac = ms / maxMs;
         if (frac > 1.0f)
             frac = 1.0f;
+        float pct = (totalMs > 0.01f) ? (ms / totalMs * 100.0f) : 0.0f;
 
-        ImGui::Text("%-7s %-18s %5.1f ms", sPhaseCoreLabels[i], sPhaseNames[i], ms);
+        ImGui::Text("%-7s %-18s %5.1f ms (%4.1f%%)", sPhaseCoreLabels[i], sPhaseNames[i], ms, pct);
         ImGui::SameLine();
         ImGui::ProgressBar(frac, ImVec2(200, 0), "");
+
+        // Track worst leaf phase
+        if (IsLeafPhase(i)) {
+            if (ms > worstMs) {
+                worstMs = ms;
+                worstPhase = i;
+            }
+        }
     }
 
     ImGui::Separator();
 
-    // Breakdown summary
+    // Counters
+    for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
+        float avg = FrameProfiler_GetCounterAvg((ProfileCounter)i);
+        ImGui::Text("%-18s %.1f", sCounterNames[i], avg);
+    }
+
+    // Unaccounted time
+    float accountedMs = GetAccountedTimeMs();
+    float unaccountedMs = totalMs - accountedMs;
+    float unaccountedPct = (totalMs > 0.01f) ? (unaccountedMs / totalMs * 100.0f) : 0.0f;
+    ImGui::Text("Unaccounted:       %5.1f ms (%4.1f%%)", unaccountedMs, unaccountedPct);
+
+    ImGui::Separator();
+
+    // Core breakdown
     float core0Ms =
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
@@ -255,6 +370,33 @@ void FrameProfilerWindow::DrawElement() {
     ImGui::Text("Core 0 Active: %5.1f ms  |  Core 1 Active: %5.1f ms", core0Ms, core1Ms);
     float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
     ImGui::Text("Core utilization ratio: %.0f%% (1.0 = perfectly balanced)", imbalance * 100.0f);
+
+    ImGui::Separator();
+
+    // Automated analysis
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "--- Analysis ---");
+    if (worstPhase >= 0 && totalMs > 0.01f) {
+        float worstPct = worstMs / totalMs * 100.0f;
+        ImGui::TextWrapped("Bottleneck: %s (%.1f ms, %.0f%% of frame)", sPhaseNames[worstPhase], worstMs, worstPct);
+
+        if (worstPhase == PROFILE_PHASE_DL_PROCESS) {
+            ImGui::TextWrapped("The display list interpreter (libultraship Fast3D) dominates frame time. "
+                               "This is CPU-bound N64 DL-to-GL translation running single-threaded on Core 0. "
+                               "Game logic optimizations (BgCheck, actors, etc.) will have minimal impact.");
+            ImGui::TextWrapped("Priority actions: (1) Optimize Fast3D interpreter in libultraship, "
+                               "(2) Move DL processing to a dedicated render thread, "
+                               "(3) Reduce DL complexity (draw distance, LOD).");
+        } else if (worstPhase == PROFILE_PHASE_ACTOR_UPDATE) {
+            ImGui::TextWrapped("Actor updates are the bottleneck. Consider parallelizing BgCheck queries "
+                               "across worker threads (Phase 3 in optimization plan).");
+        } else if (worstPhase == PROFILE_PHASE_ACTOR_DRAW) {
+            ImGui::TextWrapped("Actor drawing (skeleton/matrix/DL generation) is the bottleneck. "
+                               "Consider pre-computing matrices on worker threads (Phase 4 in optimization plan).");
+        } else if (worstPhase == PROFILE_PHASE_FRAME_INTERP) {
+            ImGui::TextWrapped("Frame interpolation is the bottleneck. Consider parallel segment "
+                               "processing across worker threads (Phase 5 in optimization plan).");
+        }
+    }
 
     ImGui::Separator();
 

@@ -34,10 +34,17 @@ typedef enum {
     PROFILE_PHASE_MAX
 } ProfilePhase;
 
+typedef enum {
+    PROFILE_COUNTER_DL_ITERATIONS, // number of DrawAndRunGraphicsCommands calls per frame
+    PROFILE_COUNTER_MAX
+} ProfileCounter;
+
 void FrameProfiler_StartPhase(ProfilePhase phase);
 void FrameProfiler_EndPhase(ProfilePhase phase);
 void FrameProfiler_EndFrame(void);
 float FrameProfiler_GetPhaseAvgMs(ProfilePhase phase);
+void FrameProfiler_AddCounter(ProfileCounter counter, float value);
+float FrameProfiler_GetCounterAvg(ProfileCounter counter);
 int FrameProfiler_IsEnabled(void);
 
 #ifdef __cplusplus

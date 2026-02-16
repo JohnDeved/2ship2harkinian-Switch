@@ -41,11 +41,11 @@
 #include <switch.h>
 #endif
 
-#if not defined (__SWITCH__) && not defined(__WIIU__)
+#if not defined(__SWITCH__) && not defined(__WIIU__)
 #include "Extractor/Extract.h"
 #endif
 // OTRTODO
-//#include <functions.h>
+// #include <functions.h>
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 #include "DeveloperTools/FrameProfiler.h"
 
@@ -967,6 +967,7 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
     for (const auto& m : mtx_replacements) {
         wnd->DrawAndRunGraphicsCommands(Commands, m);
         intp->mInterpolationIndex++;
+        FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
     }
 }
 
@@ -2010,7 +2011,7 @@ extern "C" int Controller_ShouldRumble(size_t slot) {
     return 1;
 }
 
-#if not defined (__SWITCH__) && not defined(__WIIU__)
+#if not defined(__SWITCH__) && not defined(__WIIU__)
 extern "C" void Messagebox_ShowErrorBox(char* title, char* body) {
     Extractor::ShowErrorBox(title, body);
 }

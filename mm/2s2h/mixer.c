@@ -170,11 +170,13 @@ void aSetBufferImpl(uint8_t flags, uint16_t in, uint16_t out, uint16_t nbytes) {
 }
 
 void aInterleaveImpl(uint16_t dest, uint16_t left, uint16_t right, uint16_t c) {
+    // count is in groups of 4 sample-pairs (each iteration interleaves 4 L + 4 R -> 8 output samples).
     int count = ROUND_UP_8(c) / sizeof(int16_t) / 4;
     int16_t* l = BUF_S16(left);
     int16_t* r = BUF_S16(right);
     int16_t* d = BUF_S16(dest);
 #if defined(__ARM_NEON) && defined(__aarch64__)
+    // Process 2 groups at a time (8 L + 8 R -> 16 interleaved output samples).
     while (count >= 2) {
         const int16x8_t lv = vld1q_s16(l);
         const int16x8_t rv = vld1q_s16(r);
@@ -664,20 +666,24 @@ void aFilterImpl(uint8_t flags, uint16_t count_or_buf, int16_t* state_or_filter)
             rspa.filter[i] = (tmp2[i] + rspa.filter[i]) / 2;
         }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        int16x8_t filt_rev;
+        {
+            int16_t rev[8];
+            for (int k = 0; k < 8; k++) rev[k] = rspa.filter[7 - k];
+            filt_rev = vld1q_s16(rev);
+        }
+#endif
+
         do {
             memcpy(tmp + 8, buf, 8 * sizeof(int16_t));
 #if defined(__ARM_NEON) && defined(__aarch64__)
-            {
-                int16_t rev[8];
-                for (int k = 0; k < 8; k++) rev[k] = rspa.filter[7 - k];
-                const int16x8_t filt_rev = vld1q_s16(rev);
-                for (int i = 0; i < 8; i++) {
-                    const int16x8_t s = vld1q_s16(&tmp[i]);
-                    int32x4_t prod = vmull_s16(vget_low_s16(s), vget_low_s16(filt_rev));
-                    prod = vmlal_s16(prod, vget_high_s16(s), vget_high_s16(filt_rev));
-                    int64_t sample = 0x4000 + (int64_t)vaddvq_s32(prod);
-                    buf[i] = clamp16((int32_t)(sample >> 15));
-                }
+            for (int i = 0; i < 8; i++) {
+                const int16x8_t s = vld1q_s16(&tmp[i]);
+                int32x4_t prod = vmull_s16(vget_low_s16(s), vget_low_s16(filt_rev));
+                prod = vmlal_s16(prod, vget_high_s16(s), vget_high_s16(filt_rev));
+                int64_t sample = 0x4000 + (int64_t)vaddvq_s32(prod);
+                buf[i] = clamp16((int32_t)(sample >> 15));
             }
 #else
             for (int i = 0; i < 8; i++) {

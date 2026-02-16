@@ -35,7 +35,7 @@ jobs:
       id: cache-deps-otr
       uses: actions/cache@v5
       with:
-        key: ${{ runner.os }}-deps-${{ hashFiles('.github/workflows/main.yml') }}-sdl2.30.3-tinyxml10.0.0
+        key: ${{ runner.os }}-deps-${{ hashFiles('.github/workflows/main.yml', 'mm/**/CMakeLists.txt') }}
         path: deps
     - name: Create deps folder
       run: mkdir -p deps
@@ -72,14 +72,6 @@ jobs:
         cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release
         cmake --build build-cmake --config Release --target Generate2ShipOtr --parallel 10
         ccache --show-stats
-    - name: Cache build artifacts
-      uses: actions/cache@v5
-      with:
-        key: ${{ runner.os }}-build-cache-${{ hashFiles('**/CMakeLists.txt') }}
-        path: |
-          build-cmake/CMakeFiles
-          build-cmake/cmake_install.cmake
-          build-cmake/CMakeCache.txt
     - name: Upload 2ship.o2r
       uses: actions/upload-artifact@v4
       with:
@@ -184,7 +176,7 @@ jobs:
       id: cache-deps-linux
       uses: actions/cache@v5
       with:
-        key: ${{ runner.os }}-deps-${{ hashFiles('.github/workflows/main.yml') }}-sdl2.30.3-tinyxml10.0.0-libzip1.10.1
+        key: ${{ runner.os }}-deps-${{ hashFiles('.github/workflows/main.yml', 'mm/**/CMakeLists.txt') }}
         path: deps
     - name: Create deps folder
       run: mkdir -p deps
@@ -330,7 +322,7 @@ jobs:
       with:
         variant: sccache
         max-size: "2G"
-        key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h') }}
+        key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-
     - name: Restore Cached VCPKG folder

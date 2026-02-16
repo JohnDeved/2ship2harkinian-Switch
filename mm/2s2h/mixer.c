@@ -682,7 +682,8 @@ void aFilterImpl(uint8_t flags, uint16_t count_or_buf, int16_t* state_or_filter)
                 const int16x8_t s = vld1q_s16(&tmp[i]);
                 int32x4_t prod = vmull_s16(vget_low_s16(s), vget_low_s16(filt_rev));
                 prod = vmlal_s16(prod, vget_high_s16(s), vget_high_s16(filt_rev));
-                int64_t sample = 0x4000 + (int64_t)vaddvq_s32(prod);
+                int64x2_t prod64 = vpaddlq_s32(prod);
+                int64_t sample = 0x4000 + vaddvq_s64(prod64);
                 buf[i] = clamp16((int32_t)(sample >> 15));
             }
 #else

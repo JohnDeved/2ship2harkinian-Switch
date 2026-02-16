@@ -205,8 +205,6 @@ void Matrix_Mult(MtxF* mf, MatrixMode mode) {
 void Matrix_Translate(f32 x, f32 y, f32 z, MatrixMode mode) {
     FrameInterpolation_RecordMatrixTranslate(x, y, z, mode);
     MtxF* cmf = sCurrentMatrix;
-    f32 tempX;
-    f32 tempY;
 
     if (mode == MTXMODE_APPLY) {
 #if defined(__ARM_NEON) && defined(__aarch64__)
@@ -219,6 +217,8 @@ void Matrix_Translate(f32 x, f32 y, f32 z, MatrixMode mode) {
         col3 = vmlaq_n_f32(col3, col2, z);
         vst1q_f32(&cmf->xw, col3);
 #else
+        f32 tempX;
+        f32 tempY;
         tempX = cmf->xx;
         tempY = cmf->xy;
         cmf->xw += tempX * x + tempY * y + cmf->xz * z;
@@ -317,8 +317,6 @@ void Matrix_RotateXS(s16 x, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
-    f32 tempY;
-    f32 tempZ;
 
     if (mode == MTXMODE_APPLY) {
         if (x != 0) {
@@ -335,6 +333,8 @@ void Matrix_RotateXS(s16 x, MatrixMode mode) {
             vst1q_f32(&cmf->xy, new_col1);
             vst1q_f32(&cmf->xz, new_col2);
 #else
+            f32 tempY;
+            f32 tempZ;
             tempY = cmf->xy;
             tempZ = cmf->xz;
             cmf->xy = tempY * cos + tempZ * sin;
@@ -491,8 +491,6 @@ void Matrix_RotateXFApply(f32 x) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
-    f32 tempY;
-    f32 tempZ;
     s32 pad;
 
     if (x != 0.0f) {
@@ -509,6 +507,8 @@ void Matrix_RotateXFApply(f32 x) {
         vst1q_f32(&cmf->xy, new_col1);
         vst1q_f32(&cmf->xz, new_col2);
 #else
+        f32 tempY;
+        f32 tempZ;
         tempY = cmf->xy;
         tempZ = cmf->xz;
         cmf->xy = (tempY * cos) + (tempZ * sin);
@@ -604,8 +604,6 @@ void Matrix_RotateYS(s16 y, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
-    f32 tempX;
-    f32 tempZ;
 
     if (mode == MTXMODE_APPLY) {
         if (y != 0) {
@@ -622,6 +620,8 @@ void Matrix_RotateYS(s16 y, MatrixMode mode) {
             vst1q_f32(&cmf->xx, new_col0);
             vst1q_f32(&cmf->xz, new_col2);
 #else
+            f32 tempX;
+            f32 tempZ;
             tempX = cmf->xx;
             tempZ = cmf->xz;
             cmf->xx = tempX * cos - tempZ * sin;
@@ -794,8 +794,6 @@ void Matrix_RotateZS(s16 z, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
-    f32 tempX;
-    f32 tempY;
     f32 zero = 0.0;
     f32 one = 1.0;
 
@@ -814,6 +812,8 @@ void Matrix_RotateZS(s16 z, MatrixMode mode) {
             vst1q_f32(&cmf->xx, new_col0);
             vst1q_f32(&cmf->xy, new_col1);
 #else
+            f32 tempX;
+            f32 tempY;
             tempX = cmf->xx;
             tempY = cmf->xy;
             cmf->xx = tempX * cos + tempY * sin;
@@ -975,8 +975,6 @@ void Matrix_RotateZF(f32 z, MatrixMode mode) {
 void Matrix_RotateZYX(s16 x, s16 y, s16 z, MatrixMode mode) {
     FrameInterpolation_RecordMatrixRotateZYX(x, y, z, mode);
     MtxF* cmf = sCurrentMatrix;
-    f32 temp1;
-    f32 temp2;
     f32 sin;
     f32 cos;
 
@@ -995,25 +993,29 @@ void Matrix_RotateZYX(s16 x, s16 y, s16 z, MatrixMode mode) {
                 vst1q_f32(&cmf->xy, nc1);
             }
 #else
-            temp1 = cmf->xx;
-            temp2 = cmf->xy;
-            cmf->xx = temp1 * cos + temp2 * sin;
-            cmf->xy = temp2 * cos - temp1 * sin;
+            {
+                f32 temp1;
+                f32 temp2;
+                temp1 = cmf->xx;
+                temp2 = cmf->xy;
+                cmf->xx = temp1 * cos + temp2 * sin;
+                cmf->xy = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->yx;
-            temp2 = cmf->yy;
-            cmf->yx = temp1 * cos + temp2 * sin;
-            cmf->yy = temp2 * cos - temp1 * sin;
+                temp1 = cmf->yx;
+                temp2 = cmf->yy;
+                cmf->yx = temp1 * cos + temp2 * sin;
+                cmf->yy = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->zx;
-            temp2 = cmf->zy;
-            cmf->zx = temp1 * cos + temp2 * sin;
-            cmf->zy = temp2 * cos - temp1 * sin;
+                temp1 = cmf->zx;
+                temp2 = cmf->zy;
+                cmf->zx = temp1 * cos + temp2 * sin;
+                cmf->zy = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->wx;
-            temp2 = cmf->wy;
-            cmf->wx = temp1 * cos + temp2 * sin;
-            cmf->wy = temp2 * cos - temp1 * sin;
+                temp1 = cmf->wx;
+                temp2 = cmf->wy;
+                cmf->wx = temp1 * cos + temp2 * sin;
+                cmf->wy = temp2 * cos - temp1 * sin;
+            }
 #endif
         }
 
@@ -1031,25 +1033,29 @@ void Matrix_RotateZYX(s16 x, s16 y, s16 z, MatrixMode mode) {
                 vst1q_f32(&cmf->xz, nc2);
             }
 #else
-            temp1 = cmf->xx;
-            temp2 = cmf->xz;
-            cmf->xx = temp1 * cos - temp2 * sin;
-            cmf->xz = temp1 * sin + temp2 * cos;
+            {
+                f32 temp1;
+                f32 temp2;
+                temp1 = cmf->xx;
+                temp2 = cmf->xz;
+                cmf->xx = temp1 * cos - temp2 * sin;
+                cmf->xz = temp1 * sin + temp2 * cos;
 
-            temp1 = cmf->yx;
-            temp2 = cmf->yz;
-            cmf->yx = temp1 * cos - temp2 * sin;
-            cmf->yz = temp1 * sin + temp2 * cos;
+                temp1 = cmf->yx;
+                temp2 = cmf->yz;
+                cmf->yx = temp1 * cos - temp2 * sin;
+                cmf->yz = temp1 * sin + temp2 * cos;
 
-            temp1 = cmf->zx;
-            temp2 = cmf->zz;
-            cmf->zx = temp1 * cos - temp2 * sin;
-            cmf->zz = temp1 * sin + temp2 * cos;
+                temp1 = cmf->zx;
+                temp2 = cmf->zz;
+                cmf->zx = temp1 * cos - temp2 * sin;
+                cmf->zz = temp1 * sin + temp2 * cos;
 
-            temp1 = cmf->wx;
-            temp2 = cmf->wz;
-            cmf->wx = temp1 * cos - temp2 * sin;
-            cmf->wz = temp1 * sin + temp2 * cos;
+                temp1 = cmf->wx;
+                temp2 = cmf->wz;
+                cmf->wx = temp1 * cos - temp2 * sin;
+                cmf->wz = temp1 * sin + temp2 * cos;
+            }
 #endif
         }
 
@@ -1067,25 +1073,29 @@ void Matrix_RotateZYX(s16 x, s16 y, s16 z, MatrixMode mode) {
                 vst1q_f32(&cmf->xz, nc2);
             }
 #else
-            temp1 = cmf->xy;
-            temp2 = cmf->xz;
-            cmf->xy = temp1 * cos + temp2 * sin;
-            cmf->xz = temp2 * cos - temp1 * sin;
+            {
+                f32 temp1;
+                f32 temp2;
+                temp1 = cmf->xy;
+                temp2 = cmf->xz;
+                cmf->xy = temp1 * cos + temp2 * sin;
+                cmf->xz = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->yy;
-            temp2 = cmf->yz;
-            cmf->yy = temp1 * cos + temp2 * sin;
-            cmf->yz = temp2 * cos - temp1 * sin;
+                temp1 = cmf->yy;
+                temp2 = cmf->yz;
+                cmf->yy = temp1 * cos + temp2 * sin;
+                cmf->yz = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->zy;
-            temp2 = cmf->zz;
-            cmf->zy = temp1 * cos + temp2 * sin;
-            cmf->zz = temp2 * cos - temp1 * sin;
+                temp1 = cmf->zy;
+                temp2 = cmf->zz;
+                cmf->zy = temp1 * cos + temp2 * sin;
+                cmf->zz = temp2 * cos - temp1 * sin;
 
-            temp1 = cmf->wy;
-            temp2 = cmf->wz;
-            cmf->wy = temp1 * cos + temp2 * sin;
-            cmf->wz = temp2 * cos - temp1 * sin;
+                temp1 = cmf->wy;
+                temp2 = cmf->wz;
+                cmf->wy = temp1 * cos + temp2 * sin;
+                cmf->wz = temp2 * cos - temp1 * sin;
+            }
 #endif
         }
     } else {

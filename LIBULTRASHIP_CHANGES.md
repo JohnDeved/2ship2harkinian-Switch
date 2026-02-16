@@ -1,11 +1,12 @@
-# Pending libultraship Submodule Changes
+# libultraship Submodule Changes
 
 > **These changes need to be applied manually to the
 > [JohnDeved/libultraship](https://github.com/JohnDeved/libultraship) fork
 > (`main-nx` branch) and then the submodule ref in this repo updated.**
 >
-> The agent could not push directly to the submodule remote. The diff below
-> is against the current upstream ref `e1e1521ce8c3b9f68de688a68b6abfbd0c71106c`.
+> The submodule ref in this PR is **not** bumped — it still points to the
+> original upstream commit `e1e1521ce8c3b9f68de688a68b6abfbd0c71106c`.
+> The diff below describes the changes to apply on top of that ref.
 
 ---
 

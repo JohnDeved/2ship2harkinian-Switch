@@ -948,7 +948,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     }
 
     audio.cv_to_thread.notify_one();
-    static std::vector<std::unordered_map<Mtx*, MtxF>> mtx_replacements;
+    thread_local std::vector<std::unordered_map<Mtx*, MtxF>> mtx_replacements;
     mtx_replacements.clear();
     int target_fps = OTRGlobals::Instance->GetInterpolationFPS();
     static int last_fps;

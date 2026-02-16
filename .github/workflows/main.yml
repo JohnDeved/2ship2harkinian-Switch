@@ -11,11 +11,11 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
     - name: Git Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         submodules: true
     - name: Configure ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         save: ${{ github.ref_name == github.event.repository.default_branch }}
         key: ${{ runner.os }}-otr-ccache-${{ github.ref }}-${{ github.sha }}
@@ -27,7 +27,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y $(cat .github/workflows/apt-deps.txt) libzip-dev zipcmp zipmerge ziptool
     - name: Restore Cached deps folder
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         key: ${{ runner.os }}-deps-${{ github.ref }}-${{ github.sha }}
         restore-keys: |
@@ -83,7 +83,7 @@ jobs:
       with:
         submodules: true
     - name: Configure ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         create-symlink: true
         save: ${{ github.ref_name == github.event.repository.default_branch }}
@@ -99,7 +99,7 @@ jobs:
         sudo chmod +x /opt/homebrew/bin/gtar
     - name: Restore Cached MacPorts
       id: restore-cache-macports
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         key: ${{ runner.os }}-14-macports-${{ hashFiles('.github/workflows/macports-deps.txt') }}-${{ github.sha }}
         restore-keys: |
@@ -145,7 +145,7 @@ jobs:
           readme.txt
     - name: Save Cache MacPorts
       if: ${{ github.ref_name == github.event.repository.default_branch }}
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       with:
         key: ${{ steps.restore-cache-macports.outputs.cache-primary-key }}
         path: /opt/local/
@@ -155,7 +155,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
     - name: Git Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         submodules: true
     - name: Install dependencies
@@ -163,7 +163,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y $(cat .github/workflows/apt-deps.txt)
     - name: Configure ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         save: ${{ github.ref_name == github.event.repository.default_branch }}
         key: ${{ runner.os }}-ccache-${{ github.ref }}-${{ github.sha }}
@@ -172,7 +172,7 @@ jobs:
           ${{ runner.os }}-ccache
     - name: Restore Cached deps folder
       id: restore-cache-deps
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         key: ${{ runner.os }}-deps-${{ github.ref }}-${{ github.sha }}
         restore-keys: |
@@ -247,7 +247,7 @@ jobs:
           readme.txt
     - name: Save Cache deps folder
       if: ${{ github.ref_name == github.event.repository.default_branch }}
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       with:
         key: ${{ steps.restore-cache-deps.outputs.cache-primary-key }}
         path: deps
@@ -257,7 +257,7 @@ jobs:
     container:
       image: devkitpro/devkita64:latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
           submodules: recursive
     - name: Install dependencies
@@ -272,11 +272,11 @@ jobs:
     - name: Fix dubious ownership error
       if: ${{ vars.LINUX_RUNNER }}
       run: git config --global --add safe.directory '*'
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v6
       with:
         submodules: recursive
     - name: ccache
-      uses: hendrikmuhs/ccache-action@v1.2.11
+      uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         key: ${{ runner.os }}-switch-ccache-${{ github.ref }}-${{ github.sha }}
         restore-keys: |
@@ -317,11 +317,11 @@ jobs:
         choco install ninja -y
         Remove-Item -Path "C:\ProgramData\Chocolatey\bin\ccache.exe" -Force -ErrorAction SilentlyContinue
     - name: Git Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         submodules: true
     - name: Configure sccache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         variant: sccache
         max-size: "2G"
@@ -333,7 +333,7 @@ jobs:
           ${{ runner.os }}-ccache
     - name: Restore Cached VCPKG folder
       id: restore-cache-vcpkg
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         key: ${{ runner.os }}-vcpkg-${{ github.ref }}-${{ github.sha }}
         restore-keys: |
@@ -341,7 +341,7 @@ jobs:
           ${{ runner.os }}-vcpkg-
         path: vcpkg
     - name: Configure Developer Command Prompt
-      uses: ilammy/msvc-dev-cmd@v1
+      uses: ilammy/msvc-dev-cmd@v1.13.0
     - name: Download 2ship.o2r
       uses: actions/download-artifact@v4
       with:
@@ -367,7 +367,7 @@ jobs:
         path: 2ship-windows
     - name: Save Cache VCPKG folder
       if: ${{ github.ref_name == github.event.repository.default_branch }}
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       with:
         key: ${{ steps.restore-cache-vcpkg.outputs.cache-primary-key }}
         path: vcpkg

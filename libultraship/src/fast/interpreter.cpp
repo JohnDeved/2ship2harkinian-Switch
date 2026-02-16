@@ -1214,6 +1214,7 @@ void Interpreter::CalculateNormalDir(const F3DLight_t* light, float coeffs[3]) {
 }
 
 void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
+    Fast3DScopedTimer timer(mFrameStats.timeMatrixOps, mProfilingEnabled);
     float matrix[4][4];
 
     if (auto it = mCurMtxReplacements->find((Mtx*)addr); it != mCurMtxReplacements->end()) {
@@ -1271,6 +1272,7 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
 }
 
 void Interpreter::GfxSpPopMatrix(uint32_t count) {
+    Fast3DScopedTimer timer(mFrameStats.timeMatrixOps, mProfilingEnabled);
     while (count--) {
         if (mRsp->modelview_matrix_stack_size > 0) {
             --mRsp->modelview_matrix_stack_size;
@@ -4557,21 +4559,25 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
 
     const uint64_t runStartNs = mProfilingEnabled ? Fast3DTimerNowNs() : 0;
 
-    SpReset();
+    {
+        Fast3DScopedTimer setupTimer(mFrameStats.timeFrameSetup, mProfilingEnabled);
 
-    mGetPixelDepthPending.clear();
-    mGetPixelDepthCached.clear();
+        SpReset();
 
-    mCurMtxReplacements = &mtx_replacements;
+        mGetPixelDepthPending.clear();
+        mGetPixelDepthCached.clear();
 
-    mRapi->UpdateFramebufferParameters(0, mGfxCurrentWindowDimensions.width, mGfxCurrentWindowDimensions.height, 1,
-                                       false, true, true, !mRendersToFb);
-    mRapi->StartFrame();
-    mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
-    mRapi->ClearFramebuffer(false, true);
-    mRdp->viewport_or_scissor_changed = true;
-    mRenderingState.viewport = {};
-    mRenderingState.scissor = {};
+        mCurMtxReplacements = &mtx_replacements;
+
+        mRapi->UpdateFramebufferParameters(0, mGfxCurrentWindowDimensions.width, mGfxCurrentWindowDimensions.height, 1,
+                                           false, true, true, !mRendersToFb);
+        mRapi->StartFrame();
+        mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
+        mRapi->ClearFramebuffer(false, true);
+        mRdp->viewport_or_scissor_changed = true;
+        mRenderingState.viewport = {};
+        mRenderingState.scissor = {};
+    }
 
     auto dbg = Ship::Context::GetInstance()->GetGfxDebugger();
     g_exec_stack.start((F3DGfx*)commands);
@@ -4599,25 +4605,29 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
     mGfxFrameBuffer = 0;
     currentDir = std::stack<std::string>();
 
-    if (mRendersToFb) {
-        mRapi->StartDrawToFramebuffer(0, 1);
-        mRapi->ClearFramebuffer(true, true);
-        if (mMsaaLevel > 1) {
-            if (!ViewportMatchesRendererResolution()) {
-                mRapi->ResolveMSAAColorBuffer(mGameFbMsaaResolved, mGameFb);
-                mGfxFrameBuffer = (uintptr_t)mRapi->GetFramebufferTextureId(mGameFbMsaaResolved);
-            } else {
-                mRapi->ResolveMSAAColorBuffer(0, mGameFb);
-            }
-        } else {
-            mGfxFrameBuffer = (uintptr_t)mRapi->GetFramebufferTextureId(mGameFb);
-        }
-    } else if (mFbActive) {
-        // Failsafe reset to main framebuffer to prevent softlocking the renderer
-        mFbActive = 0;
-        mRapi->StartDrawToFramebuffer(0, 1);
+    {
+        Fast3DScopedTimer teardownTimer(mFrameStats.timeFrameSetup, mProfilingEnabled);
 
-        assert(0 && "active framebuffer was never reset back to original");
+        if (mRendersToFb) {
+            mRapi->StartDrawToFramebuffer(0, 1);
+            mRapi->ClearFramebuffer(true, true);
+            if (mMsaaLevel > 1) {
+                if (!ViewportMatchesRendererResolution()) {
+                    mRapi->ResolveMSAAColorBuffer(mGameFbMsaaResolved, mGameFb);
+                    mGfxFrameBuffer = (uintptr_t)mRapi->GetFramebufferTextureId(mGameFbMsaaResolved);
+                } else {
+                    mRapi->ResolveMSAAColorBuffer(0, mGameFb);
+                }
+            } else {
+                mGfxFrameBuffer = (uintptr_t)mRapi->GetFramebufferTextureId(mGameFb);
+            }
+        } else if (mFbActive) {
+            // Failsafe reset to main framebuffer to prevent softlocking the renderer
+            mFbActive = 0;
+            mRapi->StartDrawToFramebuffer(0, 1);
+
+            assert(0 && "active framebuffer was never reset back to original");
+        }
     }
 
     if (mProfilingEnabled) {
@@ -4733,11 +4743,16 @@ void Interpreter::AdjustPixelDepthCoordinates(float& x, float& y) {
 }
 
 void Interpreter::GetPixelDepthPrepare(float x, float y) {
+    Fast3DScopedTimer timer(mFrameStats.timePixelDepth, mProfilingEnabled);
     AdjustPixelDepthCoordinates(x, y);
     mGetPixelDepthPending.emplace(x, y);
+    if (mProfilingEnabled) {
+        mFrameStats.pixelDepthQueries++;
+    }
 }
 
 uint16_t Interpreter::GetPixelDepth(float x, float y) {
+    Fast3DScopedTimer timer(mFrameStats.timePixelDepth, mProfilingEnabled);
     AdjustPixelDepthCoordinates(x, y);
 
     if (auto it = mGetPixelDepthCached.find(std::make_pair(x, y)); it != mGetPixelDepthCached.end()) {

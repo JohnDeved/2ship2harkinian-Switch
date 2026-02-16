@@ -379,14 +379,19 @@ struct Fast3DStats {
     uint32_t verticesSubmitted;
     uint32_t trianglesSubmitted;
     uint32_t stateChangeFlushes;
+    uint32_t pixelDepthQueries;
 
     uint64_t timeTotal;
-    uint64_t timeGbiDispatch;
+    uint64_t timeGbiDispatch; // computed: timeTotal minus all other accounted sub-timings
     uint64_t timeTriProcessing;
     uint64_t timeTextureSetup;
     uint64_t timeShaderSetup;
     uint64_t timeDrawSubmit;
     uint64_t timeVertexLoad;
+    uint64_t timeMatrixOps;    // matrix multiply, push/pop, normal dir calculations
+    uint64_t timePixelDepth;   // pixel depth prepare + readback
+    uint64_t timeFlushOverhead; // Flush() bookkeeping (excluding the draw call itself)
+    uint64_t timeFrameSetup;   // Run() setup/teardown, framebuffer ops, clear, MSAA resolve
 
     float avgBatchSize;
     float usPerTriangle;
@@ -401,7 +406,9 @@ struct Fast3DStats {
         usPerTriangle = trianglesSubmitted > 0 ? (float)timeTotal / (float)trianglesSubmitted / 1000.0f : 0.0f;
         usPerDrawCall = drawCalls > 0 ? (float)timeTotal / (float)drawCalls / 1000.0f : 0.0f;
 
-        const uint64_t accounted = timeTriProcessing + timeTextureSetup + timeShaderSetup + timeDrawSubmit + timeVertexLoad;
+        const uint64_t accounted = timeTriProcessing + timeTextureSetup + timeShaderSetup +
+                                   timeDrawSubmit + timeVertexLoad + timeMatrixOps +
+                                   timePixelDepth + timeFlushOverhead + timeFrameSetup;
         timeGbiDispatch = timeTotal > accounted ? (timeTotal - accounted) : 0;
     }
 };

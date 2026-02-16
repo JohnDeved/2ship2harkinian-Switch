@@ -989,6 +989,10 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)stats.timeShaderSetup / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DRAW_MS, (float)stats.timeDrawSubmit / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VTX_MS, (float)stats.timeVertexLoad / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_MTX_MS, (float)stats.timeMatrixOps / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DEPTH_MS, (float)stats.timePixelDepth / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SETUP_MS, (float)stats.timeFrameSetup / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)stats.pixelDepthQueries);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
         }
 

@@ -299,7 +299,7 @@ static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
     "GL Batch Flushes",   "GL State Flushes",  "GL Shader Switches", "GL Shader Compiles", "GL Texture Binds",
     "GL Tex Cache Miss",  "GL Vert Submitted", "GL Tri Submitted",   "GL Time Total ms", "GL Time Dispatch ms",
     "GL Time Tri ms",     "GL Time Tex ms",    "GL Time Shader ms",  "GL Time Draw ms",  "GL Time Vtx ms",
-    "GL Avg Batch Size",
+    "GL Time Mtx ms",     "GL Time Depth ms",  "GL Time Setup ms",   "GL Depth Queries", "GL Avg Batch Size",
 };
 
 // ── Helper functions ───────────────────────────────────────────────────
@@ -404,6 +404,10 @@ static void FrameProfiler_ExportSnapshot(void) {
     float glTimeShader = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_SHADER_MS);
     float glTimeDraw = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DRAW_MS);
     float glTimeVtx = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_VTX_MS);
+    float glTimeMtx = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_MTX_MS);
+    float glTimeDepth = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DEPTH_MS);
+    float glTimeSetup = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_SETUP_MS);
+    float glDepthQueries = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES);
     float glAvgBatch = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_AVG_BATCH_SIZE);
 
     out << "DL Iterations: " << dlIter << std::endl;
@@ -422,9 +426,12 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "GL Texture Binds: " << glTextureBinds << "  (cache misses: " << glTextureMisses << ")" << std::endl;
     out << "GL Triangles Submitted: " << glTris << "  Vertices Submitted: " << glVerts << std::endl;
     out << "GL Avg Batch Size: " << glAvgBatch << " tris/draw" << std::endl;
+    if (glDepthQueries > 0.0f) {
+        out << "Pixel Depth Queries: " << glDepthQueries << std::endl;
+    }
     out << "GL Timing (ms): total=" << glTimeTotal << " dispatch=" << glTimeDispatch << " tri=" << glTimeTri
-        << " tex=" << glTimeTex
-        << " shader=" << glTimeShader << " draw=" << glTimeDraw << " vtx=" << glTimeVtx << std::endl;
+        << " tex=" << glTimeTex << " shader=" << glTimeShader << " draw=" << glTimeDraw << " vtx=" << glTimeVtx
+        << " mtx=" << glTimeMtx << " depth=" << glTimeDepth << " setup=" << glTimeSetup << std::endl;
 
     float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
     if (dlMs > 0.1f && tris > 0.0f) {
@@ -595,6 +602,10 @@ void FrameProfilerWindow::DrawElement() {
     float glTimeShader = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_SHADER_MS);
     float glTimeDraw = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DRAW_MS);
     float glTimeVtx = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_VTX_MS);
+    float glTimeMtx = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_MTX_MS);
+    float glTimeDepth = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DEPTH_MS);
+    float glTimeSetup = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_SETUP_MS);
+    float glDepthQueries = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES);
     float glAvgBatch = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_AVG_BATCH_SIZE);
 
     ImGui::Text("DL Iterations: %.0f   Total Commands: %.0f", dlIter, dlCmds);
@@ -609,8 +620,35 @@ void FrameProfilerWindow::DrawElement() {
     ImGui::Text("GL Shader Switches: %.0f (compiles: %.0f)", glShaderSwitches, glShaderCompiles);
     ImGui::Text("GL Texture Binds: %.0f (cache misses: %.0f)", glTextureBinds, glTextureMisses);
     ImGui::Text("GL Submitted: %.0f tris, %.0f verts  Avg batch: %.1f tris/draw", glTris, glVerts, glAvgBatch);
-    ImGui::Text("GL Time: total %.2f  dispatch %.2f  tri %.2f  tex %.2f  shader %.2f  draw %.2f  vtx %.2f ms",
-                glTimeTotal, glTimeDispatch, glTimeTri, glTimeTex, glTimeShader, glTimeDraw, glTimeVtx);
+    if (glDepthQueries > 0.0f) {
+        ImGui::Text("Pixel Depth Queries: %.0f", glDepthQueries);
+    }
+
+    // Detailed timing breakdown with visual bar chart
+    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "--- Fast3D Timing Breakdown (%.2f ms total) ---", glTimeTotal);
+    float timingBarMax = glTimeTotal > 0.01f ? glTimeTotal : 1.0f;
+
+    struct TimingEntry { const char* name; float ms; ImVec4 color; };
+    TimingEntry timings[] = {
+        { "Triangle Processing", glTimeTri, ImVec4(1.0f, 0.4f, 0.4f, 1.0f) },
+        { "Draw Submit (GL)",    glTimeDraw, ImVec4(1.0f, 0.7f, 0.3f, 1.0f) },
+        { "Vertex Load",         glTimeVtx, ImVec4(0.4f, 0.8f, 1.0f, 1.0f) },
+        { "Texture Setup",       glTimeTex, ImVec4(0.4f, 1.0f, 0.6f, 1.0f) },
+        { "Matrix Ops",          glTimeMtx, ImVec4(0.8f, 0.6f, 1.0f, 1.0f) },
+        { "Frame Setup/Teardown",glTimeSetup, ImVec4(0.6f, 0.6f, 0.6f, 1.0f) },
+        { "Pixel Depth",         glTimeDepth, ImVec4(1.0f, 1.0f, 0.4f, 1.0f) },
+        { "Shader Setup",        glTimeShader, ImVec4(0.4f, 1.0f, 1.0f, 1.0f) },
+        { "Dispatch (residual)", glTimeDispatch, ImVec4(0.7f, 0.7f, 0.7f, 1.0f) },
+    };
+    for (const auto& t : timings) {
+        if (t.ms < 0.001f) continue; // skip zero entries
+        float frac = t.ms / timingBarMax;
+        if (frac > 1.0f) frac = 1.0f;
+        float pct = glTimeTotal > 0.01f ? (t.ms / glTimeTotal * 100.0f) : 0.0f;
+        ImGui::TextColored(t.color, "  %-22s %6.2f ms (%4.1f%%)", t.name, t.ms, pct);
+        ImGui::SameLine();
+        ImGui::ProgressBar(frac, ImVec2(150, 0), "");
+    }
 
     // Cost-per-unit estimates
     float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);

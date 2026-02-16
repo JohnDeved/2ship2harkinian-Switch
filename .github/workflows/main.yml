@@ -14,17 +14,11 @@ jobs:
       uses: actions/checkout@v6
       with:
         submodules: true
-    - name: Cache apt packages
-      uses: actions/cache@v5
-      with:
-        key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/apt-deps.txt') }}
-        path: |
-          /var/cache/apt/archives
     - name: Configure ccache
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         max-size: "500M"
-        key: ${{ runner.os }}-otr-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h') }}
+        key: ${{ runner.os }}-otr-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-otr-ccache-
     - name: Install dependencies
@@ -92,7 +86,7 @@ jobs:
       with:
         create-symlink: true
         max-size: "1G"
-        key: ${{ runner.os }}-14-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.m', 'mm/**/*.mm') }}
+        key: ${{ runner.os }}-14-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'mm/**/*.m', 'mm/**/*.mm') }}
         restore-keys: |
           ${{ runner.os }}-14-ccache-
     # Needed to apply sudo for macports cache restore
@@ -155,12 +149,6 @@ jobs:
       uses: actions/checkout@v6
       with:
         submodules: true
-    - name: Cache apt packages
-      uses: actions/cache@v5
-      with:
-        key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/apt-deps.txt') }}
-        path: |
-          /var/cache/apt/archives
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -169,7 +157,7 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         max-size: "1G"
-        key: ${{ runner.os }}-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h') }}
+        key: ${{ runner.os }}-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-
     - name: Restore Cached deps folder
@@ -274,7 +262,7 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         max-size: "1G"
-        key: ${{ runner.os }}-switch-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h') }}
+        key: ${{ runner.os }}-switch-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-switch-ccache-
     - name: Build 2ship

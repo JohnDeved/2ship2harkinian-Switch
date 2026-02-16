@@ -24,10 +24,26 @@ MtxF sMtxFClear = { {
  * \f[ [\texttt{xyzDest}, \texttt{wDest}] = [\texttt{src}, 1] \cdot [mf] \f]
  */
 void SkinMatrix_Vec3fMtxFMultXYZW(MtxF* mf, Vec3f* src, Vec3f* xyzDest, f32* wDest) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t col0 = vld1q_f32((const float*)&mf->xx);
+    float32x4_t col1 = vld1q_f32((const float*)&mf->xy);
+    float32x4_t col2 = vld1q_f32((const float*)&mf->xz);
+    float32x4_t col3 = vld1q_f32((const float*)&mf->xw);
+
+    float32x4_t result = vmlaq_n_f32(col3, col0, src->x);
+    result = vmlaq_n_f32(result, col1, src->y);
+    result = vmlaq_n_f32(result, col2, src->z);
+
+    xyzDest->x = vgetq_lane_f32(result, 0);
+    xyzDest->y = vgetq_lane_f32(result, 1);
+    xyzDest->z = vgetq_lane_f32(result, 2);
+    *wDest = vgetq_lane_f32(result, 3);
+#else
     xyzDest->x = mf->xw + ((src->x * mf->xx) + (src->y * mf->xy) + (src->z * mf->xz));
     xyzDest->y = mf->yw + ((src->x * mf->yx) + (src->y * mf->yy) + (src->z * mf->yz));
     xyzDest->z = mf->zw + ((src->x * mf->zx) + (src->y * mf->zy) + (src->z * mf->zz));
     *wDest = mf->ww + ((src->x * mf->wx) + (src->y * mf->wy) + (src->z * mf->wz));
+#endif
 }
 
 /**
@@ -36,6 +52,20 @@ void SkinMatrix_Vec3fMtxFMultXYZW(MtxF* mf, Vec3f* src, Vec3f* xyzDest, f32* wDe
  * \f[ [\texttt{dest}, -] = [\texttt{src}, 1] \cdot [mf] \f]
  */
 void SkinMatrix_Vec3fMtxFMultXYZ(MtxF* mf, Vec3f* src, Vec3f* dest) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t col0 = vld1q_f32((const float*)&mf->xx);
+    float32x4_t col1 = vld1q_f32((const float*)&mf->xy);
+    float32x4_t col2 = vld1q_f32((const float*)&mf->xz);
+    float32x4_t col3 = vld1q_f32((const float*)&mf->xw);
+
+    float32x4_t result = vmlaq_n_f32(col3, col0, src->x);
+    result = vmlaq_n_f32(result, col1, src->y);
+    result = vmlaq_n_f32(result, col2, src->z);
+
+    dest->x = vgetq_lane_f32(result, 0);
+    dest->y = vgetq_lane_f32(result, 1);
+    dest->z = vgetq_lane_f32(result, 2);
+#else
     f32 mx = mf->xx;
     f32 my = mf->xy;
     f32 mz = mf->xz;
@@ -54,6 +84,7 @@ void SkinMatrix_Vec3fMtxFMultXYZ(MtxF* mf, Vec3f* src, Vec3f* dest) {
     mz = mf->zz;
     mw = mf->zw;
     dest->z = mw + ((src->x * mx) + (src->y * my) + (src->z * mz));
+#endif
 }
 
 /**
@@ -284,6 +315,12 @@ void SkinMatrix_Clear(MtxF* mf) {
 }
 
 void SkinMatrix_MtxFCopy(MtxF* src, MtxF* dest) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    vst1q_f32((float*)&dest->xx, vld1q_f32((const float*)&src->xx));
+    vst1q_f32((float*)&dest->xy, vld1q_f32((const float*)&src->xy));
+    vst1q_f32((float*)&dest->xz, vld1q_f32((const float*)&src->xz));
+    vst1q_f32((float*)&dest->xw, vld1q_f32((const float*)&src->xw));
+#else
     dest->xx = src->xx;
     dest->yx = src->yx;
     dest->zx = src->zx;
@@ -300,6 +337,7 @@ void SkinMatrix_MtxFCopy(MtxF* src, MtxF* dest) {
     dest->yw = src->yw;
     dest->zw = src->zw;
     dest->ww = src->ww;
+#endif
 }
 
 /**

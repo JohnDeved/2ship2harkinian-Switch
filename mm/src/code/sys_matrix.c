@@ -1376,9 +1376,24 @@ Mtx* Matrix_MtxFToNewMtx(MtxF* src, GraphicsContext* gfxCtx) {
 void Matrix_MultVec3f(Vec3f* src, Vec3f* dest) {
     MtxF* cmf = sCurrentMatrix;
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t col0 = vld1q_f32((const float*)&cmf->xx);
+    float32x4_t col1 = vld1q_f32((const float*)&cmf->xy);
+    float32x4_t col2 = vld1q_f32((const float*)&cmf->xz);
+    float32x4_t col3 = vld1q_f32((const float*)&cmf->xw);
+
+    float32x4_t result = vmlaq_n_f32(col3, col0, src->x);
+    result = vmlaq_n_f32(result, col1, src->y);
+    result = vmlaq_n_f32(result, col2, src->z);
+
+    dest->x = vgetq_lane_f32(result, 0);
+    dest->y = vgetq_lane_f32(result, 1);
+    dest->z = vgetq_lane_f32(result, 2);
+#else
     dest->x = cmf->xw + (cmf->xx * src->x + cmf->xy * src->y + cmf->xz * src->z);
     dest->y = cmf->yw + (cmf->yx * src->x + cmf->yy * src->y + cmf->yz * src->z);
     dest->z = cmf->zw + (cmf->zx * src->x + cmf->zy * src->y + cmf->zz * src->z);
+#endif
 }
 
 /**
@@ -1474,8 +1489,22 @@ void Matrix_MultVecZ(f32 z, Vec3f* dest) {
 void Matrix_MultVec3fXZ(Vec3f* src, Vec3f* dest) {
     MtxF* cmf = sCurrentMatrix;
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t col0 = vld1q_f32((const float*)&cmf->xx);
+    float32x4_t col1 = vld1q_f32((const float*)&cmf->xy);
+    float32x4_t col2 = vld1q_f32((const float*)&cmf->xz);
+    float32x4_t col3 = vld1q_f32((const float*)&cmf->xw);
+
+    float32x4_t result = vmlaq_n_f32(col3, col0, src->x);
+    result = vmlaq_n_f32(result, col1, src->y);
+    result = vmlaq_n_f32(result, col2, src->z);
+
+    dest->x = vgetq_lane_f32(result, 0);
+    dest->z = vgetq_lane_f32(result, 2);
+#else
     dest->x = cmf->xw + (cmf->xx * src->x + cmf->xy * src->y + cmf->xz * src->z);
     dest->z = cmf->zw + (cmf->zx * src->x + cmf->zy * src->y + cmf->zz * src->z);
+#endif
 }
 
 /**
@@ -1487,14 +1516,12 @@ void Matrix_MultVec3fXZ(Vec3f* src, Vec3f* dest) {
  * @remark original name: "Matrix_copy_MtxF"
  */
 void Matrix_MtxFCopy(MtxF* dest, MtxF* src) {
-    dest->xx = src->xx;
-    dest->yx = src->yx;
-    dest->zx = src->zx;
-    dest->wx = src->wx;
-    dest->xy = src->xy;
-    dest->yy = src->yy;
-    dest->zy = src->zy;
-    dest->wy = src->wy;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    vst1q_f32((float*)&dest->xx, vld1q_f32((const float*)&src->xx));
+    vst1q_f32((float*)&dest->xy, vld1q_f32((const float*)&src->xy));
+    vst1q_f32((float*)&dest->xz, vld1q_f32((const float*)&src->xz));
+    vst1q_f32((float*)&dest->xw, vld1q_f32((const float*)&src->xw));
+#else
     dest->xx = src->xx;
     dest->yx = src->yx;
     dest->zx = src->zx;
@@ -1511,14 +1538,7 @@ void Matrix_MtxFCopy(MtxF* dest, MtxF* src) {
     dest->yw = src->yw;
     dest->zw = src->zw;
     dest->ww = src->ww;
-    dest->xz = src->xz;
-    dest->yz = src->yz;
-    dest->zz = src->zz;
-    dest->wz = src->wz;
-    dest->xw = src->xw;
-    dest->yw = src->yw;
-    dest->zw = src->zw;
-    dest->ww = src->ww;
+#endif
 }
 
 /**
@@ -1545,9 +1565,24 @@ void Matrix_MtxToMtxF(Mtx* src, MtxF* dest) {
  * @param[in] mf matrix to multiply by
  */
 void Matrix_MultVec3fExt(Vec3f* src, Vec3f* dest, MtxF* mf) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t col0 = vld1q_f32((const float*)&mf->xx);
+    float32x4_t col1 = vld1q_f32((const float*)&mf->xy);
+    float32x4_t col2 = vld1q_f32((const float*)&mf->xz);
+    float32x4_t col3 = vld1q_f32((const float*)&mf->xw);
+
+    float32x4_t result = vmlaq_n_f32(col3, col0, src->x);
+    result = vmlaq_n_f32(result, col1, src->y);
+    result = vmlaq_n_f32(result, col2, src->z);
+
+    dest->x = vgetq_lane_f32(result, 0);
+    dest->y = vgetq_lane_f32(result, 1);
+    dest->z = vgetq_lane_f32(result, 2);
+#else
     dest->x = mf->xw + (mf->xx * src->x + mf->xy * src->y + mf->xz * src->z);
     dest->y = mf->yw + (mf->yx * src->x + mf->yy * src->y + mf->yz * src->z);
     dest->z = mf->zw + (mf->zx * src->x + mf->zy * src->y + mf->zz * src->z);
+#endif
 }
 
 /**

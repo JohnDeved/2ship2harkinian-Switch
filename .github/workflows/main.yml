@@ -24,7 +24,7 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         max-size: "500M"
-        key: ${{ runner.os }}-otr-ccache-${{ hashFiles('**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h') }}
+        key: ${{ runner.os }}-otr-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h') }}
         restore-keys: |
           ${{ runner.os }}-otr-ccache-
     - name: Install dependencies
@@ -35,7 +35,7 @@ jobs:
       id: cache-deps-otr
       uses: actions/cache@v5
       with:
-        key: ${{ runner.os }}-deps-${{ hashFiles('.github/workflows/main.yml', 'mm/**/CMakeLists.txt') }}
+        key: ${{ runner.os }}-deps-${{ hashFiles('mm/**/CMakeLists.txt') }}
         path: deps
     - name: Create deps folder
       run: mkdir -p deps
@@ -92,7 +92,7 @@ jobs:
       with:
         create-symlink: true
         max-size: "1G"
-        key: ${{ runner.os }}-14-ccache-${{ hashFiles('**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.m', 'mm/**/*.mm') }}
+        key: ${{ runner.os }}-14-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.m', 'mm/**/*.mm') }}
         restore-keys: |
           ${{ runner.os }}-14-ccache-
     # Needed to apply sudo for macports cache restore
@@ -169,14 +169,14 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         max-size: "1G"
-        key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h') }}
+        key: ${{ runner.os }}-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h') }}
         restore-keys: |
           ${{ runner.os }}-ccache-
     - name: Restore Cached deps folder
       id: cache-deps-linux
       uses: actions/cache@v5
       with:
-        key: ${{ runner.os }}-deps-${{ hashFiles('.github/workflows/main.yml', 'mm/**/CMakeLists.txt') }}
+        key: ${{ runner.os }}-deps-${{ hashFiles('mm/**/CMakeLists.txt') }}
         path: deps
     - name: Create deps folder
       run: mkdir -p deps
@@ -274,7 +274,7 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
         max-size: "1G"
-        key: ${{ runner.os }}-switch-ccache-${{ hashFiles('**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h') }}
+        key: ${{ runner.os }}-switch-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h') }}
         restore-keys: |
           ${{ runner.os }}-switch-ccache-
     - name: Build 2ship
@@ -322,14 +322,14 @@ jobs:
       with:
         variant: sccache
         max-size: "2G"
-        key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp') }}
+        key: ${{ runner.os }}-ccache-${{ hashFiles('mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-
     - name: Restore Cached VCPKG folder
       id: cache-vcpkg
       uses: actions/cache@v5
       with:
-        key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json', '.github/workflows/main.yml') }}
+        key: ${{ runner.os }}-vcpkg-${{ hashFiles('mm/**/CMakeLists.txt') }}
         restore-keys: |
           ${{ runner.os }}-vcpkg-
         path: vcpkg

@@ -1647,7 +1647,8 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                 } else {
 #if defined(__ARM_NEON) && defined(__aarch64__)
                     // NEON: dot product of vertex normal with light coefficients
-                    float32x4_t n_vec = { (float)vn->n[0], (float)vn->n[1], (float)vn->n[2], 0.0f };
+                    const float n_arr[4] = { (float)vn->n[0], (float)vn->n[1], (float)vn->n[2], 0.0f };
+                    float32x4_t n_vec = vld1q_f32(n_arr);
                     float32x4_t c_vec = vld1q_f32(mRsp->current_lights_coeffs[i]);
                     float32x4_t prod = vmulq_f32(n_vec, c_vec);
                     // Horizontal sum of first 3 lanes
@@ -1675,7 +1676,8 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                 float dotx = 0, doty = 0;
 #if defined(__ARM_NEON) && defined(__aarch64__)
                 // NEON: compute both lookat dot products simultaneously
-                float32x4_t n_vec = { (float)vn->n[0], (float)vn->n[1], (float)vn->n[2], 0.0f };
+                const float n_arr2[4] = { (float)vn->n[0], (float)vn->n[1], (float)vn->n[2], 0.0f };
+                float32x4_t n_vec = vld1q_f32(n_arr2);
                 float32x4_t lx = vld1q_f32(mRsp->current_lookat_coeffs[0]);
                 float32x4_t ly = vld1q_f32(mRsp->current_lookat_coeffs[1]);
                 float32x4_t px = vmulq_f32(n_vec, lx);

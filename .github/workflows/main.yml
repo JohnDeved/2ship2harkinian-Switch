@@ -3,7 +3,80 @@ on:
   push:
 
 jobs:
+  generate-2ship-otr:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Git Checkout
+      uses: actions/checkout@v6
+      with:
+        submodules: true
+    - name: Configure ccache
+      uses: hendrikmuhs/ccache-action@v1.2.20
+      with:
+        max-size: "500M"
+        verbose: 2
+        key: ${{ runner.os }}-otr-ccache-${{ hashFiles('CMakeLists.txt', 'CMake/**/*.cmake', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
+        restore-keys: |
+          ${{ runner.os }}-otr-ccache-
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y $(cat .github/workflows/apt-deps.txt) libzip-dev zipcmp zipmerge ziptool
+    - name: Restore Cached deps folder
+      id: cache-deps-otr
+      uses: actions/cache@v5
+      with:
+        key: ${{ runner.os }}-deps-${{ hashFiles('CMakeLists.txt', 'mm/**/CMakeLists.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-deps-
+        path: deps
+    - name: Create deps folder
+      run: mkdir -p deps
+    - name: Install latest SDL
+      run: |
+        export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+        if [ ! -d "deps/SDL2-2.30.3" ]; then
+          wget https://github.com/libsdl-org/SDL/releases/download/release-2.30.3/SDL2-2.30.3.tar.gz
+          tar -xzf SDL2-2.30.3.tar.gz -C deps
+        fi
+        cd deps/SDL2-2.30.3
+        ./configure --enable-hidapi-libusb
+        make -j 10
+        sudo make install
+        sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
+    - name: Install latest tinyxml2
+      run: |
+        sudo apt-get remove libtinyxml2-dev
+        export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+        if [ ! -d "deps/tinyxml2-10.0.0" ]; then
+          wget https://github.com/leethomason/tinyxml2/archive/refs/tags/10.0.0.tar.gz
+          tar -xzf 10.0.0.tar.gz -C deps
+        fi
+        cd deps/tinyxml2-10.0.0
+        mkdir -p build
+        cd build
+        cmake ..
+        make
+        sudo make install
+    - name: Generate 2ship.o2r
+      run: |
+        export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+        export CCACHE_LOGFILE=${{ github.workspace }}/ccache.log
+        ccache --zero-stats
+        cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release
+        cmake --build build-cmake --config Release --target Generate2ShipOtr --parallel 10
+        ccache --show-stats
+        echo "=== ccache log (last 50 lines) ==="
+        tail -50 ccache.log || true
+    - name: Upload 2ship.o2r
+      uses: actions/upload-artifact@v4
+      with:
+        name: 2ship.o2r
+        path: 2ship.o2r
+        retention-days: 3
+
   build-switch:
+    needs: generate-2ship-otr
     runs-on: ${{ (vars.LINUX_RUNNER && fromJSON(vars.LINUX_RUNNER)) || 'ubuntu-latest' }}
     container:
       image: devkitpro/devkita64:latest
@@ -64,11 +137,17 @@ jobs:
         mv build-switch/mm/*.nro 2ship.nro
         mv README.md readme.txt
 
+    - name: Download 2ship.o2r
+      uses: actions/download-artifact@v4
+      with:
+        name: 2ship.o2r
+
     - name: Upload build
       uses: actions/upload-artifact@v4
       with:
         name: 2ship-switch
         path: |
           2ship.nro
+          2ship.o2r
           readme.txt
           gamecontrollerdb.txt

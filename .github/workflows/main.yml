@@ -2,9 +2,6 @@ name: generate-builds
 on:
   push:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-
 jobs:
   build-switch:
     runs-on: ${{ (vars.LINUX_RUNNER && fromJSON(vars.LINUX_RUNNER)) || 'ubuntu-latest' }}

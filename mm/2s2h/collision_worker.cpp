@@ -3,7 +3,6 @@
 #include <mutex>
 #include <condition_variable>
 #include <thread>
-#include <atomic>
 
 extern "C" void CollisionCheck_OC(struct PlayState* play, CollisionCheckContext* colChkCtx);
 
@@ -12,7 +11,7 @@ static struct {
     std::mutex mutex;
     std::condition_variable cv_submit;
     std::condition_variable cv_done;
-    std::atomic<bool> running{false};
+    bool running{false};
     bool has_work{false};
     bool work_done{true};
 
@@ -22,40 +21,43 @@ static struct {
 } oc_worker;
 
 static void CollisionWorker_Thread() {
-    while (oc_worker.running.load()) {
-        {
-            std::unique_lock<std::mutex> lock(oc_worker.mutex);
-            while (!oc_worker.has_work && oc_worker.running.load()) {
-                oc_worker.cv_submit.wait(lock);
-            }
-            if (!oc_worker.running.load()) {
-                break;
-            }
+    std::unique_lock<std::mutex> lock(oc_worker.mutex);
+    while (oc_worker.running) {
+        while (!oc_worker.has_work && oc_worker.running) {
+            oc_worker.cv_submit.wait(lock);
+        }
+        if (!oc_worker.running) {
+            break;
         }
 
-        // Do the work outside the lock
-        CollisionCheck_OC(oc_worker.play, oc_worker.colChkCtx);
+        // Capture work params and release lock during execution
+        struct PlayState* play = oc_worker.play;
+        CollisionCheckContext* colChkCtx = oc_worker.colChkCtx;
+        lock.unlock();
 
-        {
-            std::unique_lock<std::mutex> lock(oc_worker.mutex);
-            oc_worker.has_work = false;
-            oc_worker.work_done = true;
-        }
+        CollisionCheck_OC(play, colChkCtx);
+
+        lock.lock();
+        oc_worker.has_work = false;
+        oc_worker.work_done = true;
         oc_worker.cv_done.notify_one();
     }
 }
 
+static std::once_flag oc_init_flag;
+
 extern "C" void CollisionWorker_Init(void) {
-    if (!oc_worker.running.load()) {
-        oc_worker.running.store(true);
+    std::call_once(oc_init_flag, [] {
+        std::unique_lock<std::mutex> lock(oc_worker.mutex);
+        oc_worker.running = true;
         oc_worker.thread = std::thread(CollisionWorker_Thread);
-    }
+    });
 }
 
 extern "C" void CollisionWorker_Destroy(void) {
     {
         std::unique_lock<std::mutex> lock(oc_worker.mutex);
-        oc_worker.running.store(false);
+        oc_worker.running = false;
     }
     oc_worker.cv_submit.notify_all();
     if (oc_worker.thread.joinable()) {

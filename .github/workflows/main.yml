@@ -258,6 +258,11 @@ jobs:
     runs-on: ${{ (vars.LINUX_RUNNER && fromJSON(vars.LINUX_RUNNER)) || 'ubuntu-latest' }}
     container:
       image: devkitpro/devkita64:latest
+    env:
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 1
     steps:
     - uses: actions/checkout@v6
       with:
@@ -275,6 +280,7 @@ jobs:
       if: ${{ vars.LINUX_RUNNER }}
       run: git config --global --add safe.directory '*'
     - uses: actions/checkout@v6
+      if: ${{ vars.LINUX_RUNNER }}
       with:
         submodules: recursive
     - name: ccache
@@ -287,10 +293,6 @@ jobs:
           ${{ runner.os }}-switch-ccache-
     - name: Build 2ship
       env:
-        CCACHE_COMPILERCHECK: content
-        CCACHE_SLOPPINESS: include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
-        CCACHE_BASEDIR: ${{ github.workspace }}
-        CCACHE_NOHASHDIR: 1
         CCACHE_LOGFILE: ${{ github.workspace }}/ccache.log
       run: |
         ccache --zero-stats

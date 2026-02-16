@@ -21,9 +21,8 @@ out vec4 vOutColor;
     @end
 @end
 
-@if(o_fog) @{attr} float vFogFactor;
-@if(o_fog) uniform vec3 uFogColor;
-@if(o_grayscale) uniform vec4 uGrayscaleColor;
+@if(o_fog) @{attr} vec4 vFog;
+@if(o_grayscale) @{attr} vec4 vGrayscaleColor;
 
 @for(i in 0..o_inputs)
     @if(o_alpha)
@@ -174,9 +173,9 @@ void main() {
     // TODO discard if alpha is 0?
     @if(o_fog)
         @if(o_alpha)
-            texel = vec4(mix(texel.rgb, uFogColor, vFogFactor), texel.a);
+            texel = vec4(mix(texel.rgb, vFog.rgb, vFog.a), texel.a);
         @else
-            texel = mix(texel, uFogColor, vFogFactor);
+            texel = mix(texel, vFog.rgb, vFog.a);
         @end
     @end
 
@@ -190,8 +189,8 @@ void main() {
 
     @if(o_grayscale)
         float intensity = (texel.r + texel.g + texel.b) / 3.0;
-        vec3 new_texel = uGrayscaleColor.rgb * intensity;
-        texel.rgb = mix(texel.rgb, new_texel, uGrayscaleColor.a);
+        vec3 new_texel = vGrayscaleColor.rgb * intensity;
+        texel.rgb = mix(texel.rgb, new_texel, vGrayscaleColor.a);
     @end
 
     @if(o_alpha)

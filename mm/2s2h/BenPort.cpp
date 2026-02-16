@@ -41,12 +41,13 @@
 #include <switch.h>
 #endif
 
-#if not defined (__SWITCH__) && not defined(__WIIU__)
+#if not defined(__SWITCH__) && not defined(__WIIU__)
 #include "Extractor/Extract.h"
 #endif
 // OTRTODO
-//#include <functions.h>
+// #include <functions.h>
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
+#include "DeveloperTools/FrameProfiler.h"
 
 #ifdef ENABLE_CROWD_CONTROL
 #include "Enhancements/crowd-control/CrowdControl.h"
@@ -763,6 +764,7 @@ extern "C" void InitOTR() {
     OTRMessage_Init();
     OTRAudio_Init();
     TaskWorker_Init();
+    TaskWorkerPool_Init();
     OTRExtScanner();
     PlayerCustomFlipbooks_Patch();
 
@@ -802,6 +804,7 @@ extern "C" void SaveManager_ThreadPoolWait() {
 
 extern "C" void DeinitOTR() {
     SaveManager_ThreadPoolWait();
+    TaskWorkerPool_Destroy();
     TaskWorker_Destroy();
     OTRAudio_Exit();
 #ifdef ENABLE_CROWD_CONTROL
@@ -958,12 +961,39 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
     // Process window events for resize, mouse, keyboard events
     wnd->HandleEvents();
 
+    const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
+    wnd->SetProfilingEnabled(profilerEnabled);
+
     auto intp = wnd->GetInterpreterWeak().lock().get();
     intp->mInterpolationIndex = 0;
 
     for (const auto& m : mtx_replacements) {
         wnd->DrawAndRunGraphicsCommands(Commands, m);
+
+        if (profilerEnabled) {
+            const auto& stats = wnd->GetFrameStats();
+
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, (float)stats.drawCalls);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BATCH_FLUSHES, (float)stats.batchFlushes);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_STATE_FLUSHES, (float)stats.stateChangeFlushes);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_SWITCHES, (float)stats.shaderSwitches);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_COMPILATIONS, (float)stats.shaderCompilations);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_BINDS, (float)stats.textureBinds);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_CACHE_MISSES, (float)stats.textureCacheMisses);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_VERTICES_SUBMITTED, (float)stats.verticesSubmitted);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED, (float)stats.trianglesSubmitted);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TOTAL_MS, (float)stats.timeTotal / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DISPATCH_MS, (float)stats.timeGbiDispatch / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TRI_MS, (float)stats.timeTriProcessing / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEX_MS, (float)stats.timeTextureSetup / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)stats.timeShaderSetup / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DRAW_MS, (float)stats.timeDrawSubmit / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VTX_MS, (float)stats.timeVertexLoad / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
+        }
+
         intp->mInterpolationIndex++;
+        FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
     }
 }
 
@@ -971,12 +1001,14 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
 extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     // Wait for the *previous* frame's audio to finish before starting the new one.
     // This lets audio processing overlap with game logic instead of blocking after rendering.
+    FrameProfiler_StartPhase(PROFILE_PHASE_AUDIO_WAIT);
     {
         std::unique_lock<std::mutex> Lock(audio.mutex);
         while (audio.processing) {
             audio.cv_from_thread.wait(Lock);
         }
     }
+    FrameProfiler_EndPhase(PROFILE_PHASE_AUDIO_WAIT);
 
     // Now kick off this frame's audio processing
     {
@@ -1006,6 +1038,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     // time_base = fps * original_fps (one second)
     int next_original_frame = fps;
 
+    FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
     while (time + original_fps <= next_original_frame) {
         time += original_fps;
         if (time != next_original_frame) {
@@ -1014,6 +1047,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             mtx_replacements.emplace_back();
         }
     }
+    FrameProfiler_EndPhase(PROFILE_PHASE_FRAME_INTERP);
 
     time -= fps;
 
@@ -1027,7 +1061,11 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
         mtx_replacements.emplace_back();
     }
 
+    FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
+    FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
     RunCommands(commands, mtx_replacements);
+    FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
+    FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
 
     last_fps = fps;
     last_update_rate = R_UPDATE_RATE;
@@ -1999,7 +2037,7 @@ extern "C" int Controller_ShouldRumble(size_t slot) {
     return 1;
 }
 
-#if not defined (__SWITCH__) && not defined(__WIIU__)
+#if not defined(__SWITCH__) && not defined(__WIIU__)
 extern "C" void Messagebox_ShowErrorBox(char* title, char* body) {
     Extractor::ShowErrorBox(title, body);
 }

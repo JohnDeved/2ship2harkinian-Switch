@@ -39,6 +39,36 @@ void TaskWorker_Submit(void (*task)(void*), void* arg);
  */
 void TaskWorker_Wait(void);
 
+/**
+ * Worker pool API — manages 2 worker threads (cores 1 + 3 on Switch).
+ * Allows submitting exactly 2 independent tasks that run in parallel.
+ */
+
+/**
+ * Initialize the worker pool. Called once at startup (after TaskWorker_Init).
+ * Creates a second worker thread pinned to core 3 (or runs on any available core
+ * on non-Switch platforms).
+ */
+void TaskWorkerPool_Init(void);
+
+/**
+ * Submit two tasks to run in parallel on workers 1 and 2.
+ * Both tasks must be independent (no shared mutable state).
+ * @param task1/task2 Function pointers for the two tasks
+ * @param arg1/arg2   Arguments for the tasks (must remain valid until wait)
+ */
+void TaskWorkerPool_Submit2(void (*task1)(void*), void* arg1, void (*task2)(void*), void* arg2);
+
+/**
+ * Block until both pool tasks complete.
+ */
+void TaskWorkerPool_Wait(void);
+
+/**
+ * Shutdown the worker pool.
+ */
+void TaskWorkerPool_Destroy(void);
+
 #ifdef __cplusplus
 }
 #endif

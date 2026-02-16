@@ -25,9 +25,15 @@
 @end
 
 @if(o_fog)
-    @{out} float vFogFactor;
-    uniform float uFogMul;
-    uniform float uFogOffset;
+    @{attr} vec4 aFog;
+    @{out} vec4 vFog;
+    @{update_floats(4)}
+@end
+
+@if(o_grayscale)
+    @{attr} vec4 aGrayscaleColor;
+    @{out} vec4 vGrayscaleColor;
+    @{update_floats(4)}
 @end
 
 @for(i in 0..o_inputs)
@@ -58,11 +64,10 @@ void main() {
         @end
     @end
     @if(o_fog)
-        if (aVtxPos.w > 0.001) {
-            vFogFactor = clamp(aVtxPos.z / aVtxPos.w * uFogMul + uFogOffset, 0.0, 255.0) / 255.0;
-        } else {
-            vFogFactor = 1.0;
-        }
+        vFog = aFog;
+    @end
+    @if(o_grayscale)
+        vGrayscaleColor = aGrayscaleColor;
     @end
     @for(i in 0..o_inputs)
         vInput@{i + 1} = aInput@{i + 1};

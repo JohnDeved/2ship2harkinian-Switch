@@ -655,7 +655,7 @@ void Interpreter::ImportTextureIA4(int tile, bool importReplacement) {
             uint8x16_t hi_alp = vandq_u8(hi_nib, vdupq_n_u8(1)); // 1-bit alpha
             uint8x16_t lo_int = vshrq_n_u8(lo_nib, 1);
             uint8x16_t lo_alp = vandq_u8(lo_nib, vdupq_n_u8(1));
-            // SCALE_3_8: val * 0x24 = (val << 5) | (val << 2)
+            // SCALE_3_8: val * 0x24 = (val << 5) + (val << 2)
             uint8x16_t hi_i8 = vaddq_u8(vshlq_n_u8(hi_int, 5), vshlq_n_u8(hi_int, 2));
             uint8x16_t lo_i8 = vaddq_u8(vshlq_n_u8(lo_int, 5), vshlq_n_u8(lo_int, 2));
             // Alpha: 0→0, 1→255

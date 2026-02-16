@@ -227,17 +227,47 @@ s32 Math_StepUntilF(f32* pValue, f32 limit, f32 step);
 s32 Math_AsymStepToF(f32* pValue, f32 target, f32 incrStep, f32 decrStep);
 s16 Rand_S16Offset(s16 base, s16 range);
 s16 Rand_S16OffsetStride(s16 base, s16 stride, s16 range);
-void Math_Vec3f_Copy(Vec3f* dest, Vec3f* src);
-void Math_Vec3s_Copy(Vec3s* dest, Vec3s* src);
-void Math_Vec3s_ToVec3f(Vec3f* dest, Vec3s* src);
-void Math_Vec3f_ToVec3s(Vec3s* dest, Vec3f* src);
-void Math_Vec3f_Sum(Vec3f* l, Vec3f* r, Vec3f* dest);
-void Math_Vec3f_Diff(Vec3f* l, Vec3f* r, Vec3f* dest);
-void Math_Vec3s_DiffToVec3f(Vec3f* dest, Vec3s* l, Vec3s* r);
-void Math_Vec3f_Scale(Vec3f* vec, f32 scale);
-void Math_Vec3f_ScaleAndStore(Vec3f* vec, f32 scale, Vec3f* dest);
-void Math_Vec3f_Lerp(Vec3f* a, Vec3f* b, f32 t, Vec3f* dest);
-void Math_Vec3f_SumScaled(Vec3f* a, Vec3f* b, f32 scale, Vec3f* dest);
+
+/* Inline Vec3f/Vec3s utilities — eliminates function-call overhead for trivial
+   3-element operations that are invoked hundreds of times per frame. */
+static inline void Math_Vec3f_Copy(Vec3f* dest, Vec3f* src) {
+    dest->x = src->x; dest->y = src->y; dest->z = src->z;
+}
+static inline void Math_Vec3s_Copy(Vec3s* dest, Vec3s* src) {
+    dest->x = src->x; dest->y = src->y; dest->z = src->z;
+}
+static inline void Math_Vec3s_ToVec3f(Vec3f* dest, Vec3s* src) {
+    dest->x = src->x; dest->y = src->y; dest->z = src->z;
+}
+static inline void Math_Vec3f_ToVec3s(Vec3s* dest, Vec3f* src) {
+    dest->x = src->x; dest->y = src->y; dest->z = src->z;
+}
+static inline void Math_Vec3f_Sum(Vec3f* l, Vec3f* r, Vec3f* dest) {
+    dest->x = l->x + r->x; dest->y = l->y + r->y; dest->z = l->z + r->z;
+}
+static inline void Math_Vec3f_Diff(Vec3f* l, Vec3f* r, Vec3f* dest) {
+    dest->x = l->x - r->x; dest->y = l->y - r->y; dest->z = l->z - r->z;
+}
+static inline void Math_Vec3s_DiffToVec3f(Vec3f* dest, Vec3s* l, Vec3s* r) {
+    dest->x = l->x - r->x; dest->y = l->y - r->y; dest->z = l->z - r->z;
+}
+static inline void Math_Vec3f_Scale(Vec3f* vec, f32 scale) {
+    vec->x *= scale; vec->y *= scale; vec->z *= scale;
+}
+static inline void Math_Vec3f_ScaleAndStore(Vec3f* vec, f32 scale, Vec3f* dest) {
+    dest->x = vec->x * scale; dest->y = vec->y * scale; dest->z = vec->z * scale;
+}
+static inline void Math_Vec3f_Lerp(Vec3f* a, Vec3f* b, f32 t, Vec3f* dest) {
+    dest->x = (b->x - a->x) * t + a->x;
+    dest->y = (b->y - a->y) * t + a->y;
+    dest->z = (b->z - a->z) * t + a->z;
+}
+static inline void Math_Vec3f_SumScaled(Vec3f* a, Vec3f* b, f32 scale, Vec3f* dest) {
+    dest->x = b->x * scale + a->x; dest->y = b->y * scale + a->y; dest->z = b->z * scale + a->z;
+}
+static inline f32 Math_Vec3f_DiffY(Vec3f* a, Vec3f* b) {
+    return b->y - a->y;
+}
 void Math_Vec3f_AddRand(Vec3f* orig, f32 scale, Vec3f* dest);
 void Math_Vec3f_DistXYZAndStoreNormDiff(Vec3f* a, Vec3f* b, f32 scale, Vec3f* dest);
 f32 Math_Vec3f_DistXYZ(Vec3f* a, Vec3f* b);
@@ -245,7 +275,6 @@ f32 Math_Vec3f_DistXYZAndStoreDiff(Vec3f* a, Vec3f* b, Vec3f* dest);
 f32 Math_Vec3f_DistXZ(Vec3f* a, Vec3f* b);
 f32 Math_Vec3f_DistXZAndStore(Vec3f* a, Vec3f* b, f32* dx, f32* dz);
 f32 Math_Vec3f_StepToXZ(Vec3f* start, Vec3f* target, f32 speed);
-f32 Math_Vec3f_DiffY(Vec3f* a, Vec3f* b);
 s16 Math_Vec3f_Yaw(Vec3f* a, Vec3f* b);
 s16 Math_Vec3f_Pitch(Vec3f* a, Vec3f* b);
 f32 Math_SmoothStepToF(f32* pValue, f32 target, f32 fraction, f32 step, f32 minStep);

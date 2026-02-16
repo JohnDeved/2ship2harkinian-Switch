@@ -252,87 +252,7 @@ s16 Rand_S16OffsetStride(s16 base, s16 stride, s16 range) {
     return (s16)(Rand_ZeroOne() * range) * stride + base;
 }
 
-void Math_Vec3f_Copy(Vec3f* dest, Vec3f* src) {
-    f32 x = src->x;
-    f32 y = src->y;
-    f32 z = src->z;
-
-    dest->x = x;
-    dest->y = y;
-    dest->z = z;
-}
-
-void Math_Vec3s_Copy(Vec3s* dest, Vec3s* src) {
-    s16 x = src->x;
-    s16 y = src->y;
-    s16 z = src->z;
-
-    dest->x = x;
-    dest->y = y;
-    dest->z = z;
-}
-
-void Math_Vec3s_ToVec3f(Vec3f* dest, Vec3s* src) {
-    f32 x = src->x;
-    f32 y = src->y;
-    f32 z = src->z;
-
-    dest->x = x;
-    dest->y = y;
-    dest->z = z;
-}
-
-void Math_Vec3f_ToVec3s(Vec3s* dest, Vec3f* src) {
-    f32 x = src->x;
-    f32 y = src->y;
-    f32 z = src->z;
-
-    dest->x = x;
-    dest->y = y;
-    dest->z = z;
-}
-
-void Math_Vec3f_Sum(Vec3f* l, Vec3f* r, Vec3f* dest) {
-    dest->x = l->x + r->x;
-    dest->y = l->y + r->y;
-    dest->z = l->z + r->z;
-}
-
-void Math_Vec3f_Diff(Vec3f* l, Vec3f* r, Vec3f* dest) {
-    dest->x = l->x - r->x;
-    dest->y = l->y - r->y;
-    dest->z = l->z - r->z;
-}
-
-void Math_Vec3s_DiffToVec3f(Vec3f* dest, Vec3s* l, Vec3s* r) {
-    dest->x = l->x - r->x;
-    dest->y = l->y - r->y;
-    dest->z = l->z - r->z;
-}
-
-void Math_Vec3f_Scale(Vec3f* vec, f32 scale) {
-    vec->x *= scale;
-    vec->y *= scale;
-    vec->z *= scale;
-}
-
-void Math_Vec3f_ScaleAndStore(Vec3f* vec, f32 scale, Vec3f* dest) {
-    dest->x = vec->x * scale;
-    dest->y = vec->y * scale;
-    dest->z = vec->z * scale;
-}
-
-void Math_Vec3f_Lerp(Vec3f* a, Vec3f* b, f32 t, Vec3f* dest) {
-    dest->x = (b->x - a->x) * t + a->x;
-    dest->y = (b->y - a->y) * t + a->y;
-    dest->z = (b->z - a->z) * t + a->z;
-}
-
-void Math_Vec3f_SumScaled(Vec3f* a, Vec3f* b, f32 scale, Vec3f* dest) {
-    dest->x = b->x * scale + a->x;
-    dest->y = b->y * scale + a->y;
-    dest->z = b->z * scale + a->z;
-}
+/* Vec3f/Vec3s trivial utilities are now static inline in z64math.h */
 
 void Math_Vec3f_AddRand(Vec3f* orig, f32 scale, Vec3f* dest) {
     dest->x = Rand_CenteredFloat(scale) + orig->x;
@@ -400,9 +320,7 @@ f32 Math_Vec3f_StepToXZ(Vec3f* start, Vec3f* target, f32 speed) {
     return f2;
 }
 
-f32 Math_Vec3f_DiffY(Vec3f* a, Vec3f* b) {
-    return b->y - a->y;
-}
+/* Math_Vec3f_DiffY is now static inline in z64math.h */
 
 s16 Math_Vec3f_Yaw(Vec3f* a, Vec3f* b) {
     f32 f14 = b->x - a->x;

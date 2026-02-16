@@ -1,5 +1,6 @@
 #include "FpsOverlay.h"
 
+#include <algorithm>
 #include <imgui.h>
 #include <libultraship/bridge/consolevariablebridge.h>
 
@@ -8,9 +9,9 @@ void FpsOverlayWindow::Draw() {
         return;
     }
 
-    float scale = MAX(CVarGetFloat("gFpsOverlay.Scale", 1.0f), 1.0f);
+    float scale = std::max(CVarGetFloat("gFpsOverlay.Scale", 1.0f), 1.0f);
     ImVec4 windowBG =
-        !CVarGetInteger("gFpsOverlay.Background", 0) ? ImVec4(0, 0, 0, 0.5f) : ImVec4(0, 0, 0, 0);
+        !CVarGetInteger("gFpsOverlay.HideBackground", 0) ? ImVec4(0, 0, 0, 0.5f) : ImVec4(0, 0, 0, 0);
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, windowBG);
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));

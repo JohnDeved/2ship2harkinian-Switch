@@ -667,12 +667,10 @@ void aFilterImpl(uint8_t flags, uint16_t count_or_buf, int16_t* state_or_filter)
         }
 
 #if defined(__ARM_NEON) && defined(__aarch64__)
-        int16x8_t filt_rev;
-        {
-            int16_t rev[8];
-            for (int k = 0; k < 8; k++) rev[k] = rspa.filter[7 - k];
-            filt_rev = vld1q_s16(rev);
-        }
+        /* Reverse filter coefficients using NEON lane reversal */
+        int16x8_t filt = vld1q_s16(rspa.filter);
+        int16x8_t filt_rev = vrev64q_s16(filt);
+        filt_rev = vcombine_s16(vget_high_s16(filt_rev), vget_low_s16(filt_rev));
 #endif
 
         do {

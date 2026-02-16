@@ -681,7 +681,7 @@ void BenMenu::AddSettings() {
         .WindowName("FPS Overlay")
         .Options(CheckboxOptions().Tooltip("Displays a real-time FPS counter on screen."));
     AddWidget(path, "Hide Window Background", WIDGET_CVAR_CHECKBOX)
-        .CVar("gFpsOverlay.Background")
+        .CVar("gFpsOverlay.HideBackground")
         .Options(CheckboxOptions().Tooltip("Hides the background of the FPS Overlay window."));
     AddWidget(path, "Scale: %.1fx", WIDGET_CVAR_SLIDER_FLOAT)
         .CVar("gFpsOverlay.Scale")

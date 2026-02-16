@@ -1,8 +1,8 @@
 #pragma once
 
+#ifdef __cplusplus
 #include <ship/window/gui/GuiWindow.h>
 
-#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -25,7 +25,6 @@ typedef enum {
     PROFILE_PHASE_ACTOR_DRAW,
     PROFILE_PHASE_FRAME_INTERP,
     PROFILE_PHASE_GFX_COMMANDS,
-    PROFILE_PHASE_WORKER_IDLE,
     PROFILE_PHASE_TOTAL_FRAME,
     PROFILE_PHASE_MAX
 } ProfilePhase;
@@ -38,9 +37,6 @@ int FrameProfiler_IsEnabled(void);
 
 #ifdef __cplusplus
 }
-#endif
-
-#ifdef __cplusplus
 
 class FrameProfilerWindow : public Ship::GuiWindow {
   public:

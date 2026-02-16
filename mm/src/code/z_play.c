@@ -50,25 +50,18 @@ u8 sMotionBlurStatus;
 #include "2s2h/DeveloperTools/FrameProfiler.h"
 #include <string.h>
 
-// Task wrapper for CollisionCheck_OC on the worker thread
+// Task wrapper for CollisionCheck_OC on the worker thread.
+// OC only writes ocFlags1/ocFlags2/oc/displacement — no effects or SFX.
 typedef struct {
     PlayState* play;
     CollisionCheckContext* colChkCtx;
-} CollisionTaskArgs;
+} OcTaskArgs;
 
 static void OcTask(void* arg) {
     FrameProfiler_StartPhase(PROFILE_PHASE_COLLISION_OC);
-    CollisionTaskArgs* args = (CollisionTaskArgs*)arg;
+    OcTaskArgs* args = (OcTaskArgs*)arg;
     CollisionCheck_OC(args->play, args->colChkCtx);
     FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_OC);
-}
-
-// Task wrapper for CollisionCheck_AT on the worker pool
-static void AtTask(void* arg) {
-    FrameProfiler_StartPhase(PROFILE_PHASE_COLLISION_AT);
-    CollisionTaskArgs* args = (CollisionTaskArgs*)arg;
-    CollisionCheck_AT(args->play, args->colChkCtx);
-    FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_AT);
 }
 
 // Task wrapper for running all effect updates on the worker thread.
@@ -1079,12 +1072,15 @@ void Play_UpdateMain(PlayState* this) {
                     }
                 } else {
                     Room_ProcessRoomRequest(this, &this->roomCtx);
-                    // Run AT + OC in parallel on the worker pool (cores 1 + 3).
-                    // AT writes atFlags/acFlags, OC writes ocFlags1/ocFlags2 — separate
-                    // field sets per collider, verified safe for concurrent execution.
-                    CollisionTaskArgs colArgs = { this, &this->colChkCtx };
-                    TaskWorkerPool_Submit2(AtTask, &colArgs, OcTask, &colArgs);
-                    TaskWorkerPool_Wait();
+                    // Run OC (O(n^2) pairwise) on worker thread while AT runs on main thread.
+                    // AT must stay on main thread because CollisionCheck_SetHitEffects spawns
+                    // effects and plays SFX which are not thread-safe.
+                    OcTaskArgs ocArgs = { this, &this->colChkCtx };
+                    TaskWorker_Submit(OcTask, &ocArgs);
+                    FrameProfiler_StartPhase(PROFILE_PHASE_COLLISION_AT);
+                    CollisionCheck_AT(this, &this->colChkCtx);
+                    FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_AT);
+                    TaskWorker_Wait();
                     FrameProfiler_StartPhase(PROFILE_PHASE_COLLISION_DAMAGE);
                     CollisionCheck_Damage(this, &this->colChkCtx);
                     FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_DAMAGE);

@@ -57,8 +57,7 @@ void TaskWorkerPool_Init(void);
  * @param task1/task2 Function pointers for the two tasks
  * @param arg1/arg2   Arguments for the tasks (must remain valid until wait)
  */
-void TaskWorkerPool_Submit2(void (*task1)(void*), void* arg1,
-                            void (*task2)(void*), void* arg2);
+void TaskWorkerPool_Submit2(void (*task1)(void*), void* arg1, void (*task2)(void*), void* arg2);
 
 /**
  * Block until both pool tasks complete.

@@ -1,5 +1,4 @@
 #include "collision_worker.h"
-#include "DeveloperTools/FrameProfiler.h"
 
 #include <cassert>
 #include <mutex>
@@ -15,9 +14,9 @@ static struct {
     std::mutex mutex;
     std::condition_variable cv_submit;
     std::condition_variable cv_done;
-    bool running{false};
-    bool has_work{false};
-    bool work_done{true};
+    bool running{ false };
+    bool has_work{ false };
+    bool work_done{ true };
 
     // Current task
     void (*task)(void*);
@@ -32,11 +31,9 @@ static void TaskWorker_Thread() {
 
     std::unique_lock<std::mutex> lock(worker.mutex);
     while (worker.running) {
-        FrameProfiler_StartPhase(PROFILE_PHASE_WORKER_IDLE);
         while (!worker.has_work && worker.running) {
             worker.cv_submit.wait(lock);
         }
-        FrameProfiler_EndPhase(PROFILE_PHASE_WORKER_IDLE);
         if (!worker.running) {
             break;
         }
@@ -111,9 +108,9 @@ struct PoolWorker {
     std::mutex mutex;
     std::condition_variable cv_submit;
     std::condition_variable cv_done;
-    bool running{false};
-    bool has_work{false};
-    bool work_done{true};
+    bool running{ false };
+    bool has_work{ false };
+    bool work_done{ true };
     void (*task)(void*);
     void* arg;
 };
@@ -122,7 +119,14 @@ static PoolWorker sPool[2];
 
 static void PoolWorker_Thread(PoolWorker* pw, [[maybe_unused]] int coreId) {
 #ifdef __SWITCH__
-    svcSetThreadCoreMask(CUR_THREAD_HANDLE, coreId, (1U << coreId));
+    // Attempt to pin to the requested core; if it fails (e.g. core 3 reserved
+    // by the OS), the thread runs on whatever core the scheduler assigns.
+    Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, coreId, (1U << coreId));
+    if (R_FAILED(rc)) {
+        // Fall back: allow any available core
+        static const u64 ALL_CORES_MASK = (1U << 0) | (1U << 1) | (1U << 2) | (1U << 3);
+        svcSetThreadCoreMask(CUR_THREAD_HANDLE, -1, ALL_CORES_MASK);
+    }
 #endif
 
     std::unique_lock<std::mutex> lock(pw->mutex);
@@ -130,7 +134,8 @@ static void PoolWorker_Thread(PoolWorker* pw, [[maybe_unused]] int coreId) {
         while (!pw->has_work && pw->running) {
             pw->cv_submit.wait(lock);
         }
-        if (!pw->running) break;
+        if (!pw->running)
+            break;
 
         void (*current_task)(void*) = pw->task;
         void* task_arg = pw->arg;
@@ -159,8 +164,7 @@ extern "C" void TaskWorkerPool_Init(void) {
     });
 }
 
-extern "C" void TaskWorkerPool_Submit2(void (*task1)(void*), void* arg1,
-                                       void (*task2)(void*), void* arg2) {
+extern "C" void TaskWorkerPool_Submit2(void (*task1)(void*), void* arg1, void (*task2)(void*), void* arg2) {
     void (*tasks[2])(void*) = { task1, task2 };
     void* args[2] = { arg1, arg2 };
     for (int i = 0; i < 2; i++) {
@@ -183,7 +187,8 @@ extern "C" void TaskWorkerPool_Submit2(void (*task1)(void*), void* arg1,
 extern "C" void TaskWorkerPool_Wait(void) {
     for (int i = 0; i < 2; i++) {
         std::unique_lock<std::mutex> lock(sPool[i].mutex);
-        if (!sPool[i].running) continue;
+        if (!sPool[i].running)
+            continue;
         while (!sPool[i].work_done) {
             sPool[i].cv_done.wait(lock);
         }

@@ -38,6 +38,7 @@
 
 #ifdef __SWITCH__
 #include <ship/port/switch/SwitchImpl.h>
+#include <switch.h>
 #endif
 
 #if not defined (__SWITCH__) && not defined(__WIIU__)
@@ -226,7 +227,18 @@ OTRGlobals::OTRGlobals() {
     overlay->LoadFont("Fipps", 32.0f, "fonts/Fipps-Regular.otf");
     overlay->SetCurrentFont(CVarGetString(CVAR_GAME_OVERLAY_FONT, "Press Start 2P"));
 
-    context->InitAudio({ .SampleRate = 32000, .SampleLength = 1024, .DesiredBuffered = 1680 });
+    // DesiredBuffered controls the target number of queued samples in the SDL audio
+    // device.  On Switch the slower CPU causes longer game-frames when the scene is
+    // heavy (zone transitions, particle-heavy areas).  A larger cushion lets the
+    // audio device coast through those spikes without underrunning.
+    //   1680 samples ≈  52 ms @ 32 kHz  (fine for desktop)
+    //   3200 samples ≈ 100 ms @ 32 kHz  (absorbs frames up to ~100 ms on Switch)
+#if defined(__SWITCH__)
+    constexpr int desiredBuffered = 3200;
+#else
+    constexpr int desiredBuffered = 1680;
+#endif
+    context->InitAudio({ .SampleRate = 32000, .SampleLength = 1024, .DesiredBuffered = desiredBuffered });
 
     SPDLOG_INFO("Starting 2 Ship 2 Harkinian version {} (Branch: {} | Commit: {})", (char*)gBuildVersion,
                 (char*)gGitBranch, (char*)gGitCommitHash);
@@ -398,6 +410,24 @@ extern "C" int AudioPlayer_GetDesiredBuffered(void);
 extern "C" void ResourceMgr_LoadDirectory(const char* resName);
 std::unordered_map<std::string, ExtensionEntry> ExtensionCache;
 
+// 528 and 544 relate to 60 fps at 32 kHz  32000/60 = 533.333..
+// in an ideal world, one third of the calls should use num_samples=544 and two thirds num_samples=528
+#define SAMPLES_HIGH 560
+#define SAMPLES_LOW 528
+
+#define AUDIO_FRAMES_PER_UPDATE (R_UPDATE_RATE > 0 ? R_UPDATE_RATE : 1)
+#define NUM_AUDIO_CHANNELS 2
+
+// Minimum queued samples before we consider it an emergency (underrun imminent).
+// ~25 ms of audio at 32 kHz -- below this we fade out to avoid a hard pop.
+#define AUDIO_UNDERRUN_THRESHOLD 800
+
+// How long the audio thread waits for a frame signal before checking the buffer
+// level and potentially injecting a fade-out.  15 ms is short enough to react
+// before a 25 ms underrun threshold is breached, but long enough to avoid
+// busy-spinning on the condition variable.
+#define AUDIO_WAIT_TIMEOUT_MS 15
+
 static struct {
     std::thread thread;
     std::condition_variable cv_to_thread, cv_from_thread;
@@ -406,27 +436,65 @@ static struct {
     bool processing;
 } audio;
 
+// Persistent state for the audio safety-net (fade-out on underrun).
+static s16 sLastAudioTail[SAMPLES_HIGH * NUM_AUDIO_CHANNELS];
+static int  sLastAudioTailLen = 0; // number of *samples* (not bytes) stored
+static bool sNeedFadeIn = false;   // set after an emergency fade-out
+
 void OTRAudio_Thread() {
+    using namespace std::chrono;
+
+#ifdef __SWITCH__
+    // Pin audio thread to core 2 so it never competes with the main/render
+    // thread on core 0.  This eliminates audio starvation during FPS dips.
+    svcSetThreadCoreMask(CUR_THREAD_HANDLE, 2, (1U << 2));
+#endif
+
     while (audio.running) {
+        // ---- wait for the game thread to signal, with a timeout ----
+        bool signaled = false;
         {
             std::unique_lock<std::mutex> Lock(audio.mutex);
-            while (!audio.processing && audio.running) {
-                audio.cv_to_thread.wait(Lock);
+            if (!audio.processing && audio.running) {
+                audio.cv_to_thread.wait_for(Lock, milliseconds(AUDIO_WAIT_TIMEOUT_MS),
+                    [&] { return audio.processing || !audio.running; });
             }
 
             if (!audio.running) {
                 break;
             }
-        }
-        std::unique_lock<std::mutex> Lock(audio.mutex);
-// AudioMgr_ThreadEntry(&gAudioMgr);
-//  528 and 544 relate to 60 fps at 32 kHz 32000/60 = 533.333..
-//  in an ideal world, one third of the calls should use num_samples=544 and two thirds num_samples=528
-#define SAMPLES_HIGH 560
-#define SAMPLES_LOW 528
 
-#define AUDIO_FRAMES_PER_UPDATE (R_UPDATE_RATE > 0 ? R_UPDATE_RATE : 1)
-#define NUM_AUDIO_CHANNELS 2
+            signaled = audio.processing;
+        }
+
+        if (!signaled) {
+            // The game frame hasn't finished yet -- check if the output buffer
+            // is dangerously low and inject a fade-out to prevent a hard pop.
+            int buffered = AudioPlayer_Buffered();
+            if (buffered < AUDIO_UNDERRUN_THRESHOLD && sLastAudioTailLen > 0) {
+                // Build a fade-out from the tail of the last real audio frame.
+                // This produces silence gradually instead of an abrupt cut.
+                s16 fadeBuffer[SAMPLES_HIGH * NUM_AUDIO_CHANNELS];
+                int fadeSamples = sLastAudioTailLen; // stereo sample-pairs
+                for (int i = 0; i < fadeSamples; i++) {
+                    // Linear fade from 1.0 -> 0.0 over fadeSamples
+                    float gain = 1.0f - ((float)i / (float)fadeSamples);
+                    fadeBuffer[i * 2 + 0] = (s16)(sLastAudioTail[i * 2 + 0] * gain);
+                    fadeBuffer[i * 2 + 1] = (s16)(sLastAudioTail[i * 2 + 1] * gain);
+                }
+                AudioPlayer_Play((u8*)fadeBuffer,
+                                 fadeSamples * sizeof(int16_t) * NUM_AUDIO_CHANNELS);
+                // Only inject one fade-out per stall; clear the tail so we
+                // don't keep re-queuing faded copies on subsequent timeouts.
+                sLastAudioTailLen = 0;
+                sNeedFadeIn = true;
+            }
+            continue; // loop back and wait again
+        }
+
+        // ---- normal path: game thread signaled, generate real audio ----
+        // No lock held during synthesis -- the mutex only guards the flag and CV,
+        // not the (potentially expensive) audio generation.
 
         int samples_left = AudioPlayer_Buffered();
         u32 num_audio_samples = samples_left < AudioPlayer_GetDesiredBuffered() ? SAMPLES_HIGH : SAMPLES_LOW;
@@ -438,10 +506,37 @@ void OTRAudio_Thread() {
                                            num_audio_samples);
         }
 
+        int totalSamples = num_audio_samples * AUDIO_FRAMES_PER_UPDATE;
+
+        // If we previously faded out, apply a short fade-in to the start of this
+        // buffer so the transition back is smooth.
+        if (sNeedFadeIn) {
+            int fadeInSamples = (totalSamples < 128) ? totalSamples : 128;
+            for (int i = 0; i < fadeInSamples; i++) {
+                float gain = (float)i / (float)fadeInSamples;
+                audio_buffer[i * 2 + 0] = (s16)(audio_buffer[i * 2 + 0] * gain);
+                audio_buffer[i * 2 + 1] = (s16)(audio_buffer[i * 2 + 1] * gain);
+            }
+            sNeedFadeIn = false;
+        }
+
+        // Stash the tail of this audio frame for potential emergency fade-out.
+        // We keep up to SAMPLES_HIGH stereo pairs from the end of the buffer.
+        {
+            int tailSamples = (totalSamples < SAMPLES_HIGH) ? totalSamples : SAMPLES_HIGH;
+            int srcOffset = (totalSamples - tailSamples) * NUM_AUDIO_CHANNELS;
+            memcpy(sLastAudioTail, audio_buffer + srcOffset,
+                   tailSamples * NUM_AUDIO_CHANNELS * sizeof(s16));
+            sLastAudioTailLen = tailSamples;
+        }
+
         AudioPlayer_Play((u8*)audio_buffer,
                          num_audio_samples * (sizeof(int16_t) * NUM_AUDIO_CHANNELS * AUDIO_FRAMES_PER_UPDATE));
 
-        audio.processing = false;
+        {
+            std::unique_lock<std::mutex> Lock(audio.mutex);
+            audio.processing = false;
+        }
         audio.cv_from_thread.notify_one();
     }
 }

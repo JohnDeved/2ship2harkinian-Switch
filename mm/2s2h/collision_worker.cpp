@@ -5,6 +5,10 @@
 #include <condition_variable>
 #include <thread>
 
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
+
 static struct {
     std::thread thread;
     std::mutex mutex;
@@ -20,6 +24,11 @@ static struct {
 } worker;
 
 static void TaskWorker_Thread() {
+#ifdef __SWITCH__
+    // Pin collision worker to core 1 to keep it off the main/render core (0).
+    svcSetThreadCoreMask(CUR_THREAD_HANDLE, 1, (1U << 1));
+#endif
+
     std::unique_lock<std::mutex> lock(worker.mutex);
     while (worker.running) {
         while (!worker.has_work && worker.running) {

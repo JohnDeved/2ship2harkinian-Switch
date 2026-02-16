@@ -46,6 +46,7 @@ u8 sMotionBlurStatus;
 #include "2s2h/Enhancements/Graphics/Graphics.h"
 #include "2s2h/DeveloperTools/CollisionViewer.h"
 #include "2s2h/framebuffer_effects.h"
+#include "2s2h/collision_worker.h"
 #include <string.h>
 
 s32 gDbgCamEnabled = false;
@@ -1044,8 +1045,10 @@ void Play_UpdateMain(PlayState* this) {
                     }
                 } else {
                     Room_ProcessRoomRequest(this, &this->roomCtx);
+                    // Run OC (O(n^2) pairwise) on worker thread while AT runs on main thread
+                    CollisionWorker_SubmitOC(this, &this->colChkCtx);
                     CollisionCheck_AT(this, &this->colChkCtx);
-                    CollisionCheck_OC(this, &this->colChkCtx);
+                    CollisionWorker_WaitOC();
                     CollisionCheck_Damage(this, &this->colChkCtx);
                     CollisionCheck_ClearContext(this, &this->colChkCtx);
                     if (!this->haltAllActors) {

@@ -570,12 +570,35 @@ void aDuplicateImpl(uint16_t count, uint16_t in_addr, uint16_t out_addr) {
     uint8_t* in = BUF_U8(in_addr);
     uint8_t* out = BUF_U8(out_addr);
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    /* Cache 128 bytes (8 × 16-byte NEON registers) then blast copies */
+    uint8x16_t r0 = vld1q_u8(in);
+    uint8x16_t r1 = vld1q_u8(in + 16);
+    uint8x16_t r2 = vld1q_u8(in + 32);
+    uint8x16_t r3 = vld1q_u8(in + 48);
+    uint8x16_t r4 = vld1q_u8(in + 64);
+    uint8x16_t r5 = vld1q_u8(in + 80);
+    uint8x16_t r6 = vld1q_u8(in + 96);
+    uint8x16_t r7 = vld1q_u8(in + 112);
+    do {
+        vst1q_u8(out, r0);
+        vst1q_u8(out + 16, r1);
+        vst1q_u8(out + 32, r2);
+        vst1q_u8(out + 48, r3);
+        vst1q_u8(out + 64, r4);
+        vst1q_u8(out + 80, r5);
+        vst1q_u8(out + 96, r6);
+        vst1q_u8(out + 112, r7);
+        out += 128;
+    } while (count-- > 0);
+#else
     uint8_t tmp[128];
     memcpy(tmp, in, 128);
     do {
         memcpy(out, tmp, 128);
         out += 128;
     } while (count-- > 0);
+#endif
 }
 
 void aResampleZohImpl(uint16_t pitch, uint16_t start_fract) {

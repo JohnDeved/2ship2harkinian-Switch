@@ -81,30 +81,39 @@ The Frame Profiler now scans all 5 DL buffers directly (OPA, XLU, Overlay, Work,
 
 **Usage**: Open Dev Tools → Frame Profiler → expand "Per-Buffer Breakdown" to see where geometry concentrates. Export a snapshot for offline analysis.
 
-### 2b. libultraship Fast3D Profiling (REQUIRES SUBMODULE CHANGES)
+### 2b. libultraship Fast3D Profiling ✅ IMPLEMENTED (libultraship side)
 
-To break down the 48.7ms further, we need instrumentation **inside** the Fast3D interpreter. These changes would go in the `libultraship` submodule:
+Instrumentation is now in the `libultraship` Fast3D interpreter/backend with a runtime toggle (`Fast3dWindow::SetProfilingEnabled`).
+The timing source is nanosecond-resolution (`std::chrono::steady_clock`), which is valid on Switch and desktop.
 
-#### Proposed Counters (add to interpreter state)
+#### Implemented Counters (`Fast3DStats`)
 
 ```cpp
 struct Fast3DStats {
     // Counts
-    uint32_t glDrawCalls;        // actual glDrawArrays/glDrawElements calls
-    uint32_t glTextureBinds;     // glBindTexture calls
-    uint32_t glShaderSwitches;   // glUseProgram calls
+    uint32_t drawCalls;          // actual DrawTriangles calls
+    uint32_t textureBinds;       // glBindTexture calls (OpenGL backend)
+    uint32_t shaderSwitches;     // glUseProgram calls (OpenGL backend)
     uint32_t shaderCompilations; // new shader variants compiled this frame
     uint32_t verticesSubmitted;  // total vertices sent to GL
     uint32_t trianglesSubmitted; // total triangles sent to GL
     uint32_t batchFlushes;       // number of vertex buffer flushes
+    uint32_t textureCacheMisses; // cache misses requiring upload/decode
+    uint32_t stateChangeFlushes; // flushes triggered by state changes
 
     // Timing (nanoseconds)
+    uint64_t timeTotal;          // total Interpreter::Run time
     uint64_t timeGbiDispatch;    // time in GBI command parsing
-    uint64_t timeVertexProcess;  // time in vertex transformation
+    uint64_t timeVertexLoad;     // time in vertex transformation/load
+    uint64_t timeTriProcessing;  // time in GfxSpTri1
     uint64_t timeTextureSetup;   // time in texture load/decode/upload
     uint64_t timeShaderSetup;    // time in shader compilation/binding
     uint64_t timeDrawSubmit;     // time in glDraw* calls
-    uint64_t timeStateChanges;   // time in other GL state changes
+
+    // Derived
+    float avgBatchSize;
+    float usPerTriangle;
+    float usPerDrawCall;
 };
 ```
 
@@ -120,21 +129,47 @@ struct Fast3DStats {
 | Draw call | `src/fast/backends/gfx_opengl.cpp` (draw_triangles) | Per-draw overhead |
 | State changes | `src/fast/backends/gfx_opengl.cpp` | GL bind/uniform calls |
 
-#### Integration with Frame Profiler
+#### Integration status
 
-The Fast3D stats struct would be exposed via a getter method on `Fast3dWindow`:
+Libultraship now exposes frame stats directly on `Fast3dWindow`:
 
 ```cpp
 // In libultraship
 const Fast3DStats& Fast3dWindow::GetFrameStats() const;
 void Fast3dWindow::ResetFrameStats();
+void Fast3dWindow::SetProfilingEnabled(bool enabled);
 
 // In game code (BenPort.cpp)
 auto& stats = wnd->GetFrameStats();
-FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, stats.glDrawCalls);
+FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, stats.drawCalls);
 // ... etc
 wnd->ResetFrameStats();
 ```
+
+What is done now:
+- Fast3D interpreter + OpenGL backend counters/timers are implemented.
+- Runtime stats pointer plumbing exists in `GfxRenderingAPI`.
+- State-change-triggered flushes are counted separately from total flushes.
+- Game-side profiler now ingests Fast3D stats in `BenPort.cpp` and displays/exports them.
+
+What remains:
+- Land the libultraship submodule commit and update submodule pointer in this repo.
+
+### 2c. Game-side Fast3D Integration ✅ IMPLEMENTED
+
+The game profiler now reads Fast3D internal stats each `DrawAndRunGraphicsCommands` iteration and records them in
+`FrameProfiler` counters:
+
+- Added new counters in `FrameProfiler.h` (`PROFILE_COUNTER_GL_*`)
+- Wired stat collection in `BenPort.cpp`:
+  - `wnd->SetProfilingEnabled(FrameProfiler_IsEnabled())`
+  - `const auto& stats = wnd->GetFrameStats()`
+  - push counts/timings into profiler counters
+- Updated `FrameProfiler.cpp` UI + snapshot export to show:
+  - Actual GL draw calls vs estimated draw calls
+  - Batch flushes and state-change flushes
+  - Shader switches/compiles and texture bind/cache-miss behavior
+  - Internal timing breakdown (tri/tex/shader/draw/vtx)
 
 ---
 
@@ -232,11 +267,11 @@ IMMEDIATE (game-side, this repo):
   → Strategy D: Render thread prototype
 
 REQUIRES LIBULTRASHIP CHANGES:
+  ✅ Fast3D internal profiling (Section 2b counters)
   → Strategy A: Draw call batching in Fast3D interpreter
   → Strategy B: Uber-shader or shader sorting
   → Strategy C: Texture bind optimization
   → Strategy E: DL caching for static geometry
-  → Fast3D internal profiling (Section 2b counters)
 ```
 
 ---

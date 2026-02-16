@@ -961,11 +961,36 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
     // Process window events for resize, mouse, keyboard events
     wnd->HandleEvents();
 
+    const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
+    wnd->SetProfilingEnabled(profilerEnabled);
+
     auto intp = wnd->GetInterpreterWeak().lock().get();
     intp->mInterpolationIndex = 0;
 
     for (const auto& m : mtx_replacements) {
         wnd->DrawAndRunGraphicsCommands(Commands, m);
+
+        if (profilerEnabled) {
+            const auto& stats = wnd->GetFrameStats();
+
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, (float)stats.drawCalls);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BATCH_FLUSHES, (float)stats.batchFlushes);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_STATE_FLUSHES, (float)stats.stateChangeFlushes);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_SWITCHES, (float)stats.shaderSwitches);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_COMPILATIONS, (float)stats.shaderCompilations);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_BINDS, (float)stats.textureBinds);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_CACHE_MISSES, (float)stats.textureCacheMisses);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_VERTICES_SUBMITTED, (float)stats.verticesSubmitted);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED, (float)stats.trianglesSubmitted);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TOTAL_MS, (float)stats.timeTotal / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TRI_MS, (float)stats.timeTriProcessing / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEX_MS, (float)stats.timeTextureSetup / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)stats.timeShaderSetup / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DRAW_MS, (float)stats.timeDrawSubmit / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VTX_MS, (float)stats.timeVertexLoad / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
+        }
+
         intp->mInterpolationIndex++;
         FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
     }

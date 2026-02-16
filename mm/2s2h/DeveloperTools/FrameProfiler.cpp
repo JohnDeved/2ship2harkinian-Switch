@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <algorithm>
 #include <atomic>
+#include <fstream>
+#include <ctime>
+#include <libultraship/libultraship.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -114,6 +117,87 @@ static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
     "Core 0", // Total
 };
 
+// ── Snapshot export ─────────────────────────────────────────────────────
+
+static std::string sLastExportPath;
+static float sExportMsgTimer = 0.0f;
+
+static void FrameProfiler_ExportSnapshot(void) {
+    // Build timestamped filename
+    time_t now = std::time(nullptr);
+    struct tm tmBuf;
+#ifdef _WIN32
+    localtime_s(&tmBuf, &now);
+#else
+    localtime_r(&now, &tmBuf);
+#endif
+    char timeBuf[64];
+    std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tmBuf);
+
+    std::string filename = "profiler_snapshot_" + std::string(timeBuf) + ".txt";
+    std::string filepath = Ship::Context::GetPathRelativeToAppDirectory(filename);
+
+    std::ofstream out(filepath);
+    if (!out.is_open()) {
+        sLastExportPath = "ERROR: Could not write " + filepath;
+        sExportMsgTimer = 5.0f;
+        return;
+    }
+
+    float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
+    float fps = (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
+
+    out << "=== 2S2H Frame Profiler Snapshot ===" << std::endl;
+    out << "Timestamp: " << timeBuf << std::endl;
+    out << std::endl;
+
+    out << "--- Summary (60-frame average) ---" << std::endl;
+    out << "Total Frame: " << totalMs << " ms (" << fps << " FPS)" << std::endl;
+    out << "Target: 16.6 ms (60 FPS)" << std::endl;
+    out << std::endl;
+
+    out << "--- Per-Phase Breakdown ---" << std::endl;
+    for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
+        float ms = FrameProfiler_GetPhaseAvgMs((ProfilePhase)i);
+        out << sPhaseCoreLabels[i] << "  " << sPhaseNames[i] << ": " << ms << " ms" << std::endl;
+    }
+    out << std::endl;
+
+    float core0Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
+                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
+                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_UPDATE) +
+                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_DRAW) +
+                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
+                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_GFX_COMMANDS);
+    float core1Ms =
+        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_EFFECTS);
+    float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
+
+    out << "--- Core Utilization ---" << std::endl;
+    out << "Core 0 Active: " << core0Ms << " ms" << std::endl;
+    out << "Core 1 Active: " << core1Ms << " ms" << std::endl;
+    out << "Utilization Ratio: " << (imbalance * 100.0f) << "%" << std::endl;
+    out << std::endl;
+
+    // Raw ring buffer data for detailed analysis
+    int ringIdx = sRingIndex.load(std::memory_order_relaxed);
+    out << "--- Raw Ring Buffer (last " << PROFILE_RING_SIZE << " frames, ms) ---" << std::endl;
+    out << "Current index: " << ringIdx << std::endl;
+    for (int phase = 0; phase < PROFILE_PHASE_MAX; phase++) {
+        out << sPhaseNames[phase] << ":";
+        for (int f = 0; f < PROFILE_RING_SIZE; f++) {
+            // Read oldest-to-newest
+            int idx = (ringIdx + 1 + f) % PROFILE_RING_SIZE;
+            out << " " << sPhaseRing[phase][idx];
+        }
+        out << std::endl;
+    }
+
+    out.close();
+    sLastExportPath = filepath;
+    sExportMsgTimer = 5.0f;
+}
+
 // ── ImGui Window ───────────────────────────────────────────────────────
 
 void FrameProfilerWindow::InitElement() {
@@ -164,4 +248,19 @@ void FrameProfilerWindow::DrawElement() {
     ImGui::Text("Core 0 Active: %5.1f ms  |  Core 1 Active: %5.1f ms", core0Ms, core1Ms);
     float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
     ImGui::Text("Core utilization ratio: %.0f%% (1.0 = perfectly balanced)", imbalance * 100.0f);
+
+    ImGui::Separator();
+
+    // Export button
+    if (ImGui::Button("Export Snapshot")) {
+        FrameProfiler_ExportSnapshot();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(saves to app directory)");
+
+    // Show export status message
+    if (sExportMsgTimer > 0.0f) {
+        sExportMsgTimer -= ImGui::GetIO().DeltaTime;
+        ImGui::TextWrapped("%s", sLastExportPath.c_str());
+    }
 }

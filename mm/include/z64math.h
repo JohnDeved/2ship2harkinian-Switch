@@ -277,11 +277,70 @@ f32 Math_Vec3f_DistXZAndStore(Vec3f* a, Vec3f* b, f32* dx, f32* dz);
 f32 Math_Vec3f_StepToXZ(Vec3f* start, Vec3f* target, f32 speed);
 s16 Math_Vec3f_Yaw(Vec3f* a, Vec3f* b);
 s16 Math_Vec3f_Pitch(Vec3f* a, Vec3f* b);
-f32 Math_SmoothStepToF(f32* pValue, f32 target, f32 fraction, f32 step, f32 minStep);
-void Math_ApproachF(f32* pValue, f32 target, f32 scale, f32 maxStep);
-void Math_ApproachZeroF(f32* pValue, f32 scale, f32 maxStep);
-s16 Math_SmoothStepToS(s16* pValue, s16 target, s16 scale, s16 step, s16 minStep);
-void Math_ApproachS(s16* pValue, s16 target, s16 scale, s16 maxStep);
+static inline f32 Math_SmoothStepToF(f32* pValue, f32 target, f32 fraction, f32 step, f32 minStep) {
+    if (*pValue != target) {
+        f32 stepSize = (target - *pValue) * fraction;
+        if ((stepSize >= minStep) || (stepSize <= -minStep)) {
+            if (stepSize > step) stepSize = step;
+            if (stepSize < -step) stepSize = -step;
+            *pValue += stepSize;
+        } else {
+            if (stepSize > 0) {
+                if (stepSize < minStep) {
+                    *pValue += minStep;
+                    if (target < *pValue) *pValue = target;
+                }
+            } else {
+                if (-minStep < stepSize) {
+                    *pValue += -minStep;
+                    if (*pValue < target) *pValue = target;
+                }
+            }
+        }
+    }
+    return fabsf(target - *pValue);
+}
+static inline void Math_ApproachF(f32* pValue, f32 target, f32 scale, f32 maxStep) {
+    if (*pValue != target) {
+        f32 step = (target - *pValue) * scale;
+        if (step > maxStep) step = maxStep;
+        else if (step < -maxStep) step = -maxStep;
+        *pValue += step;
+    }
+}
+static inline void Math_ApproachZeroF(f32* pValue, f32 scale, f32 maxStep) {
+    f32 step = *pValue * scale;
+    if (maxStep < step) step = maxStep;
+    else if (step < -maxStep) step = -maxStep;
+    *pValue -= step;
+}
+static inline s16 Math_SmoothStepToS(s16* pValue, s16 target, s16 scale, s16 step, s16 minStep) {
+    s16 stepSize = 0;
+    s16 diff = target - *pValue;
+    if (*pValue != target) {
+        stepSize = diff / scale;
+        if ((stepSize > minStep) || (stepSize < -minStep)) {
+            if (stepSize > step) stepSize = step;
+            if (stepSize < -step) stepSize = -step;
+            *pValue += stepSize;
+        } else {
+            if (diff >= 0) {
+                *pValue += minStep;
+                if ((s16)(target - *pValue) <= 0) *pValue = target;
+            } else {
+                *pValue -= minStep;
+                if ((s16)(target - *pValue) >= 0) *pValue = target;
+            }
+        }
+    }
+    return diff;
+}
+static inline void Math_ApproachS(s16* pValue, s16 target, s16 scale, s16 maxStep) {
+    s16 diff = (s16)(target - *pValue) / scale;
+    if (diff > maxStep) { *pValue += maxStep; return; }
+    if (diff < -maxStep) { *pValue -= maxStep; return; }
+    *pValue += diff;
+}
 f32 Math_Vec3f_StepTo(Vec3f* start, Vec3f* target, f32 speed);
 
 f32 Math_FactorialF(f32 n);
@@ -332,8 +391,12 @@ f32 Math3D_Dist1DSq(f32 a, f32 b);
 f32 Math3D_Dist1D(f32 a, f32 b);
 f32 Math3D_Dist2DSq(f32 x0, f32 y0, f32 x1, f32 y1);
 f32 Math3D_Dist2D(f32 x0, f32 y0, f32 x1, f32 y1);
-f32 Math3D_Vec3fMagnitudeSq(Vec3f* vec);
-f32 Math3D_Vec3fMagnitude(Vec3f* vec);
+static inline f32 Math3D_Vec3fMagnitudeSq(Vec3f* vec) {
+    return SQ(vec->x) + SQ(vec->y) + SQ(vec->z);
+}
+static inline f32 Math3D_Vec3fMagnitude(Vec3f* vec) {
+    return sqrtf(Math3D_Vec3fMagnitudeSq(vec));
+}
 f32 Math3D_Vec3fDistSq(Vec3f* a, Vec3f* b);
 f32 Math3D_Vec3f_DistXYZ(Vec3f* a, Vec3f* b);
 f32 Math3D_DistXYZ16toF(Vec3s* a, Vec3f* b);

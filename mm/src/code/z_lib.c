@@ -415,127 +415,15 @@ void IChain_Apply_Vec3s(u8* ptr, InitChainEntry* ichain) {
     v0->x = v1;
 }
 
-f32 Math_SmoothStepToF(f32* pValue, f32 target, f32 fraction, f32 step, f32 minStep) {
-    f32 stepSize;
+/* Math_SmoothStepToF is now static inline in z64math.h */
 
-    if (*pValue != target) {
-        stepSize = (target - *pValue) * fraction;
+/* Math_ApproachF is now static inline in z64math.h */
 
-        if ((stepSize >= minStep) || (stepSize <= -minStep)) {
-            if (stepSize > step) {
-                stepSize = step;
-            }
+/* Math_ApproachZeroF is now static inline in z64math.h */
 
-            if (stepSize < -step) {
-                stepSize = -step;
-            }
+/* Math_SmoothStepToS is now static inline in z64math.h */
 
-            *pValue += stepSize;
-        } else {
-            if (stepSize > 0) {
-                if (stepSize < minStep) {
-                    *pValue += minStep;
-
-                    if (target < *pValue) {
-                        *pValue = target;
-                    }
-                }
-            } else {
-                if (-minStep < stepSize) {
-                    *pValue += -minStep;
-
-                    if (*pValue < target) {
-                        *pValue = target;
-                    }
-                }
-            }
-        }
-    }
-
-    return fabsf(target - *pValue);
-}
-
-void Math_ApproachF(f32* pValue, f32 target, f32 scale, f32 maxStep) {
-    f32 f2;
-
-    if (*pValue != target) {
-        f2 = (target - *pValue) * scale;
-
-        if (f2 > maxStep) {
-            f2 = maxStep;
-        } else if (f2 < -maxStep) {
-            f2 = -maxStep;
-        }
-
-        *pValue += f2;
-    }
-}
-
-void Math_ApproachZeroF(f32* pValue, f32 scale, f32 maxStep) {
-    f32 f0 = *pValue * scale;
-
-    if (maxStep < f0) {
-        f0 = maxStep;
-    } else if (f0 < -maxStep) {
-        f0 = -maxStep;
-    }
-
-    *pValue = *pValue - f0;
-}
-
-s16 Math_SmoothStepToS(s16* pValue, s16 target, s16 scale, s16 step, s16 minStep) {
-    s16 stepSize = 0;
-    s16 diff = target - *pValue;
-
-    if (*pValue != target) {
-        stepSize = diff / scale;
-
-        if ((stepSize > minStep) || (stepSize < -minStep)) {
-            if (stepSize > step) {
-                stepSize = step;
-            }
-
-            if (stepSize < -step) {
-                stepSize = -step;
-            }
-
-            *pValue += stepSize;
-        } else {
-            if (diff >= 0) {
-                *pValue += minStep;
-
-                if ((s16)(target - *pValue) <= 0) {
-                    *pValue = target;
-                }
-            } else {
-                *pValue -= minStep;
-
-                if ((s16)(target - *pValue) >= 0) {
-                    *pValue = target;
-                }
-            }
-        }
-    }
-
-    return diff;
-}
-
-void Math_ApproachS(s16* pValue, s16 target, s16 scale, s16 maxStep) {
-    s16 diff = target - *pValue;
-    diff /= scale;
-
-    if (diff > maxStep) {
-        *pValue += maxStep;
-        return;
-    }
-
-    if (diff < -maxStep) {
-        *pValue -= maxStep;
-        return;
-    }
-
-    *pValue += diff;
-}
+/* Math_ApproachS is now static inline in z64math.h */
 
 void Color_RGBA8_Copy(Color_RGBA8* dst, Color_RGBA8* src) {
     dst->r = src->r;

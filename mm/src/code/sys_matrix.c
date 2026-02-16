@@ -1932,7 +1932,9 @@ void Matrix_RotateAxisF(f32 angle, Vec3f* axis, MatrixMode mode) {
                 vst1q_f32(&cmf->xx, new0);
                 vst1q_f32(&cmf->xy, new1);
                 vst1q_f32(&cmf->xz, new2);
-                cmf->wx = save_wx; cmf->wy = save_wy; cmf->wz = save_wz;
+                cmf->wx = save_wx;
+                cmf->wy = save_wy;
+                cmf->wz = save_wz;
             }
 #else
 
@@ -2066,7 +2068,9 @@ void Matrix_RotateAxisS(s16 angle, Vec3f* axis, MatrixMode mode) {
                 vst1q_f32(&cmf->xx, new0);
                 vst1q_f32(&cmf->xy, new1);
                 vst1q_f32(&cmf->xz, new2);
-                cmf->wx = save_wx; cmf->wy = save_wy; cmf->wz = save_wz;
+                cmf->wx = save_wx;
+                cmf->wy = save_wy;
+                cmf->wz = save_wz;
             }
 #else
             temp1 = cmf->xx;

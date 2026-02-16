@@ -29,11 +29,11 @@ static void TaskWorker_Thread() {
         }
 
         // Capture task and release lock during execution
-        void (*task)(void*) = worker.task;
-        void* arg = worker.arg;
+        void (*current_task)(void*) = worker.task;
+        void* task_arg = worker.arg;
         lock.unlock();
 
-        task(arg);
+        current_task(task_arg);
 
         lock.lock();
         worker.has_work = false;

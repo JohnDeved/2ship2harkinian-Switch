@@ -27,8 +27,10 @@ void TaskWorker_Destroy(void);
  * Submit a task to run on the worker thread.
  * Only one task can be in-flight at a time. The caller must call
  * TaskWorker_Wait() before submitting another task.
+ * Submitting while a task is in-flight is undefined behavior.
  * @param task  Function pointer to execute on the worker thread
- * @param arg   Opaque argument passed to the task function
+ * @param arg   Opaque argument passed to the task function. Must remain
+ *              valid until TaskWorker_Wait() returns.
  */
 void TaskWorker_Submit(void (*task)(void*), void* arg);
 

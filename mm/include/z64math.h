@@ -336,7 +336,8 @@ static inline s16 Math_SmoothStepToS(s16* pValue, s16 target, s16 scale, s16 ste
     return diff;
 }
 static inline void Math_ApproachS(s16* pValue, s16 target, s16 scale, s16 maxStep) {
-    s16 diff = (s16)(target - *pValue) / scale;
+    s16 diff = target - *pValue;
+    diff /= scale;
     if (diff > maxStep) { *pValue += maxStep; return; }
     if (diff < -maxStep) { *pValue -= maxStep; return; }
     *pValue += diff;

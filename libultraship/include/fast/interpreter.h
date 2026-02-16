@@ -390,7 +390,6 @@ struct Fast3DStats {
     uint64_t timeVertexLoad;
     uint64_t timeMatrixOps;    // matrix multiply, push/pop, normal dir calculations
     uint64_t timePixelDepth;   // pixel depth prepare + readback
-    uint64_t timeFlushOverhead; // Flush() bookkeeping (excluding the draw call itself)
     uint64_t timeFrameSetup;   // Run() setup/teardown, framebuffer ops, clear, MSAA resolve
 
     float avgBatchSize;
@@ -408,7 +407,7 @@ struct Fast3DStats {
 
         const uint64_t accounted = timeTriProcessing + timeTextureSetup + timeShaderSetup +
                                    timeDrawSubmit + timeVertexLoad + timeMatrixOps +
-                                   timePixelDepth + timeFlushOverhead + timeFrameSetup;
+                                   timePixelDepth + timeFrameSetup;
         timeGbiDispatch = timeTotal > accounted ? (timeTotal - accounted) : 0;
     }
 };

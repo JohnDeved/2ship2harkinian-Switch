@@ -14,6 +14,12 @@ jobs:
       uses: actions/checkout@v6
       with:
         submodules: true
+    - name: Cache apt packages
+      uses: actions/cache@v5
+      with:
+        key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/apt-deps.txt') }}
+        path: |
+          /var/cache/apt/archives
     - name: Configure ccache
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
@@ -62,8 +68,10 @@ jobs:
     - name: Generate 2ship.o2r
       run: |
         export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+        ccache --zero-stats
         cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release
-        cmake --build build-cmake --config Release --target Generate2ShipOtr -j3
+        cmake --build build-cmake --config Release --target Generate2ShipOtr --parallel 10
+        ccache --show-stats
     - name: Cache build artifacts
       uses: actions/cache@v5
       with:
@@ -131,8 +139,10 @@ jobs:
     - name: Build 2Ship
       run: |
         export PATH="/usr/lib/ccache:/opt/homebrew/opt/ccache/libexec:/usr/local/opt/ccache/libexec:$PATH"
+        ccache --zero-stats
         cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"
         cmake --build build-cmake --config Release --parallel 10
+        ccache --show-stats
         (cd build-cmake && cpack)
 
         mv _packages/*.dmg 2Ship.dmg
@@ -153,6 +163,12 @@ jobs:
       uses: actions/checkout@v6
       with:
         submodules: true
+    - name: Cache apt packages
+      uses: actions/cache@v5
+      with:
+        key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/apt-deps.txt') }}
+        path: |
+          /var/cache/apt/archives
     - name: Install dependencies
       run: |
         sudo apt-get update
@@ -220,8 +236,10 @@ jobs:
     - name: Build 2Ship
       run: |
         export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+        ccache --zero-stats
         cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release -DBUILD_REMOTE_CONTROL=1
-        cmake --build build-cmake --config Release -j3
+        cmake --build build-cmake --config Release --parallel 10
+        ccache --show-stats
         (cd build-cmake && cpack -G External)
 
         mv README.md readme.txt
@@ -274,8 +292,10 @@ jobs:
         CCACHE_BASEDIR: ${{ github.workspace }}
         CCACHE_NOHASHDIR: 1
       run: |
+        ccache --zero-stats
         cmake -H. -Bbuild-switch -GNinja -DCMAKE_TOOLCHAIN_FILE=/opt/devkitpro/cmake/Switch.cmake -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
-        cmake --build build-switch --target 2ship_nro --config Release -j3
+        cmake --build build-switch --target 2ship_nro --config Release --parallel 10
+        ccache --show-stats
         wget -O gamecontrollerdb.txt https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt
 
         mv build-switch/mm/*.nro 2ship.nro

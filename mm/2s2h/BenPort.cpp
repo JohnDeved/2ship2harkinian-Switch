@@ -47,6 +47,7 @@
 // OTRTODO
 //#include <functions.h>
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
+#include "DeveloperTools/FrameProfiler.h"
 
 #ifdef ENABLE_CROWD_CONTROL
 #include "Enhancements/crowd-control/CrowdControl.h"
@@ -763,6 +764,7 @@ extern "C" void InitOTR() {
     OTRMessage_Init();
     OTRAudio_Init();
     TaskWorker_Init();
+    TaskWorkerPool_Init();
     OTRExtScanner();
     PlayerCustomFlipbooks_Patch();
 
@@ -802,6 +804,7 @@ extern "C" void SaveManager_ThreadPoolWait() {
 
 extern "C" void DeinitOTR() {
     SaveManager_ThreadPoolWait();
+    TaskWorkerPool_Destroy();
     TaskWorker_Destroy();
     OTRAudio_Exit();
 #ifdef ENABLE_CROWD_CONTROL
@@ -1006,6 +1009,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     // time_base = fps * original_fps (one second)
     int next_original_frame = fps;
 
+    FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
     while (time + original_fps <= next_original_frame) {
         time += original_fps;
         if (time != next_original_frame) {
@@ -1014,6 +1018,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             mtx_replacements.emplace_back();
         }
     }
+    FrameProfiler_EndPhase(PROFILE_PHASE_FRAME_INTERP);
 
     time -= fps;
 
@@ -1027,7 +1032,9 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
         mtx_replacements.emplace_back();
     }
 
+    FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
     RunCommands(commands, mtx_replacements);
+    FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
 
     last_fps = fps;
     last_update_rate = R_UPDATE_RATE;

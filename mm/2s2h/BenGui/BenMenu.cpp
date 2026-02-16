@@ -2039,6 +2039,13 @@ void BenMenu::AddDevTools() {
         .CVar("gWindows.MessageViewer")
         .Options(ButtonOptions().Tooltip("Enables the Message Viewer window for testing in-game messages."))
         .WindowName("Message Viewer");
+
+    path = { "Dev Tools", "Frame Profiler", SECTION_COLUMN_1 };
+    AddSidebarEntry("Dev Tools", "Frame Profiler", 1);
+    AddWidget(path, "Popout Frame Profiler", WIDGET_WINDOW_BUTTON)
+        .CVar("gWindows.FrameProfiler")
+        .Options(ButtonOptions().Tooltip("Shows per-phase CPU timing for each frame, helping identify bottlenecks."))
+        .WindowName("Frame Profiler");
 }
 
 BenMenu::BenMenu(const std::string& consoleVariable, const std::string& name)

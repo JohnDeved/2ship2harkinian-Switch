@@ -47,27 +47,40 @@ u8 sMotionBlurStatus;
 #include "2s2h/DeveloperTools/CollisionViewer.h"
 #include "2s2h/framebuffer_effects.h"
 #include "2s2h/collision_worker.h"
+#include "2s2h/DeveloperTools/FrameProfiler.h"
 #include <string.h>
 
 // Task wrapper for CollisionCheck_OC on the worker thread
 typedef struct {
     PlayState* play;
     CollisionCheckContext* colChkCtx;
-} OcTaskArgs;
+} CollisionTaskArgs;
 
 static void OcTask(void* arg) {
-    OcTaskArgs* args = (OcTaskArgs*)arg;
+    FrameProfiler_StartPhase(PROFILE_PHASE_COLLISION_OC);
+    CollisionTaskArgs* args = (CollisionTaskArgs*)arg;
     CollisionCheck_OC(args->play, args->colChkCtx);
+    FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_OC);
+}
+
+// Task wrapper for CollisionCheck_AT on the worker pool
+static void AtTask(void* arg) {
+    FrameProfiler_StartPhase(PROFILE_PHASE_COLLISION_AT);
+    CollisionTaskArgs* args = (CollisionTaskArgs*)arg;
+    CollisionCheck_AT(args->play, args->colChkCtx);
+    FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_AT);
 }
 
 // Task wrapper for running all effect updates on the worker thread.
 // Effect_UpdateAll, EffectSs_UpdateAll, and EffFootmark_Update are independent
 // from camera/environment/UI updates, so they can run concurrently.
 static void EffectsTask(void* arg) {
+    FrameProfiler_StartPhase(PROFILE_PHASE_EFFECTS);
     PlayState* play = (PlayState*)arg;
     Effect_UpdateAll(play);
     EffectSs_UpdateAll(play);
     EffFootmark_Update(play);
+    FrameProfiler_EndPhase(PROFILE_PHASE_EFFECTS);
 }
 
 s32 gDbgCamEnabled = false;
@@ -1066,15 +1079,20 @@ void Play_UpdateMain(PlayState* this) {
                     }
                 } else {
                     Room_ProcessRoomRequest(this, &this->roomCtx);
-                    // Run OC (O(n^2) pairwise) on worker thread while AT runs on main thread
-                    OcTaskArgs ocArgs = { this, &this->colChkCtx };
-                    TaskWorker_Submit(OcTask, &ocArgs);
-                    CollisionCheck_AT(this, &this->colChkCtx);
-                    TaskWorker_Wait();
+                    // Run AT + OC in parallel on the worker pool (cores 1 + 3).
+                    // AT writes atFlags/acFlags, OC writes ocFlags1/ocFlags2 — separate
+                    // field sets per collider, verified safe for concurrent execution.
+                    CollisionTaskArgs colArgs = { this, &this->colChkCtx };
+                    TaskWorkerPool_Submit2(AtTask, &colArgs, OcTask, &colArgs);
+                    TaskWorkerPool_Wait();
+                    FrameProfiler_StartPhase(PROFILE_PHASE_COLLISION_DAMAGE);
                     CollisionCheck_Damage(this, &this->colChkCtx);
+                    FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_DAMAGE);
                     CollisionCheck_ClearContext(this, &this->colChkCtx);
                     if (!this->haltAllActors) {
+                        FrameProfiler_StartPhase(PROFILE_PHASE_ACTOR_UPDATE);
                         Actor_UpdateAll(this, &this->actorCtx);
+                        FrameProfiler_EndPhase(PROFILE_PHASE_ACTOR_UPDATE);
                     }
                     Cutscene_UpdateManual(this, &this->csCtx);
                     Cutscene_UpdateScripted(this, &this->csCtx);
@@ -1460,7 +1478,9 @@ void Play_DrawMain(PlayState* this) {
             }
 
             if (1) {
+                FrameProfiler_StartPhase(PROFILE_PHASE_ACTOR_DRAW);
                 Actor_DrawAll(this, &this->actorCtx);
+                FrameProfiler_EndPhase(PROFILE_PHASE_ACTOR_DRAW);
             }
 
             if (1) {
@@ -1644,6 +1664,8 @@ void Play_Main(GameState* thisx) {
     static Input* prevInput = NULL;
     PlayState* this = (PlayState*)thisx;
 
+    FrameProfiler_StartPhase(PROFILE_PHASE_TOTAL_FRAME);
+
     prevInput = CONTROLLER1(&this->state);
     DebugDisplay_Init();
 
@@ -1671,6 +1693,9 @@ void Play_Main(GameState* thisx) {
 
     CutsceneManager_Update();
     CutsceneManager_ClearWaiting();
+
+    FrameProfiler_EndPhase(PROFILE_PHASE_TOTAL_FRAME);
+    FrameProfiler_EndFrame();
 }
 
 bool Play_InCsMode(PlayState* this) {

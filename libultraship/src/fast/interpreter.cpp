@@ -1393,9 +1393,36 @@ void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[
 void Interpreter::CalculateNormalDir(const F3DLight_t* light, float coeffs[3]) {
     float light_dir[3] = { light->dir[0] / 127.0f, light->dir[1] / 127.0f, light->dir[2] / 127.0f };
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // Fused TransposedMatrixMul + NormalizeVector using NEON
+    // TransposedMatrixMul: res[i] = a[0]*b[0][i] + a[1]*b[0+1][i] + a[2]*b[0+2][i] for i=0,1,2
+    // Then normalize the result vector
+    float(*mtx)[4] = mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1];
+    float32x4_t r0 = vld1q_f32(mtx[0]);
+    float32x4_t r1 = vld1q_f32(mtx[1]);
+    float32x4_t r2 = vld1q_f32(mtx[2]);
+    // res = light_dir[0] * mtx_row0 + light_dir[1] * mtx_row1 + light_dir[2] * mtx_row2
+    float32x4_t res = vmulq_n_f32(r0, light_dir[0]);
+    res = vmlaq_n_f32(res, r1, light_dir[1]);
+    res = vmlaq_n_f32(res, r2, light_dir[2]);
+    // Normalize: compute length² = x² + y² + z², then rsqrt
+    float32x4_t sq = vmulq_f32(res, res);
+    // Sum x² + y² + z² (lane 0 + lane 1 + lane 2)
+    float len_sq = vgetq_lane_f32(sq, 0) + vgetq_lane_f32(sq, 1) + vgetq_lane_f32(sq, 2);
+    float32x2_t len_sq_v = vdup_n_f32(len_sq);
+    float32x2_t inv_len = vrsqrte_f32(len_sq_v);
+    // One Newton-Raphson iteration for better accuracy
+    inv_len = vmul_f32(inv_len, vrsqrts_f32(vmul_f32(len_sq_v, inv_len), inv_len));
+    float32x4_t inv_len_q = vdupq_lane_f32(inv_len, 0);
+    res = vmulq_f32(res, inv_len_q);
+    coeffs[0] = vgetq_lane_f32(res, 0);
+    coeffs[1] = vgetq_lane_f32(res, 1);
+    coeffs[2] = vgetq_lane_f32(res, 2);
+#else
     Interpreter::TransposedMatrixMul(coeffs, light_dir,
                                      mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1]);
     Interpreter::NormalizeVector(coeffs);
+#endif
 }
 
 void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
@@ -1577,9 +1604,10 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
             int g = mRsp->current_lights[mRsp->current_num_lights - 1].l.col[1];
             int b = mRsp->current_lights[mRsp->current_num_lights - 1].l.col[2];
 
+            const bool hasPositionalLighting = (mRsp->geometry_mode & G_LIGHTING_POSITIONAL) != 0;
             for (int i = 0; i < mRsp->current_num_lights - 1; i++) {
                 float intensity = 0;
-                if ((mRsp->geometry_mode & G_LIGHTING_POSITIONAL) && (mRsp->current_lights[i].p.unk3 != 0)) {
+                if (hasPositionalLighting && (mRsp->current_lights[i].p.unk3 != 0)) {
                     // Calculate distance from the light to the vertex
                     float dist_vec[3] = { mRsp->current_lights[i].p.pos[0] - world_pos[0],
                                           mRsp->current_lights[i].p.pos[1] - world_pos[1],
@@ -1617,10 +1645,20 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                                         1.0f;
                     intensity = total_intensity / attenuation;
                 } else {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                    // NEON: dot product of vertex normal with light coefficients
+                    float32x4_t n_vec = { (float)vn->n[0], (float)vn->n[1], (float)vn->n[2], 0.0f };
+                    float32x4_t c_vec = vld1q_f32(mRsp->current_lights_coeffs[i]);
+                    float32x4_t prod = vmulq_f32(n_vec, c_vec);
+                    // Horizontal sum of first 3 lanes
+                    intensity = vgetq_lane_f32(prod, 0) + vgetq_lane_f32(prod, 1) + vgetq_lane_f32(prod, 2);
+                    intensity *= (1.0f / 127.0f);
+#else
                     intensity += vn->n[0] * mRsp->current_lights_coeffs[i][0];
                     intensity += vn->n[1] * mRsp->current_lights_coeffs[i][1];
                     intensity += vn->n[2] * mRsp->current_lights_coeffs[i][2];
                     intensity /= 127.0f;
+#endif
                 }
                 if (intensity > 0.0f) {
                     r += intensity * mRsp->current_lights[i].l.col[0];
@@ -1635,6 +1673,16 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
 
             if (mRsp->geometry_mode & G_TEXTURE_GEN) {
                 float dotx = 0, doty = 0;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                // NEON: compute both lookat dot products simultaneously
+                float32x4_t n_vec = { (float)vn->n[0], (float)vn->n[1], (float)vn->n[2], 0.0f };
+                float32x4_t lx = vld1q_f32(mRsp->current_lookat_coeffs[0]);
+                float32x4_t ly = vld1q_f32(mRsp->current_lookat_coeffs[1]);
+                float32x4_t px = vmulq_f32(n_vec, lx);
+                float32x4_t py = vmulq_f32(n_vec, ly);
+                dotx = (vgetq_lane_f32(px, 0) + vgetq_lane_f32(px, 1) + vgetq_lane_f32(px, 2)) * (1.0f / 127.0f);
+                doty = (vgetq_lane_f32(py, 0) + vgetq_lane_f32(py, 1) + vgetq_lane_f32(py, 2)) * (1.0f / 127.0f);
+#else
                 dotx += vn->n[0] * mRsp->current_lookat_coeffs[0][0];
                 dotx += vn->n[1] * mRsp->current_lookat_coeffs[0][1];
                 dotx += vn->n[2] * mRsp->current_lookat_coeffs[0][2];
@@ -1644,6 +1692,7 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
 
                 dotx /= 127.0f;
                 doty /= 127.0f;
+#endif
 
                 dotx = Ship::Math::clamp(dotx, -1.0f, 1.0f);
                 doty = Ship::Math::clamp(doty, -1.0f, 1.0f);

@@ -265,8 +265,8 @@ struct RSP {
 
     F3DLight_t lookat[2];
     F3DLight current_lights[MAX_LIGHTS + 1];
-    float current_lights_coeffs[MAX_LIGHTS][3];
-    float current_lookat_coeffs[2][3]; // lookat_x, lookat_y
+    float current_lights_coeffs[MAX_LIGHTS][4]; // padded to 4 for NEON alignment
+    float current_lookat_coeffs[2][4]; // lookat_x, lookat_y — padded to 4 for NEON
     uint8_t current_num_lights;        // includes ambient light
     bool lights_changed;
 

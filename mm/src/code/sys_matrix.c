@@ -217,20 +217,22 @@ void Matrix_Translate(f32 x, f32 y, f32 z, MatrixMode mode) {
         col3 = vmlaq_n_f32(col3, col2, z);
         vst1q_f32(&cmf->xw, col3);
 #else
-        f32 tempX;
-        f32 tempY;
-        tempX = cmf->xx;
-        tempY = cmf->xy;
-        cmf->xw += tempX * x + tempY * y + cmf->xz * z;
-        tempX = cmf->yx;
-        tempY = cmf->yy;
-        cmf->yw += tempX * x + tempY * y + cmf->yz * z;
-        tempX = cmf->zx;
-        tempY = cmf->zy;
-        cmf->zw += tempX * x + tempY * y + cmf->zz * z;
-        tempX = cmf->wx;
-        tempY = cmf->wy;
-        cmf->ww += tempX * x + tempY * y + cmf->wz * z;
+        {
+            f32 tempX;
+            f32 tempY;
+            tempX = cmf->xx;
+            tempY = cmf->xy;
+            cmf->xw += tempX * x + tempY * y + cmf->xz * z;
+            tempX = cmf->yx;
+            tempY = cmf->yy;
+            cmf->yw += tempX * x + tempY * y + cmf->yz * z;
+            tempX = cmf->zx;
+            tempY = cmf->zy;
+            cmf->zw += tempX * x + tempY * y + cmf->zz * z;
+            tempX = cmf->wx;
+            tempY = cmf->wy;
+            cmf->ww += tempX * x + tempY * y + cmf->wz * z;
+        }
 #endif
     } else {
         SkinMatrix_SetTranslate(cmf, x, y, z);
@@ -333,27 +335,29 @@ void Matrix_RotateXS(s16 x, MatrixMode mode) {
             vst1q_f32(&cmf->xy, new_col1);
             vst1q_f32(&cmf->xz, new_col2);
 #else
-            f32 tempY;
-            f32 tempZ;
-            tempY = cmf->xy;
-            tempZ = cmf->xz;
-            cmf->xy = tempY * cos + tempZ * sin;
-            cmf->xz = tempZ * cos - tempY * sin;
+            {
+                f32 tempY;
+                f32 tempZ;
+                tempY = cmf->xy;
+                tempZ = cmf->xz;
+                cmf->xy = tempY * cos + tempZ * sin;
+                cmf->xz = tempZ * cos - tempY * sin;
 
-            tempY = cmf->yy;
-            tempZ = cmf->yz;
-            cmf->yy = tempY * cos + tempZ * sin;
-            cmf->yz = tempZ * cos - tempY * sin;
+                tempY = cmf->yy;
+                tempZ = cmf->yz;
+                cmf->yy = tempY * cos + tempZ * sin;
+                cmf->yz = tempZ * cos - tempY * sin;
 
-            tempY = cmf->zy;
-            tempZ = cmf->zz;
-            cmf->zy = tempY * cos + tempZ * sin;
-            cmf->zz = tempZ * cos - tempY * sin;
+                tempY = cmf->zy;
+                tempZ = cmf->zz;
+                cmf->zy = tempY * cos + tempZ * sin;
+                cmf->zz = tempZ * cos - tempY * sin;
 
-            tempY = cmf->wy;
-            tempZ = cmf->wz;
-            cmf->wy = tempY * cos + tempZ * sin;
-            cmf->wz = tempZ * cos - tempY * sin;
+                tempY = cmf->wy;
+                tempZ = cmf->wz;
+                cmf->wy = tempY * cos + tempZ * sin;
+                cmf->wz = tempZ * cos - tempY * sin;
+            }
 #endif
         }
     } else {
@@ -620,27 +624,29 @@ void Matrix_RotateYS(s16 y, MatrixMode mode) {
             vst1q_f32(&cmf->xx, new_col0);
             vst1q_f32(&cmf->xz, new_col2);
 #else
-            f32 tempX;
-            f32 tempZ;
-            tempX = cmf->xx;
-            tempZ = cmf->xz;
-            cmf->xx = tempX * cos - tempZ * sin;
-            cmf->xz = tempX * sin + tempZ * cos;
+            {
+                f32 tempX;
+                f32 tempZ;
+                tempX = cmf->xx;
+                tempZ = cmf->xz;
+                cmf->xx = tempX * cos - tempZ * sin;
+                cmf->xz = tempX * sin + tempZ * cos;
 
-            tempX = cmf->yx;
-            tempZ = cmf->yz;
-            cmf->yx = tempX * cos - tempZ * sin;
-            cmf->yz = tempX * sin + tempZ * cos;
+                tempX = cmf->yx;
+                tempZ = cmf->yz;
+                cmf->yx = tempX * cos - tempZ * sin;
+                cmf->yz = tempX * sin + tempZ * cos;
 
-            tempX = cmf->zx;
-            tempZ = cmf->zz;
-            cmf->zx = tempX * cos - tempZ * sin;
-            cmf->zz = tempX * sin + tempZ * cos;
+                tempX = cmf->zx;
+                tempZ = cmf->zz;
+                cmf->zx = tempX * cos - tempZ * sin;
+                cmf->zz = tempX * sin + tempZ * cos;
 
-            tempX = cmf->wx;
-            tempZ = cmf->wz;
-            cmf->wx = tempX * cos - tempZ * sin;
-            cmf->wz = tempX * sin + tempZ * cos;
+                tempX = cmf->wx;
+                tempZ = cmf->wz;
+                cmf->wx = tempX * cos - tempZ * sin;
+                cmf->wz = tempX * sin + tempZ * cos;
+            }
 #endif
         }
     } else {
@@ -812,27 +818,29 @@ void Matrix_RotateZS(s16 z, MatrixMode mode) {
             vst1q_f32(&cmf->xx, new_col0);
             vst1q_f32(&cmf->xy, new_col1);
 #else
-            f32 tempX;
-            f32 tempY;
-            tempX = cmf->xx;
-            tempY = cmf->xy;
-            cmf->xx = tempX * cos + tempY * sin;
-            cmf->xy = tempY * cos - tempX * sin;
+            {
+                f32 tempX;
+                f32 tempY;
+                tempX = cmf->xx;
+                tempY = cmf->xy;
+                cmf->xx = tempX * cos + tempY * sin;
+                cmf->xy = tempY * cos - tempX * sin;
 
-            tempX = cmf->yx;
-            tempY = cmf->yy;
-            cmf->yx = tempX * cos + tempY * sin;
-            cmf->yy = tempY * cos - tempX * sin;
+                tempX = cmf->yx;
+                tempY = cmf->yy;
+                cmf->yx = tempX * cos + tempY * sin;
+                cmf->yy = tempY * cos - tempX * sin;
 
-            tempX = cmf->zx;
-            tempY = cmf->zy;
-            cmf->zx = tempX * cos + tempY * sin;
-            cmf->zy = tempY * cos - tempX * sin;
+                tempX = cmf->zx;
+                tempY = cmf->zy;
+                cmf->zx = tempX * cos + tempY * sin;
+                cmf->zy = tempY * cos - tempX * sin;
 
-            tempX = cmf->wx;
-            tempY = cmf->wy;
-            cmf->wx = tempX * cos + tempY * sin;
-            cmf->wy = tempY * cos - tempX * sin;
+                tempX = cmf->wx;
+                tempY = cmf->wy;
+                cmf->wx = tempX * cos + tempY * sin;
+                cmf->wy = tempY * cos - tempX * sin;
+            }
 #endif
         }
     } else {

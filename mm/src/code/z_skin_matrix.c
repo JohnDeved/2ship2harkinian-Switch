@@ -6,7 +6,7 @@
 
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 
-#if defined(__ARM_NEON)
+#if defined(__ARM_NEON) && defined(__aarch64__)
 #include <arm_neon.h>
 #endif
 

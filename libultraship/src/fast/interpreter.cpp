@@ -1992,8 +1992,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRapi->SetUseAlpha(use_alpha);
         mRenderingState.alpha_blend = use_alpha;
     }
-    uint8_t numInputs = prg->numInputs;
-    bool usedTextures[2] = { prg->usedTextures[0], prg->usedTextures[1] };
+    uint8_t numInputs = 0;
+    bool usedTextures[2] = { false, false };
+    mRapi->ShaderGetInfo(prg, &numInputs, usedTextures);
 
     struct GfxClipParameters clip_parameters = mRapi->GetClipParameters();
 

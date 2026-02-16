@@ -54,7 +54,7 @@ struct FramebufferOGL {
 
 class GfxRenderingAPIOGL final : public GfxRenderingAPI {
   public:
-    ~GfxRenderingAPIOGL() override = default;
+    ~GfxRenderingAPIOGL() override;
     const char* GetName() override;
     int GetMaxTextureSize() override;
     GfxClipParameters GetClipParameters() override;

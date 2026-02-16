@@ -569,16 +569,16 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
             vst4_u8(dst, rgba);
         }
 
-        // Scalar tail for remaining pixels
+        // Scalar tail using same bit-replication as NEON path for consistency
         for (; i < totalPixels; i++, src16++, dst += 4) {
             uint16_t col16 = (((const uint8_t*)src16)[0] << 8) | ((const uint8_t*)src16)[1];
             uint8_t a = col16 & 1;
             uint8_t r = col16 >> 11;
             uint8_t g = (col16 >> 6) & 0x1f;
             uint8_t b = (col16 >> 1) & 0x1f;
-            dst[0] = SCALE_5_8(r);
-            dst[1] = SCALE_5_8(g);
-            dst[2] = SCALE_5_8(b);
+            dst[0] = (r << 3) | (r >> 2);
+            dst[1] = (g << 3) | (g >> 2);
+            dst[2] = (b << 3) | (b >> 2);
             dst[3] = a ? 255 : 0;
         }
     } else
@@ -1368,6 +1368,8 @@ void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[
 #if defined(__ARM_NEON) && defined(__aarch64__)
     // NEON 4×4 matrix multiply: process one result row at a time.
     // Each result row = a[i][0]*b_row0 + a[i][1]*b_row1 + a[i][2]*b_row2 + a[i][3]*b_row3
+    // Use tmp to handle aliasing (res may alias a or b).
+    float tmp[4][4];
     float32x4_t b0 = vld1q_f32(b[0]);
     float32x4_t b1 = vld1q_f32(b[1]);
     float32x4_t b2 = vld1q_f32(b[2]);
@@ -1377,8 +1379,9 @@ void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[
         row = vmlaq_n_f32(row, b1, a[i][1]);
         row = vmlaq_n_f32(row, b2, a[i][2]);
         row = vmlaq_n_f32(row, b3, a[i][3]);
-        vst1q_f32(res[i], row);
+        vst1q_f32(tmp[i], row);
     }
+    memcpy(res, tmp, sizeof(tmp));
 #else
     float tmp[4][4];
     for (int i = 0; i < 4; i++) {

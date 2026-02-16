@@ -28,6 +28,17 @@
 #include "ship/config/ConsoleVariable.h"
 
 namespace Fast {
+
+GfxRenderingAPIOGL::~GfxRenderingAPIOGL() {
+#if defined(__SWITCH__) || defined(USE_OPENGLES)
+    for (auto& [key, prg] : mShaderProgramPool) {
+        if (prg.vao != 0) {
+            glDeleteVertexArrays(1, &prg.vao);
+        }
+    }
+#endif
+}
+
 int GfxRenderingAPIOGL::GetMaxTextureSize() {
     GLint max_texture_size;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);

@@ -48,6 +48,8 @@ std::stack<std::string> currentDir;
 #define SEG_ADDR(seg, addr) (addr | (seg << 24) | 1)
 #define SUPPORT_CHECK(x) assert(x)
 
+static constexpr float INV_255 = 1.0f / 255.0f;
+
 // SCALE_M_N: upscale/downscale M-bit integer to N-bit
 #define SCALE_5_8(VAL_) (((VAL_)*0xFF) / 0x1F)
 #define SCALE_8_5(VAL_) ((((VAL_) + 4) * 0x1F) / 0xFF)
@@ -1837,23 +1839,18 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     // Pre-compute constant color combiner inputs (everything except G_CCMUX_SHADE)
     // These are the same for all 3 vertices, so we compute the float values once
-    constexpr float INV_255 = 1.0f / 255.0f;
     const int numAlphaPasses = use_alpha ? 2 : 1;
 
     // Pre-compute per-input colors that don't depend on the vertex
-    // inputColorRGB[j] and inputAlpha[j] hold pre-computed float values
-    // isShadeInput[k][j] = true means we need the per-vertex color
     struct PrecomputedInput {
         float r, g, b, a;
         bool isShade;       // needs per-vertex color
-        bool isLodFraction; // needs per-vertex LOD computation
     };
     PrecomputedInput precomputed[2][7]; // [k=color/alpha pass][j=input]
     for (int k = 0; k < numAlphaPasses; k++) {
         for (int j = 0; j < numInputs; j++) {
             PrecomputedInput& pc = precomputed[k][j];
             pc.isShade = false;
-            pc.isLodFraction = false;
             switch (comb->shader_input_mapping[k][j]) {
                 case G_CCMUX_PRIMITIVE:
                     pc.r = mRdp->prim_color.r * INV_255;
@@ -1883,7 +1880,6 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                     pc.a = mRdp->prim_lod_fraction * INV_255;
                     break;
                 case G_CCMUX_LOD_FRACTION:
-                    pc.isLodFraction = true;
                     if (mRdp->other_mode_l & G_TL_LOD) {
                         float distance_frac = (v1->w - 3000.0f) / 3000.0f;
                         if (distance_frac < 0.0f) distance_frac = 0.0f;

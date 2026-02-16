@@ -1,6 +1,9 @@
 name: generate-builds
 on:
   push:
+    branches:
+      - main
+      - perf/nx-high-impact
   pull_request:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

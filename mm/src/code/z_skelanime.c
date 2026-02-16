@@ -962,11 +962,7 @@ void SkelAnime_InterpFrameTable(s32 limbCount, Vec3s* dst, Vec3s* start, Vec3s* 
             dst->z = TRUNCF_BINANG(diff * weight) + base;
         }
     } else {
-        for (i = 0; i < limbCount; i++, dst++, target++) {
-            dst->x = target->x;
-            dst->y = target->y;
-            dst->z = target->z;
-        }
+        memcpy(dst, target, limbCount * sizeof(Vec3s));
     }
 }
 
@@ -1174,13 +1170,7 @@ void AnimTask_Copy(PlayState* play, AnimTaskData* data) {
     AnimTaskCopy* task = &data->copy;
 
     if (!(task->group & sDisabledTransformTaskGroups)) {
-        Vec3s* dest = task->dest;
-        Vec3s* src = task->src;
-        s32 i;
-
-        for (i = 0; i < task->vecCount; i++) {
-            *dest++ = *src++;
-        }
+        memcpy(task->dest, task->src, task->vecCount * sizeof(Vec3s));
     }
 }
 

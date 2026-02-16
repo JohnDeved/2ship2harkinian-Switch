@@ -484,6 +484,16 @@ void aS8DecImpl(uint8_t flags, ADPCM_STATE state) {
     }
     out += 16;
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    while (nbytes > 0) {
+        uint8x16_t bytes = vld1q_u8(in);
+        vst1q_s16(out,     vreinterpretq_s16_u16(vshll_n_u8(vget_low_u8(bytes), 8)));
+        vst1q_s16(out + 8, vreinterpretq_s16_u16(vshll_n_u8(vget_high_u8(bytes), 8)));
+        in += 16;
+        out += 16;
+        nbytes -= 16 * sizeof(int16_t);
+    }
+#else
     while (nbytes > 0) {
         *out++ = (int16_t)(*in++ << 8);
         *out++ = (int16_t)(*in++ << 8);
@@ -504,6 +514,7 @@ void aS8DecImpl(uint8_t flags, ADPCM_STATE state) {
 
         nbytes -= 16 * sizeof(int16_t);
     }
+#endif
 
     memcpy(state, out - 16, 16 * sizeof(int16_t));
 }
@@ -776,6 +787,33 @@ void aUnkCmd19Impl(uint8_t f, uint16_t count, uint16_t out_addr, uint16_t in_add
     int nbytes = ROUND_UP_64(count);
     int16_t* in = BUF_S16(in_addr + f);
     int16_t* out = BUF_S16(out_addr);
+
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    int16x8_t t0 = vld1q_s16(in);
+    int16x8_t t1 = vld1q_s16(in + 8);
+    int16x8_t t2 = vld1q_s16(in + 16);
+    int16x8_t t3 = vld1q_s16(in + 24);
+    do {
+        int16x8_t o0 = vld1q_s16(out);
+        int16x8_t o1 = vld1q_s16(out + 8);
+        int16x8_t o2 = vld1q_s16(out + 16);
+        int16x8_t o3 = vld1q_s16(out + 24);
+        int32x4_t p0l = vmull_s16(vget_low_s16(o0), vget_low_s16(t0));
+        int32x4_t p0h = vmull_s16(vget_high_s16(o0), vget_high_s16(t0));
+        int32x4_t p1l = vmull_s16(vget_low_s16(o1), vget_low_s16(t1));
+        int32x4_t p1h = vmull_s16(vget_high_s16(o1), vget_high_s16(t1));
+        int32x4_t p2l = vmull_s16(vget_low_s16(o2), vget_low_s16(t2));
+        int32x4_t p2h = vmull_s16(vget_high_s16(o2), vget_high_s16(t2));
+        int32x4_t p3l = vmull_s16(vget_low_s16(o3), vget_low_s16(t3));
+        int32x4_t p3h = vmull_s16(vget_high_s16(o3), vget_high_s16(t3));
+        vst1q_s16(out,      vcombine_s16(vqmovn_s32(p0l), vqmovn_s32(p0h)));
+        vst1q_s16(out + 8,  vcombine_s16(vqmovn_s32(p1l), vqmovn_s32(p1h)));
+        vst1q_s16(out + 16, vcombine_s16(vqmovn_s32(p2l), vqmovn_s32(p2h)));
+        vst1q_s16(out + 24, vcombine_s16(vqmovn_s32(p3l), vqmovn_s32(p3h)));
+        out += 32;
+        nbytes -= 32 * sizeof(int16_t);
+    } while (nbytes > 0);
+#else
     int16_t tbl[32];
 
     memcpy(tbl, in, 32 * sizeof(int16_t));
@@ -786,6 +824,7 @@ void aUnkCmd19Impl(uint8_t f, uint16_t count, uint16_t out_addr, uint16_t in_add
         out += 32;
         nbytes -= 32 * sizeof(int16_t);
     } while (nbytes > 0);
+#endif
 }
 
 // From here on there are SIMD implementations of the various mixer functions.

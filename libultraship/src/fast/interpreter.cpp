@@ -104,12 +104,22 @@ static std::string GetPathWithoutFileName(char* filePath) {
     return filePath;
 }
 
+#if defined(__SWITCH__)
+// Larger batch size on Switch reduces draw-call frequency and GL driver
+// overhead, which is the dominant CPU bottleneck on the A57 cores.
+constexpr size_t MAX_TRI_BUFFER = 1024;
+#else
 constexpr size_t MAX_TRI_BUFFER = 256;
+#endif
 
 Interpreter::Interpreter() {
     mRsp = new RSP();
     mRdp = new RDP();
     mBufVbo = new float[MAX_TRI_BUFFER * (32 * 3)];
+
+    // Pre-allocate cache containers to avoid rehash/growth costs at runtime.
+    mTextureCache.map.reserve(TEXTURE_CACHE_MAX_SIZE);
+    mGetPixelDepthCached.reserve(16);
 }
 
 Interpreter::~Interpreter() {
@@ -4558,6 +4568,11 @@ void Interpreter::AdjustPixelDepthCoordinates(float& x, float& y) {
         x += mGameWindowViewport.x;
         y += mGfxCurrentWindowDimensions.height - (mGameWindowViewport.y + mGameWindowViewport.height);
     }
+    // Quantize to integer pixel coordinates so that tiny float differences
+    // (from ratio/offset arithmetic) map to the same cache key, improving
+    // depth-query cache hit rate and reducing redundant GL readback calls.
+    x = roundf(x);
+    y = roundf(y);
 }
 
 void Interpreter::GetPixelDepthPrepare(float x, float y) {

@@ -38,6 +38,9 @@ struct ShaderProgram {
     GLint texture_width_location;
     GLint texture_height_location;
     GLint texture_filtering_location;
+#if defined(__SWITCH__) || defined(USE_OPENGLES)
+    GLuint vao; // Per-shader VAO: configured once, bound on shader switch
+#endif
 };
 
 struct FramebufferOGL {

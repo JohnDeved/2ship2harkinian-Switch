@@ -74,9 +74,14 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
 
 void GfxRenderingAPIOGL::UnloadShader(ShaderProgram* old_prg) {
     if (old_prg != nullptr) {
+#if defined(__SWITCH__) || defined(USE_OPENGLES)
+        // Per-shader VAO: no need to disable attribs individually; the next
+        // glBindVertexArray in LoadShader restores the new shader's state.
+#else
         for (unsigned int i = 0; i < old_prg->numAttribs; i++) {
             glDisableVertexAttribArray(old_prg->attribLocations[i]);
         }
+#endif
     }
 }
 
@@ -87,7 +92,12 @@ void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
         mStats->shaderSwitches++;
     }
     glUseProgram(new_prg->openglProgramId);
+#if defined(__SWITCH__) || defined(USE_OPENGLES)
+    // Bind per-shader VAO instead of reconfiguring attribs each time.
+    glBindVertexArray(new_prg->vao);
+#else
     VertexArraySetAttribs(new_prg);
+#endif
     SetUniforms(new_prg);
 }
 
@@ -483,6 +493,16 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->texture_width_location = glGetUniformLocation(shader_program, "texture_width");
     prg->texture_height_location = glGetUniformLocation(shader_program, "texture_height");
     prg->texture_filtering_location = glGetUniformLocation(shader_program, "texture_filtering");
+
+#if defined(__SWITCH__) || defined(USE_OPENGLES)
+    // Create a per-shader VAO: bind the shared VBO and configure attribs once.
+    // On shader switch, only glBindVertexArray is needed instead of per-attrib
+    // calls, cutting GL driver overhead significantly on Switch/GLES.
+    glGenVertexArrays(1, &prg->vao);
+    glBindVertexArray(prg->vao);
+    glBindBuffer(GL_ARRAY_BUFFER, mOpenglVbo);
+    VertexArraySetAttribs(prg);
+#endif
 
     LoadShader(prg);
 

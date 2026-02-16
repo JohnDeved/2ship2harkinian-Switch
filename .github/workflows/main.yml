@@ -13,11 +13,12 @@ jobs:
     - name: Configure ccache
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
-        max-size: "500M"
-        verbose: 2
-        key: ${{ runner.os }}-otr-ccache-${{ hashFiles('CMakeLists.txt', 'CMake/**/*.cmake', 'mm/**/*.cmake', 'mm/**/CMakeLists.txt', 'mm/**/*.c', 'mm/**/*.cpp', 'mm/**/*.h', 'mm/**/*.hpp', 'libultraship/**/*.c', 'libultraship/**/*.cpp', 'libultraship/**/*.h', 'libultraship/**/*.hpp') }}
+        key: ${{ runner.os }}-otr
         restore-keys: |
-          ${{ runner.os }}-otr-ccache-
+          ${{ runner.os }}-otr
+        append-timestamp: true
+        verbose: 2
+        max-size: "500M"
     - name: Install dependencies
       run: |
         sudo apt-get update

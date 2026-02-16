@@ -1,5 +1,12 @@
 # Display List Processing Bottleneck: Analysis & Fix Plan
 
+## Target Platform: Nintendo Switch (NX)
+
+**Hardware**: Tegra X1 — 4× ARM Cortex-A57 @ 1020 MHz, Maxwell GPU (256 CUDA cores), 4 GB shared LPDDR4.
+**Graphics API**: OpenGL ES 3.2 via NVN compatibility layer.
+**Docked**: CPU 1020 MHz, GPU 768 MHz. **Handheld**: CPU 1020 MHz, GPU 307/384 MHz.
+**Thermal**: Sustained loads may trigger thermal throttling, reducing GPU clocks further.
+
 ## Executive Summary
 
 Profiler data confirms the **display list interpreter** (`DrawAndRunGraphicsCommands` in libultraship's Fast3D backend) consumes **48.7ms (84%) of each 57.8ms frame** on Switch. GPU utilization is only ~30%, meaning the CPU cannot feed GL commands fast enough. This is the dominant bottleneck preventing 60 FPS.
@@ -51,19 +58,28 @@ We can currently measure the **total** DL processing time and count top-level GB
 
 ### 2a. Game-Side DL Statistics ✅ IMPLEMENTED
 
-The Frame Profiler now counts GBI commands by type via `FrameProfiler_ScanDisplayList()`:
+The Frame Profiler now scans all 5 DL buffers directly (OPA, XLU, Overlay, Work, Debug) via `FrameProfiler_ScanAllBuffers()` called from `graph.c` after buffers are finalized. This gives **actual** command counts (not just top-level master DL which only has ~9 stub commands).
 
-- Top-level command count (total GBI commands in the root display list)
-- Triangle count (`G_TRI1` + 2×`G_TRI2`)
-- Vertex count (from `G_VTX` command fields)
-- Texture loads (`G_SETTIMG` — texture source changes)
-- Matrix loads (`G_MTX` — transform changes)
-- Pipe syncs (`G_RDPPIPESYNC` — state barriers, force draw call flush)
-- DL subcalls (`G_DL` — nested display list references)
-- SetCombine (`G_SETCOMBINE` — shader/combiner mode changes)
-- Cost per triangle and per command (us/tri, us/cmd)
+**Per-buffer breakdown** (identifies WHERE rendering cost is):
+- **OPA (opaque)** — Scene geometry, opaque actors (typically largest)
+- **XLU (translucent)** — Transparency effects, water, particles
+- **Overlay** — HUD, UI elements
+- **Work** — Setup/initialization commands
+- **Debug** — Debug display (usually empty)
 
-**Usage**: Open Dev Tools → Frame Profiler and export a snapshot to see all stats.
+**Totals across all buffers**:
+- Command count, triangle count, vertex count
+- Texture loads (`G_SETTIMG`), matrix loads (`G_MTX`)
+- Pipe syncs (`G_RDPPIPESYNC`), SetCombine (shader changes)
+- DL subcalls (references to OTR resources)
+
+**Derived metrics**:
+- Cost per triangle (µs/tri) — high values indicate draw call overhead
+- Cost per command (µs/cmd) — overall interpreter efficiency
+- Cost per draw call (µs/draw) — estimated from pipe sync count
+- Estimated draw calls per frame (≈ pipe sync count)
+
+**Usage**: Open Dev Tools → Frame Profiler → expand "Per-Buffer Breakdown" to see where geometry concentrates. Export a snapshot for offline analysis.
 
 ### 2b. libultraship Fast3D Profiling (REQUIRES SUBMODULE CHANGES)
 
@@ -174,6 +190,12 @@ Frame N+1:  [Core 0: Game Logic 9ms][    Core 0: idle    ]
 
 The double-buffer infrastructure already exists (`gGfxPools[0]`/`gGfxPools[1]`).
 
+**NX-specific notes**:
+- Pin render thread to Core 1 via `svcSetThreadCoreMask(handle, 1, (1U << 1))`
+- Core 3 available for game logic parallelization while Core 1 renders
+- OpenGL ES context must be bound to the render thread (one GL context = one thread)
+- Frame pacing: use `eglSwapInterval` or manual vsync fence to control presentation
+
 **Expected impact**: Frame time drops from 58ms to ~49ms (9ms game logic runs in parallel). That's 17.3 FPS → ~20.4 FPS. The real win is when combined with Strategy A-C reducing DL time below 16.6ms.
 
 **Where**: `mm/2s2h/BenPort.cpp` (Graph_ProcessGfxCommands), new render thread infrastructure
@@ -203,7 +225,9 @@ The double-buffer infrastructure already exists (`gGfxPools[0]`/`gGfxPools[1]`).
 
 ```
 IMMEDIATE (game-side, this repo):
-  ✅ DL command counting and cost metrics
+  ✅ DL command counting and cost metrics (per-buffer breakdown)
+  ✅ Per-buffer scanning (OPA/XLU/Overlay/Work/Debug)
+  ✅ Estimated draw calls and cost-per-draw metrics
   → Strategy F: Draw distance CVar
   → Strategy D: Render thread prototype
 
@@ -217,7 +241,52 @@ REQUIRES LIBULTRASHIP CHANGES:
 
 ---
 
-## 5. Success Criteria
+## 5. How to Read the Next Profiler Snapshot
+
+When you export a snapshot, look for these key indicators:
+
+### Per-Buffer Breakdown
+- **OPA dominates** → Scene geometry is the bottleneck (most likely). Focus on scene mesh complexity and static DL caching.
+- **XLU dominates** → Transparency overdraw is expensive. Reduce transparent effects/particles.
+- **Overlay high** → HUD/UI is complex. May indicate unnecessary redraws.
+
+### Cost Metrics
+- **us/tri > 10** → Draw call overhead dominates. Each triangle is cheap but there are too many small draw calls. Focus: batch draw calls, reduce PipeSync/SetCombine count.
+- **us/tri 3-10** → Mixed. Both draw call overhead and vertex count matter.
+- **us/tri < 3** → Vertex throughput limited. Reduce triangle count (LOD, draw distance).
+- **us/draw > 200** → Individual draw calls are expensive (shader compile, texture upload). Focus: pre-warm shaders, texture caching.
+
+### What to Report
+Include these in any performance report for actionable analysis:
+1. Total frame time and FPS
+2. DL Process time
+3. Per-buffer command/triangle counts (from "Per-Buffer Breakdown")
+4. Cost per triangle and per draw call
+5. Number of SetCombine (shader changes) per frame
+6. Scene/area where measurement was taken
+
+---
+
+## 6. NX-Specific Performance Characteristics
+
+### ARM Cortex-A57 Bottlenecks
+- **Branch prediction**: A57 has a modest branch predictor. The GBI command dispatch switch() may suffer mispredictions on varied command streams. Consider computed goto or function pointer table.
+- **Cache pressure**: L1 data cache is 32 KB per core. Large display lists (OPA buffer is 0x6700 × 8 = 209 KB) won't fit in L1. Streaming access pattern helps but random DL subcall jumps may thrash cache.
+- **NEON**: A57 has 128-bit NEON. Already used for matrix operations. Could be applied to vertex batch processing in the interpreter.
+
+### Maxwell GPU Constraints
+- **Fill rate**: Not an issue at 720p with 30% utilization.
+- **Draw call overhead**: NVN (Switch GL implementation) has lower draw call overhead than desktop GL, but still significant at hundreds of calls/frame.
+- **Shader compilation**: First-time shader compile is very expensive on Maxwell. Must pre-warm all variants at load time.
+- **Texture upload**: LPDDR4 bandwidth is shared between CPU and GPU. Large texture uploads compete with CPU memory access.
+
+### Thermal Considerations
+- Sustained 49ms/frame DL processing keeps Core 0 at 100% → thermal throttling may kick in after minutes of gameplay, making performance worse over time.
+- Distributing work across cores (Strategy D) reduces per-core thermal load.
+
+---
+
+## 7. Success Criteria
 
 | Metric | Current | Target (Phase 1) | Target (Phase 2) |
 |--------|---------|-------------------|-------------------|

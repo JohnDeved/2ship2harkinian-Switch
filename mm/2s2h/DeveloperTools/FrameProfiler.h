@@ -36,7 +36,7 @@ typedef enum {
 
 typedef enum {
     PROFILE_COUNTER_DL_ITERATIONS, // number of DrawAndRunGraphicsCommands calls per frame
-    PROFILE_COUNTER_DL_COMMANDS,   // total GBI commands processed per frame
+    PROFILE_COUNTER_DL_COMMANDS,   // total GBI commands across all buffers
     PROFILE_COUNTER_DL_TRIANGLES,  // G_TRI1 + 2*G_TRI2 triangle count
     PROFILE_COUNTER_DL_VERTICES,   // total vertices loaded (from G_VTX)
     PROFILE_COUNTER_DL_TEX_LOADS,  // G_SETTIMG (texture image source changes)
@@ -47,6 +47,25 @@ typedef enum {
     PROFILE_COUNTER_MAX
 } ProfileCounter;
 
+// Per-buffer display list statistics (OPA, XLU, Overlay, Work, Debug)
+#define PROFILE_DL_BUFFER_COUNT 5
+#define PROFILE_DL_BUF_OPA 0
+#define PROFILE_DL_BUF_XLU 1
+#define PROFILE_DL_BUF_OVERLAY 2
+#define PROFILE_DL_BUF_WORK 3
+#define PROFILE_DL_BUF_DEBUG 4
+
+typedef struct {
+    int commands;
+    int triangles;
+    int vertices;
+    int texLoads;
+    int mtxLoads;
+    int pipeSyncs;
+    int subcalls;
+    int setCombine;
+} DLBufferStats;
+
 void FrameProfiler_StartPhase(ProfilePhase phase);
 void FrameProfiler_EndPhase(ProfilePhase phase);
 void FrameProfiler_EndFrame(void);
@@ -54,7 +73,14 @@ float FrameProfiler_GetPhaseAvgMs(ProfilePhase phase);
 void FrameProfiler_AddCounter(ProfileCounter counter, float value);
 float FrameProfiler_GetCounterAvg(ProfileCounter counter);
 int FrameProfiler_IsEnabled(void);
-void FrameProfiler_ScanDisplayList(void* commands);
+
+// Scan all 5 DL buffers from the graphics context. Call from graph.c after
+// GameState_Update has filled the buffers but before Graph_ProcessGfxCommands.
+struct GraphicsContext;
+void FrameProfiler_ScanAllBuffers(struct GraphicsContext* gfxCtx);
+
+// Get per-buffer stats (averaged over ring buffer). bufIdx = PROFILE_DL_BUF_*
+DLBufferStats FrameProfiler_GetBufferStats(int bufIdx);
 
 #ifdef __cplusplus
 }

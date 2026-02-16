@@ -297,6 +297,9 @@ void Graph_ExecuteAndDraw(GraphicsContext* gfxCtx, GameState* gameState) {
         gSPEndDisplayList(gfx++);
     }
 
+    // Scan all 5 DL buffers for per-buffer command statistics (zero-cost when profiler disabled)
+    FrameProfiler_ScanAllBuffers(gfxCtx);
+
     problem = false;
 
     {

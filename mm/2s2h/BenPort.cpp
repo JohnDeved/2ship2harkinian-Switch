@@ -961,9 +961,6 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
     // Process window events for resize, mouse, keyboard events
     wnd->HandleEvents();
 
-    // Scan the top-level display list for command statistics (zero-cost when profiler disabled)
-    FrameProfiler_ScanDisplayList(Commands);
-
     auto intp = wnd->GetInterpreterWeak().lock().get();
     intp->mInterpolationIndex = 0;
 

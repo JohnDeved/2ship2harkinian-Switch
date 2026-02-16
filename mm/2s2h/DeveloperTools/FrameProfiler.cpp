@@ -9,6 +9,10 @@
 #include <ctime>
 #include <libultraship/libultraship.h>
 
+extern "C" {
+#include "gfx.h"
+}
+
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -49,6 +53,10 @@ static inline uint64_t ProfileGetNs(void) {
 static uint64_t sPhaseStart[PROFILE_PHASE_MAX];
 static float sPhaseRing[PROFILE_PHASE_MAX][PROFILE_RING_SIZE]; // ms per frame
 static float sCounterRing[PROFILE_COUNTER_MAX][PROFILE_RING_SIZE];
+// Number of fields in DLBufferStats tracked per buffer
+#define PROFILE_DL_FIELD_COUNT 8
+
+static float sBufferStatsRing[PROFILE_DL_BUFFER_COUNT][PROFILE_DL_FIELD_COUNT][PROFILE_RING_SIZE];
 static std::atomic<int> sRingIndex{ 0 };
 static std::atomic<int> sEnabled{ 0 };
 static int sDrawCountdown = 0; // main-thread only
@@ -78,6 +86,11 @@ extern "C" void FrameProfiler_EndFrame(void) {
     }
     for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
         sCounterRing[i][next] = 0.0f;
+    }
+    for (int b = 0; b < PROFILE_DL_BUFFER_COUNT; b++) {
+        for (int f = 0; f < PROFILE_DL_FIELD_COUNT; f++) {
+            sBufferStatsRing[b][f][next] = 0.0f;
+        }
     }
     sRingIndex.store(next, std::memory_order_relaxed);
 
@@ -118,84 +131,141 @@ extern "C" int FrameProfiler_IsEnabled(void) {
 }
 
 // ── GBI Display List Scanner ───────────────────────────────────────────
-// Walk the top-level display list and count commands by type.
-// This scans word0 opcodes WITHOUT recursing into sub-display-lists (G_DL),
-// since the Fast3D interpreter handles those. We count top-level commands only,
-// which is fast and gives a useful complexity estimate.
-//
-// N64 Gfx command: word0 bits[31:24] = opcode, word1 = parameters.
-// We use uint32_t pairs to avoid depending on the Gfx type here.
+// Scan a single linear DL buffer (start to end pointer) counting commands by type.
+// Each Gfx command is 8 bytes (2 × uint32_t). Stops at G_ENDDL or buffer end.
 
-extern "C" void FrameProfiler_ScanDisplayList(void* commands) {
-    if (!sEnabled.load(std::memory_order_relaxed) || commands == NULL)
-        return;
+static DLBufferStats ScanBuffer(const Gfx* start, const Gfx* end) {
+    DLBufferStats stats = {};
+    if (start == NULL || end == NULL || end <= start)
+        return stats;
 
-    const uint32_t* cmd = (const uint32_t*)commands;
-    int totalCmds = 0;
-    int triangles = 0;
-    int vertices = 0;
-    int texLoads = 0;
-    int mtxLoads = 0;
-    int pipeSyncs = 0;
-    int subcalls = 0;
-    int setCombine = 0;
+    const uint32_t* cmd = (const uint32_t*)start;
+    const uint32_t* limit = (const uint32_t*)end;
 
-    // Safety limit to avoid infinite loops on malformed DLs
-    static const int MAX_COMMANDS = 100000;
-
-    for (int i = 0; i < MAX_COMMANDS; i++) {
+    while (cmd < limit) {
         uint32_t w0 = cmd[0];
         uint8_t opcode = (w0 >> 24) & 0xFF;
-        totalCmds++;
+        stats.commands++;
 
         switch (opcode) {
             case 0x05: // G_TRI1
-                triangles += 1;
+                stats.triangles += 1;
                 break;
             case 0x06: // G_TRI2
-                triangles += 2;
+                stats.triangles += 2;
                 break;
             case 0x01: // G_VTX
-                // F3DEX2 format: bits[19:12] = vertex count (n), extracted as 8 bits at shift 12
-                vertices += ((w0 >> 12) & 0xFF);
+                stats.vertices += ((w0 >> 12) & 0xFF);
                 break;
             case 0xFD: // G_SETTIMG
-            case 0x23: // G_SETTIMG_OTR_HASH (custom)
-            case 0x24: // G_SETTIMG_OTR_FILEPATH (custom)
-                texLoads++;
+            case 0x23: // G_SETTIMG_OTR_HASH
+            case 0x24: // G_SETTIMG_OTR_FILEPATH
+                stats.texLoads++;
                 break;
             case 0xDA: // G_MTX
-            case 0x20: // G_MTX_OTR (custom)
-                mtxLoads++;
+            case 0x20: // G_MTX_OTR
+                stats.mtxLoads++;
                 break;
             case 0xE7: // G_RDPPIPESYNC
-                pipeSyncs++;
+                stats.pipeSyncs++;
                 break;
             case 0xDE: // G_DL
-            case 0x21: // G_DL_OTR_HASH (custom)
-            case 0x22: // G_DL_OTR_FILEPATH (custom)
-                subcalls++;
+            case 0x21: // G_DL_OTR_HASH
+            case 0x22: // G_DL_OTR_FILEPATH
+                stats.subcalls++;
                 break;
             case 0xFC: // G_SETCOMBINE
-                setCombine++;
+                stats.setCombine++;
                 break;
             case 0xDF: // G_ENDDL
-                goto done;
+                return stats;
             default:
                 break;
         }
-        cmd += 2; // each Gfx command is 2 uint32_t (8 bytes)
+        cmd += 2; // each Gfx command is 8 bytes
+    }
+    return stats;
+}
+
+extern "C" void FrameProfiler_ScanAllBuffers(GraphicsContext* gfxCtx) {
+    if (!sEnabled.load(std::memory_order_relaxed) || gfxCtx == NULL)
+        return;
+
+    int ri = sRingIndex.load(std::memory_order_relaxed);
+
+    // Buffer mapping: OPA=0, XLU=1, Overlay=2, Work=3, Debug=4
+    struct {
+        Gfx* start;
+        Gfx* end;
+    } buffers[PROFILE_DL_BUFFER_COUNT] = {
+        { (Gfx*)gfxCtx->polyOpa.start, gfxCtx->polyOpa.p }, { (Gfx*)gfxCtx->polyXlu.start, gfxCtx->polyXlu.p },
+        { (Gfx*)gfxCtx->overlay.start, gfxCtx->overlay.p }, { (Gfx*)gfxCtx->work.start, gfxCtx->work.p },
+        { (Gfx*)gfxCtx->debug.start, gfxCtx->debug.p },
+    };
+
+    int totalCmds = 0, totalTris = 0, totalVerts = 0;
+    int totalTexLoads = 0, totalMtxLoads = 0, totalPipeSyncs = 0;
+    int totalSubcalls = 0, totalSetCombine = 0;
+
+    for (int b = 0; b < PROFILE_DL_BUFFER_COUNT; b++) {
+        DLBufferStats s = ScanBuffer(buffers[b].start, buffers[b].end);
+
+        // Store per-buffer stats in ring buffer
+        sBufferStatsRing[b][0][ri] = (float)s.commands;
+        sBufferStatsRing[b][1][ri] = (float)s.triangles;
+        sBufferStatsRing[b][2][ri] = (float)s.vertices;
+        sBufferStatsRing[b][3][ri] = (float)s.texLoads;
+        sBufferStatsRing[b][4][ri] = (float)s.mtxLoads;
+        sBufferStatsRing[b][5][ri] = (float)s.pipeSyncs;
+        sBufferStatsRing[b][6][ri] = (float)s.subcalls;
+        sBufferStatsRing[b][7][ri] = (float)s.setCombine;
+
+        totalCmds += s.commands;
+        totalTris += s.triangles;
+        totalVerts += s.vertices;
+        totalTexLoads += s.texLoads;
+        totalMtxLoads += s.mtxLoads;
+        totalPipeSyncs += s.pipeSyncs;
+        totalSubcalls += s.subcalls;
+        totalSetCombine += s.setCombine;
     }
 
-done:
+    // Write totals to the counter ring for backward compatibility
     FrameProfiler_AddCounter(PROFILE_COUNTER_DL_COMMANDS, (float)totalCmds);
-    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_TRIANGLES, (float)triangles);
-    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_VERTICES, (float)vertices);
-    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_TEX_LOADS, (float)texLoads);
-    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_MTX_LOADS, (float)mtxLoads);
-    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_PIPE_SYNCS, (float)pipeSyncs);
-    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_SUBCALLS, (float)subcalls);
-    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_SETCOMBINE, (float)setCombine);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_TRIANGLES, (float)totalTris);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_VERTICES, (float)totalVerts);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_TEX_LOADS, (float)totalTexLoads);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_MTX_LOADS, (float)totalMtxLoads);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_PIPE_SYNCS, (float)totalPipeSyncs);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_SUBCALLS, (float)totalSubcalls);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_SETCOMBINE, (float)totalSetCombine);
+}
+
+extern "C" DLBufferStats FrameProfiler_GetBufferStats(int bufIdx) {
+    DLBufferStats stats = {};
+    if (bufIdx < 0 || bufIdx >= PROFILE_DL_BUFFER_COUNT)
+        return stats;
+
+    for (int i = 0; i < PROFILE_RING_SIZE; i++) {
+        stats.commands += (int)sBufferStatsRing[bufIdx][0][i];
+        stats.triangles += (int)sBufferStatsRing[bufIdx][1][i];
+        stats.vertices += (int)sBufferStatsRing[bufIdx][2][i];
+        stats.texLoads += (int)sBufferStatsRing[bufIdx][3][i];
+        stats.mtxLoads += (int)sBufferStatsRing[bufIdx][4][i];
+        stats.pipeSyncs += (int)sBufferStatsRing[bufIdx][5][i];
+        stats.subcalls += (int)sBufferStatsRing[bufIdx][6][i];
+        stats.setCombine += (int)sBufferStatsRing[bufIdx][7][i];
+    }
+    // Average
+    stats.commands /= PROFILE_RING_SIZE;
+    stats.triangles /= PROFILE_RING_SIZE;
+    stats.vertices /= PROFILE_RING_SIZE;
+    stats.texLoads /= PROFILE_RING_SIZE;
+    stats.mtxLoads /= PROFILE_RING_SIZE;
+    stats.pipeSyncs /= PROFILE_RING_SIZE;
+    stats.subcalls /= PROFILE_RING_SIZE;
+    stats.setCombine /= PROFILE_RING_SIZE;
+    return stats;
 }
 
 // ── Phase names for display ────────────────────────────────────────────
@@ -316,7 +386,7 @@ static void FrameProfiler_ExportSnapshot(void) {
     float setCombine = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_SETCOMBINE);
 
     out << "DL Iterations: " << dlIter << std::endl;
-    out << "Top-Level Commands: " << dlCmds << std::endl;
+    out << "Total Commands (all buffers): " << dlCmds << std::endl;
     out << "Triangles: " << tris << std::endl;
     out << "Vertices: " << verts << std::endl;
     out << "Texture Loads (SETTIMG): " << texLoads << std::endl;
@@ -324,6 +394,7 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "Pipe Syncs: " << pipeSyncs << std::endl;
     out << "DL Subcalls: " << subcalls << std::endl;
     out << "SetCombine (shader changes): " << setCombine << std::endl;
+    out << "Est. Draw Calls: ~" << pipeSyncs << std::endl;
 
     float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
     if (dlMs > 0.1f && tris > 0.0f) {
@@ -331,6 +402,25 @@ static void FrameProfiler_ExportSnapshot(void) {
         if (dlCmds > 0) {
             out << "Cost per command: " << (dlMs * 1000.0f / dlCmds) << " us" << std::endl;
         }
+        if (pipeSyncs > 0) {
+            out << "Cost per draw call: " << (dlMs * 1000.0f / pipeSyncs) << " us" << std::endl;
+        }
+    }
+    out << std::endl;
+
+    // Per-buffer breakdown
+    static const char* sBufExportNames[] = { "OPA (opaque)", "XLU (translucent)", "Overlay", "Work", "Debug" };
+    out << "--- Per-Buffer Breakdown ---" << std::endl;
+    out << "Buffer              Cmds   Tris  Verts  Tex   Mtx  Sync SubDL Comb" << std::endl;
+    for (int b = 0; b < PROFILE_DL_BUFFER_COUNT; b++) {
+        DLBufferStats bs = FrameProfiler_GetBufferStats(b);
+        out << std::left;
+        // Pad buffer name
+        std::string name = sBufExportNames[b];
+        while (name.size() < 20)
+            name += ' ';
+        out << name << bs.commands << "  " << bs.triangles << "  " << bs.vertices << "  " << bs.texLoads << "  "
+            << bs.mtxLoads << "  " << bs.pipeSyncs << "  " << bs.subcalls << "  " << bs.setCombine << std::endl;
     }
     out << std::endl;
 
@@ -460,12 +550,16 @@ void FrameProfilerWindow::DrawElement() {
     float subcalls = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_SUBCALLS);
     float setCombine = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_SETCOMBINE);
 
-    ImGui::Text("DL Iterations: %.0f   Top-Level Commands: %.0f", dlIter, dlCmds);
+    ImGui::Text("DL Iterations: %.0f   Total Commands: %.0f", dlIter, dlCmds);
     ImGui::Text("Triangles: %.0f   Vertices: %.0f", tris, verts);
     ImGui::Text("Tex Loads: %.0f   Matrix Loads: %.0f   SetCombine: %.0f", texLoads, mtxLoads, setCombine);
     ImGui::Text("Pipe Syncs: %.0f   DL Subcalls: %.0f", pipeSyncs, subcalls);
 
-    // Cost-per-unit estimates (helps identify what to optimize)
+    // Estimated draw calls (each PipeSync potentially flushes a draw call)
+    float estDrawCalls = pipeSyncs;
+    ImGui::Text("Est. Draw Calls: ~%.0f", estDrawCalls);
+
+    // Cost-per-unit estimates
     float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
     if (dlMs > 0.1f && tris > 0.0f) {
         float usPerTri = (dlMs * 1000.0f) / tris;
@@ -474,6 +568,24 @@ void FrameProfilerWindow::DrawElement() {
             ImGui::SameLine();
             ImGui::Text("  %.1f us/cmd", (dlMs * 1000.0f) / dlCmds);
         }
+        if (estDrawCalls > 0.0f) {
+            ImGui::SameLine();
+            ImGui::Text("  %.0f us/draw", (dlMs * 1000.0f) / estDrawCalls);
+        }
+    }
+
+    // Per-buffer breakdown
+    static const char* sBufNames[] = { "OPA (opaque)", "XLU (translucent)", "Overlay", "Work", "Debug" };
+    if (ImGui::TreeNode("Per-Buffer Breakdown")) {
+        ImGui::Text("%-20s %6s %6s %6s %5s %5s %5s", "Buffer", "Cmds", "Tris", "Verts", "Tex", "Mtx", "Sync");
+        for (int b = 0; b < PROFILE_DL_BUFFER_COUNT; b++) {
+            DLBufferStats bs = FrameProfiler_GetBufferStats(b);
+            if (bs.commands > 0) {
+                ImGui::Text("%-20s %6d %6d %6d %5d %5d %5d", sBufNames[b], bs.commands, bs.triangles, bs.vertices,
+                            bs.texLoads, bs.mtxLoads, bs.pipeSyncs);
+            }
+        }
+        ImGui::TreePop();
     }
 
     // Unaccounted time

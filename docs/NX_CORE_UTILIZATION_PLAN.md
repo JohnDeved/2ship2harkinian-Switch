@@ -1,5 +1,14 @@
 # Nintendo Switch CPU Core Utilization: Debugging & Optimization Plan
 
+## Target Platform: Nintendo Switch (NX)
+
+**SoC**: NVIDIA Tegra X1 (Erista/Mariko)
+**CPU**: 4× ARM Cortex-A57 @ 1020 MHz (all power modes), 32 KB L1D per core, 2 MB shared L2
+**GPU**: Maxwell (256 CUDA cores) — Docked: 768 MHz, Handheld: 307/384 MHz
+**Memory**: 4 GB LPDDR4 @ 1600 MHz (25.6 GB/s shared between CPU and GPU)
+**Graphics API**: OpenGL ES 3.2 (via NVN compatibility)
+**Build**: AArch64, `-O3 -ffast-math`, devkitPro toolchain
+
 ## Problem Statement
 
 Core 0 is maxed out running the main game loop while cores 1–2 sit mostly idle. The GPU is only at ~30% utilization, confirming a **CPU-bound bottleneck on core 0**. We need instrumentation to identify exactly where time is spent, and a plan to redistribute work across all available cores.

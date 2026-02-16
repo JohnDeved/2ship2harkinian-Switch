@@ -238,26 +238,28 @@ Based on the architecture analysis, here are the concrete changes ordered by **i
 ## 4. Implementation Order
 
 ```
-Phase 1: Instrumentation (1-2 days)
-  ├─ [1] Add FrameProfiler with timing points
-  ├─ [2] Add on-screen overlay display
-  └─ [3] Add per-actor cost tracking via GameInteractor hooks
+Phase 1: Instrumentation ✅ IMPLEMENTED
+  ├─ [1] ✅ Add FrameProfiler with timing points (FrameProfiler.cpp/h)
+  ├─ [2] ✅ Add on-screen overlay display (ImGui window in Dev Tools menu)
+  └─ [3] Per-actor cost tracking via GameInteractor hooks (future)
 
-Phase 2: Core 3 Activation (1 day)
-  └─ [4] Convert TaskWorker → TaskWorkerPool (cores 1+3)
+Phase 2: Core 3 Activation ✅ IMPLEMENTED
+  └─ [4] ✅ TaskWorkerPool with 2 threads on cores 1+3
 
-Phase 3: Actor BgCheck Parallelization (2-3 days)
+Phase 2b: Parallel Collision ✅ IMPLEMENTED
+  └─ [11] ✅ AT+OC dispatched in parallel via TaskWorkerPool_Submit2
+
+Phase 3: Actor BgCheck Parallelization (future)
   ├─ [5] Batch BgCheck queries in Actor_UpdateAll
   ├─ [6] Dispatch batches to worker pool
   └─ [7] Validate with profiler — measure improvement
 
-Phase 4: Draw Phase Optimization (2-3 days)
+Phase 4: Draw Phase Optimization (future)
   ├─ [8] Separate skeleton/matrix prep from display list generation
   ├─ [9] Parallelize matrix prep on worker pool
   └─ [10] Validate with profiler
 
-Phase 5: Additional Optimizations (1-2 days)
-  ├─ [11] Overlap collision phases (AT+OC on separate cores)
+Phase 5: Additional Optimizations (future)
   ├─ [12] Async frame interpolation segments
   └─ [13] (Optional) Audio thread work stealing
 ```

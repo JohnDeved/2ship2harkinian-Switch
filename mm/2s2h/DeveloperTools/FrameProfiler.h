@@ -8,7 +8,8 @@ extern "C" {
 
 /**
  * Lightweight per-frame profiler for measuring time spent in each major phase
- * of the game loop. Uses clock_gettime(CLOCK_MONOTONIC) on all platforms.
+ * of the game loop. Uses clock_gettime(CLOCK_MONOTONIC) on Unix/Switch and
+ * QueryPerformanceCounter on Windows.
  *
  * Usage: Call FrameProfiler_StartPhase / FrameProfiler_EndPhase around each
  * phase you want to measure. At the end of the frame, call FrameProfiler_EndFrame

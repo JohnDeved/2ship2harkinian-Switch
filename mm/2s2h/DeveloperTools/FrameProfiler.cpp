@@ -87,8 +87,8 @@ static const char* sPhaseNames[PROFILE_PHASE_MAX] = {
 
 // Core assignment labels for display
 static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
-    "Core 0",  // AT
-    "Core 1",  // OC
+    "Pool  ",  // AT (now runs on worker pool)
+    "Pool  ",  // OC (now runs on worker pool)
     "Core 0",  // Damage
     "Core 0",  // Actor Update
     "Core 1",  // Effects
@@ -140,17 +140,19 @@ void FrameProfilerWindow::DrawElement() {
 
     ImGui::Separator();
 
-    // Breakdown summary
-    float core0Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
+    // Breakdown summary — AT and OC now run on worker pool, not core 0
+    float core0Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
                     FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_UPDATE) +
                     FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_DRAW) +
                     FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
                     FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_GFX_COMMANDS);
-    float core1Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC) +
-                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_EFFECTS);
+    float poolMs  = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
+                    FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC);
+    float core1Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_EFFECTS);
 
-    ImGui::Text("Core 0 Active: %5.1f ms  |  Core 1 Active: %5.1f ms", core0Ms, core1Ms);
-    float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
+    ImGui::Text("Core 0 Active: %5.1f ms  |  Pool (AT+OC): %5.1f ms  |  Worker: %5.1f ms",
+                core0Ms, poolMs, core1Ms);
+    float offloadMs = poolMs + core1Ms;
+    float imbalance = (core0Ms > 0.01f) ? (offloadMs / core0Ms) : 0.0f;
     ImGui::Text("Core utilization ratio: %.0f%% (1.0 = perfectly balanced)", imbalance * 100.0f);
 }

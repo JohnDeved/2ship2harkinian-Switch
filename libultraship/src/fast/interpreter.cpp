@@ -554,10 +554,8 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
             uint16x8_t b5 = vandq_u16(vshrq_n_u16(pixels, 1), vdupq_n_u16(0x1f));  // B: bits[5:1]
             uint16x8_t a1 = vandq_u16(pixels, vdupq_n_u16(1));                // A: bit 0
 
-            // SCALE_5_8: (val * 255) / 31 ≈ (val * 255 + 15) >> 5 ... but use (val*0xFF)/0x1F
-            // More precisely: (val * 527 + 23) >> 6 gives exact SCALE_5_8 for 0-31
-            // But simplest exact match: val * 8 + (val >> 2) = val * 8.25 ≈ 255/31
-            // Use: (val << 3) | (val >> 2) which is the standard 5-to-8 expansion
+            // 5-to-8 bit expansion: (val << 3) | (val >> 2)
+            // Standard GPU bit-replication method; maps 0→0 and 31→255 exactly.
             uint8x8_t r8 = vmovn_u16(vorrq_u16(vshlq_n_u16(r5, 3), vshrq_n_u16(r5, 2)));
             uint8x8_t g8 = vmovn_u16(vorrq_u16(vshlq_n_u16(g5, 3), vshrq_n_u16(g5, 2)));
             uint8x8_t b8 = vmovn_u16(vorrq_u16(vshlq_n_u16(b5, 3), vshrq_n_u16(b5, 2)));

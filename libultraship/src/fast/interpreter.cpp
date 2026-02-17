@@ -1797,21 +1797,20 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         // trivial clip rejection
 #if defined(__ARM_NEON) && defined(__aarch64__)
         // NEON: branchless clip rejection — 5 comparisons → single bitmask
-        // Compare {x, y, ?, z} against {w, w, ?, w} and {-w, -w, ?, ?}
+        // vclt/vcgt return all-ones (0xFFFFFFFF) for true, 0 for false.
+        // ANDing with the flag bit extracts the flag when true, 0 when false.
         {
             float32x4_t xyzw = { x, y, z, w };
             float32x4_t pos_w = vdupq_n_f32(w);
             float32x4_t neg_w = vdupq_n_f32(-w);
-            // x < -w (CLIP_LEFT=1), y < -w (CLIP_BOTTOM=4)
             uint32x4_t lt_neg = vcltq_f32(xyzw, neg_w);
-            // x > w (CLIP_RIGHT=2), y > w (CLIP_TOP=8), z > w (CLIP_FAR=32)
             uint32x4_t gt_pos = vcgtq_f32(xyzw, pos_w);
             uint8_t clip = 0;
-            clip |= (vgetq_lane_u32(lt_neg, 0) & 1);   // CLIP_LEFT
-            clip |= (vgetq_lane_u32(gt_pos, 0) & 2);   // CLIP_RIGHT
-            clip |= (vgetq_lane_u32(lt_neg, 1) & 4);   // CLIP_BOTTOM
-            clip |= (vgetq_lane_u32(gt_pos, 1) & 8);   // CLIP_TOP
-            clip |= (vgetq_lane_u32(gt_pos, 2) & 32);  // CLIP_FAR
+            clip |= (vgetq_lane_u32(lt_neg, 0) & 1);   // CLIP_LEFT:   x < -w
+            clip |= (vgetq_lane_u32(gt_pos, 0) & 2);   // CLIP_RIGHT:  x > w
+            clip |= (vgetq_lane_u32(lt_neg, 1) & 4);   // CLIP_BOTTOM: y < -w
+            clip |= (vgetq_lane_u32(gt_pos, 1) & 8);   // CLIP_TOP:    y > w
+            clip |= (vgetq_lane_u32(gt_pos, 2) & 32);  // CLIP_FAR:    z > w
             d->clip_rej = clip;
         }
 #else

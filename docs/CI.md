@@ -72,12 +72,14 @@ The main CI/CD workflow (`.github/workflows/main.yml`) builds 2Ship2Harkinian fo
 #### Cold Cache (First Build)
 - **generate-2ship-otr**: ~10-15 minutes
 - **build-switch**: ~10-15 minutes
-- **Total wall time**: ~10-15 minutes (parallel execution)
+- **combine-artifacts**: <1 minute
+- **Total wall time**: ~10-16 minutes (parallel execution)
 
 #### Warm Cache (Incremental Build)
 - **generate-2ship-otr**: ~3-5 minutes
 - **build-switch**: ~3-5 minutes
-- **Total wall time**: ~3-5 minutes (parallel execution)
+- **combine-artifacts**: <1 minute
+- **Total wall time**: ~3-6 minutes (parallel execution)
 
 ### Artifacts
 
@@ -85,17 +87,17 @@ The workflow produces three artifact sets:
 
 1. **2ship.o2r** (intermediate)
    - The OTR archive containing extracted game assets
-   - Retention: 3 days
+   - retention: 3 days
    - Size: ~300-400MB
 
 2. **2ship-switch-nro** (intermediate)
    - The compiled Switch executable and supporting files
-   - Retention: 3 days
+   - retention: 3 days
    - Size: ~20-30MB
 
 3. **2ship-switch** (final)
    - Combined artifact with all files needed for Switch
-   - Retention: 3 days
+   - retention: 3 days
    - Size: ~320-430MB
    - Contents: `2ship.nro`, `2ship.o2r`, `readme.txt`, `gamecontrollerdb.txt`
 

@@ -36,7 +36,9 @@ jobs:
     - name: Install latest SDL
       run: |
         export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+        # Check if SDL is already built in cache
         if [ ! -f "deps/SDL2-2.30.3/.install-complete" ]; then
+          # Download and extract if source doesn't exist
           if [ ! -d "deps/SDL2-2.30.3" ]; then
             wget https://github.com/libsdl-org/SDL/releases/download/release-2.30.3/SDL2-2.30.3.tar.gz
             tar -xzf SDL2-2.30.3.tar.gz -C deps
@@ -44,20 +46,21 @@ jobs:
           cd deps/SDL2-2.30.3
           ./configure --enable-hidapi-libusb
           make -j 10
-          sudo make install
-          sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
           touch .install-complete
         else
-          echo "SDL2 already built and installed (from cache)"
-          cd deps/SDL2-2.30.3
-          sudo make install
-          sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
+          echo "SDL2 already built (from cache)"
         fi
+        # Always install to system paths (needed for fresh runners)
+        cd deps/SDL2-2.30.3
+        sudo make install
+        sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
     - name: Install latest tinyxml2
       run: |
         sudo apt-get remove libtinyxml2-dev
         export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+        # Check if tinyxml2 is already built in cache
         if [ ! -f "deps/tinyxml2-10.0.0/.install-complete" ]; then
+          # Download and extract if source doesn't exist
           if [ ! -d "deps/tinyxml2-10.0.0" ]; then
             wget https://github.com/leethomason/tinyxml2/archive/refs/tags/10.0.0.tar.gz
             tar -xzf 10.0.0.tar.gz -C deps
@@ -67,13 +70,13 @@ jobs:
           cd build
           cmake ..
           make
-          sudo make install
           touch ../.install-complete
         else
-          echo "tinyxml2 already built and installed (from cache)"
-          cd deps/tinyxml2-10.0.0/build
-          sudo make install
+          echo "tinyxml2 already built (from cache)"
         fi
+        # Always install to system paths (needed for fresh runners)
+        cd deps/tinyxml2-10.0.0/build
+        sudo make install
     - name: Generate 2ship.o2r
       run: |
         export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"

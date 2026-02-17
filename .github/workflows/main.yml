@@ -6,6 +6,53 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
+  build-otr:
+    runs-on: ${{ (vars.LINUX_RUNNER && fromJSON(vars.LINUX_RUNNER)) || 'ubuntu-latest' }}
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: recursive
+
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2.20
+      with:
+        key: ${{ runner.os }}-otr-${{ hashFiles('**/CMakeLists.txt', 'ZAPDTR/**', 'OTRExporter/**') }}
+        restore-keys: |
+          ${{ runner.os }}-otr-
+        append-timestamp: true
+        verbose: 2
+        max-size: "500M"
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build python3
+
+    - name: Build ZAPD and generate OTR
+      env:
+        CCACHE_COMPILERCHECK: content
+        CCACHE_SLOPPINESS: include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
+        CCACHE_BASEDIR: ${{ github.workspace }}
+        CCACHE_NOHASHDIR: 1
+      run: |
+        ccache --zero-stats
+        cmake -H. -Bbuild-linux -GNinja \
+          -DCMAKE_BUILD_TYPE:STRING=Release \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+        cmake --build build-linux --target Generate2ShipOtr --config Release --parallel $(nproc)
+        ccache --show-stats
+        
+        # Copy the OTR file to a predictable location
+        cp mm/2ship.o2r ./2ship.o2r
+
+    - name: Upload OTR artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: 2ship-otr
+        path: 2ship.o2r
+        retention-days: 1
+
   build-switch:
     runs-on: ${{ (vars.LINUX_RUNNER && fromJSON(vars.LINUX_RUNNER)) || 'ubuntu-latest' }}
     container:
@@ -41,14 +88,14 @@ jobs:
     - name: ccache (minimal key, max hits)
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
-        key: ${{ runner.os }}
+        key: ${{ runner.os }}-switch-${{ hashFiles('**/CMakeLists.txt', 'libultraship/**', 'mm/**') }}
         restore-keys: |
-          ${{ runner.os }}
+          ${{ runner.os }}-switch-
         append-timestamp: true
         verbose: 2
         max-size: "1G"
 
-    - name: Build 2ship
+    - name: Build 2ship NRO
       env:
         CCACHE_LOGFILE: ${{ github.workspace }}/ccache.log
       run: |
@@ -62,16 +109,43 @@ jobs:
         ccache --show-stats
         echo "=== ccache log (last 50 lines) ==="
         tail -50 ccache.log || true
-        wget -O gamecontrollerdb.txt https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt
 
         mv build-switch/mm/*.nro 2ship.nro
+
+    - name: Upload NRO artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: 2ship-nro
+        path: 2ship.nro
+        retention-days: 1
+
+  combine-artifacts:
+    runs-on: ubuntu-latest
+    needs: [build-otr, build-switch]
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Download OTR artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: 2ship-otr
+
+    - name: Download NRO artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: 2ship-nro
+
+    - name: Download gamecontrollerdb
+      run: |
+        wget -O gamecontrollerdb.txt https://raw.githubusercontent.com/mdqinc/SDL_GameControllerDB/master/gamecontrollerdb.txt
         mv README.md readme.txt
 
-    - name: Upload build
+    - name: Upload combined build
       uses: actions/upload-artifact@v4
       with:
         name: 2ship-switch
         path: |
           2ship.nro
+          2ship.o2r
           readme.txt
           gamecontrollerdb.txt

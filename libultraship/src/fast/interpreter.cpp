@@ -1097,12 +1097,40 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
         lut[p][3] = (col16 & 1) ? 255 : 0;
     }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON fast path: when texture rows are contiguous, gather 4 pixels at a time
+    if (fullImageLineSizeBytes == lineSizeBytes) {
+        uint32_t i = 0;
+        const uint32_t* lut32 = reinterpret_cast<const uint32_t*>(&lut[0][0]);
+        uint32_t* dst32 = reinterpret_cast<uint32_t*>(mTexUploadBuffer);
+        // Scalar gather — each pixel is a 4-byte LUT lookup by 8-bit index
+        // NEON can't do arbitrary 256-entry gathers, but we avoid memcpy overhead
+        for (; i + 4 <= sizeBytes; i += 4) {
+            dst32[i + 0] = lut32[addr[i + 0]];
+            dst32[i + 1] = lut32[addr[i + 1]];
+            dst32[i + 2] = lut32[addr[i + 2]];
+            dst32[i + 3] = lut32[addr[i + 3]];
+        }
+        for (; i < sizeBytes; i++) {
+            dst32[i] = lut32[addr[i]];
+        }
+    } else {
+        const uint32_t* lut32 = reinterpret_cast<const uint32_t*>(&lut[0][0]);
+        uint32_t* dst32 = reinterpret_cast<uint32_t*>(mTexUploadBuffer);
+        for (uint32_t i = 0, j = 0; i < sizeBytes; j += fullImageLineSizeBytes - lineSizeBytes) {
+            for (uint32_t k = 0; k < lineSizeBytes; i++, k++, j++) {
+                dst32[i] = lut32[addr[j]];
+            }
+        }
+    }
+#else
     for (uint32_t i = 0, j = 0; i < sizeBytes; j += fullImageLineSizeBytes - lineSizeBytes) {
         for (uint32_t k = 0; k < lineSizeBytes; i++, k++, j++) {
             uint8_t idx = addr[j];
             memcpy(&mTexUploadBuffer[4 * i], lut[idx], 4);
         }
     }
+#endif
 
     uint32_t resultLineSizeBytes = mRdp->texture_tile[tile].line_size_bytes;
     if (metadata->h_byte_scale != 1) {
@@ -1333,7 +1361,33 @@ void Interpreter::ImportTextureMask(int i, int tile) {
             break;
     }
 
-    for (uint32_t texIndex = 0; texIndex < width * height; texIndex++) {
+    uint32_t totalPixels = width * height;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON: process 16 mask pixels at a time, branch-free
+    // For each byte: 0 → {0,0,0,0}, nonzero → {0,0,0,0xFF}
+    uint32_t texIndex = 0;
+    uint8x16_t zero_vec = vdupq_n_u8(0);
+    for (; texIndex + 16 <= totalPixels; texIndex += 16) {
+        uint8x16_t mask = vld1q_u8(&orig_addr[texIndex]);
+        // Compare != 0: produces 0xFF for nonzero bytes, 0x00 for zero bytes
+        uint8x16_t alpha = vcgtq_u8(mask, zero_vec);
+        // Build RGBA output: R=0, G=0, B=0, A=alpha
+        uint8x16x4_t rgba;
+        rgba.val[0] = zero_vec;
+        rgba.val[1] = zero_vec;
+        rgba.val[2] = zero_vec;
+        rgba.val[3] = alpha;
+        vst4q_u8(&mTexUploadBuffer[4 * texIndex], rgba);
+    }
+    // Scalar tail
+    for (; texIndex < totalPixels; texIndex++) {
+        mTexUploadBuffer[4 * texIndex + 0] = 0;
+        mTexUploadBuffer[4 * texIndex + 1] = 0;
+        mTexUploadBuffer[4 * texIndex + 2] = 0;
+        mTexUploadBuffer[4 * texIndex + 3] = orig_addr[texIndex] ? 0xFF : 0;
+    }
+#else
+    for (uint32_t texIndex = 0; texIndex < totalPixels; texIndex++) {
         uint8_t masked = orig_addr[texIndex];
         if (masked) {
             mTexUploadBuffer[4 * texIndex + 0] = 0;
@@ -1347,6 +1401,7 @@ void Interpreter::ImportTextureMask(int i, int tile) {
             mTexUploadBuffer[4 * texIndex + 3] = 0;
         }
     }
+#endif
 
     mRapi->UploadTexture(mTexUploadBuffer, width, height);
 }
@@ -1433,6 +1488,17 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
     float matrix[4][4];
 
     if (auto it = mCurMtxReplacements->find((Mtx*)addr); it != mCurMtxReplacements->end()) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: vectorize truncate-to-fixed-point-and-back for 4 floats at a time
+        float32x4_t scale = vdupq_n_f32(65536.0f);
+        float32x4_t inv_scale = vdupq_n_f32(1.0f / 65536.0f);
+        for (int i = 0; i < 4; i++) {
+            float32x4_t row = vld1q_f32(it->second.mf[i]);
+            int32x4_t as_int = vcvtq_s32_f32(vmulq_f32(row, scale));
+            float32x4_t result = vmulq_f32(vcvtq_f32_s32(as_int), inv_scale);
+            vst1q_f32(matrix[i], result);
+        }
+#else
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
                 float v = it->second.mf[i][j];
@@ -1440,6 +1506,7 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
                 matrix[i][j] = as_int * (1.0f / 65536.0f);
             }
         }
+#endif
     } else {
 #ifndef GBI_FLOATS
         // Original GBI where fixed point matrices are used
@@ -1728,6 +1795,26 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         d->v = V;
 
         // trivial clip rejection
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: branchless clip rejection — 5 comparisons → single bitmask
+        // Compare {x, y, ?, z} against {w, w, ?, w} and {-w, -w, ?, ?}
+        {
+            float32x4_t xyzw = { x, y, z, w };
+            float32x4_t pos_w = vdupq_n_f32(w);
+            float32x4_t neg_w = vdupq_n_f32(-w);
+            // x < -w (CLIP_LEFT=1), y < -w (CLIP_BOTTOM=4)
+            uint32x4_t lt_neg = vcltq_f32(xyzw, neg_w);
+            // x > w (CLIP_RIGHT=2), y > w (CLIP_TOP=8), z > w (CLIP_FAR=32)
+            uint32x4_t gt_pos = vcgtq_f32(xyzw, pos_w);
+            uint8_t clip = 0;
+            clip |= (vgetq_lane_u32(lt_neg, 0) & 1);   // CLIP_LEFT
+            clip |= (vgetq_lane_u32(gt_pos, 0) & 2);   // CLIP_RIGHT
+            clip |= (vgetq_lane_u32(lt_neg, 1) & 4);   // CLIP_BOTTOM
+            clip |= (vgetq_lane_u32(gt_pos, 1) & 8);   // CLIP_TOP
+            clip |= (vgetq_lane_u32(gt_pos, 2) & 32);  // CLIP_FAR
+            d->clip_rej = clip;
+        }
+#else
         d->clip_rej = 0;
         if (x < -w) {
             d->clip_rej |= 1; // CLIP_LEFT
@@ -1745,6 +1832,7 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         if (z > w) {
             d->clip_rej |= 32; // CLIP_FAR
         }
+#endif
 
         d->x = x;
         d->y = y;
@@ -1757,7 +1845,15 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                 w = 0.001f;
             }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: fast reciprocal for 1/w using vrecpe + one Newton-Raphson step
+            float32x2_t w_v = vdup_n_f32(w);
+            float32x2_t est = vrecpe_f32(w_v);
+            est = vmul_f32(est, vrecps_f32(w_v, est));
+            float winv = vget_lane_f32(est, 0);
+#else
             float winv = 1.0f / w;
+#endif
             if (winv < 0.0f) {
                 winv = std::numeric_limits<int16_t>::max();
             }
@@ -1810,11 +1906,27 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     const uint32_t cull_back = get_attr(CULL_BACK);
 
     if ((mRsp->geometry_mode & cull_both) != 0) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: compute 3 reciprocals (1/w1, 1/w2, 1/w3) in parallel using
+        // vrecpe + one Newton-Raphson step, then derive the cross product.
+        float32x4_t w_vec = { v1->w, v2->w, v3->w, 1.0f };
+        float32x4_t est = vrecpeq_f32(w_vec);
+        est = vmulq_f32(est, vrecpsq_f32(w_vec, est));
+        float iw1 = vgetq_lane_f32(est, 0);
+        float iw2 = vgetq_lane_f32(est, 1);
+        float iw3 = vgetq_lane_f32(est, 2);
+        float dx1 = v1->x * iw1 - v2->x * iw2;
+        float dy1 = v1->y * iw1 - v2->y * iw2;
+        float dx2 = v3->x * iw3 - v2->x * iw2;
+        float dy2 = v3->y * iw3 - v2->y * iw2;
+        float cross = dx1 * dy2 - dy1 * dx2;
+#else
         float dx1 = v1->x / (v1->w) - v2->x / (v2->w);
         float dy1 = v1->y / (v1->w) - v2->y / (v2->w);
         float dx2 = v3->x / (v3->w) - v2->x / (v2->w);
         float dy2 = v3->y / (v3->w) - v2->y / (v2->w);
         float cross = dx1 * dy2 - dy1 * dx2;
+#endif
 
         if ((v1->w < 0) ^ (v2->w < 0) ^ (v3->w < 0)) {
             // If one vertex lies behind the eye, negating cross will give the correct result.
@@ -2175,10 +2287,19 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             z = (z + w) * 0.5f;
         }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: write position {x, ±y, z, w} as a single 4-float store
+        {
+            float32x4_t pos = { vtx->x, clip_parameters.invertY ? -vtx->y : vtx->y, z, w };
+            vst1q_f32(vbo, pos);
+            vbo += 4;
+        }
+#else
         *vbo++ = vtx->x;
         *vbo++ = clip_parameters.invertY ? -vtx->y : vtx->y;
         *vbo++ = z;
         *vbo++ = w;
+#endif
 
         for (int t = 0; t < 2; t++) {
             if (!usedTextures[t]) continue;

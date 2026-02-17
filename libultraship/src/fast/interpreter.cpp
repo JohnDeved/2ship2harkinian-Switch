@@ -123,6 +123,10 @@ Interpreter::Interpreter() {
     mRdp = new RDP();
     mBufVbo = new float[MAX_TRI_BUFFER * (32 * 3)];
 
+    // Initialize dirty flags so first triangle recomputes all derived state
+    mRdp->other_mode_changed = true;
+    mRdp->geometry_mode_changed = true;
+
     // Pre-allocate cache containers to avoid rehash/growth costs at runtime.
     mTextureCache.map.reserve(TEXTURE_CACHE_MAX_SIZE);
     mGetPixelDepthCached.reserve(16);
@@ -172,6 +176,8 @@ ShaderProgram* Interpreter::LookupOrCreateShaderProgram(uint64_t id0, uint64_t i
         mRapi->UnloadShader(mRenderingState.mShaderProgram);
         prg = mRapi->CreateAndLoadNewShader(id0, id1);
         mRenderingState.mShaderProgram = prg;
+        // Update shader info cache since we loaded a new shader
+        mRapi->ShaderGetInfo(prg, &mCachedNumInputs, mCachedUsedTextures);
     }
     return prg;
 }
@@ -2174,12 +2180,33 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     // --- State check section: depth, viewport, texture, shader, alpha ---
 
-    bool depth_test = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
-    bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
-    uint8_t depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
+    // Only recompute other_mode_l / geometry_mode derived flags when they've actually changed
+    if (mRdp->other_mode_changed || mRdp->geometry_mode_changed) {
+        bool depth_test = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
+        bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
+        mCachedModeFlags.depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
+        mCachedModeFlags.zmode_decal = (mRdp->other_mode_l & ZMODE_DEC) == ZMODE_DEC;
+        if (mRdp->other_mode_changed) {
+            mCachedModeFlags.use_alpha = ((mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20) &&
+                              (mRdp->other_mode_l & (3 << 16)) == (G_BL_1MA << 16)) ||
+                             ((mRdp->other_mode_l & (3 << 22)) == (G_BL_CLR_MEM << 22) &&
+                              (mRdp->other_mode_l & (3 << 18)) == (G_BL_1MA << 18));
+            mCachedModeFlags.use_fog = (mRdp->other_mode_l >> 30) == G_BL_CLR_FOG;
+            mCachedModeFlags.texture_edge = (mRdp->other_mode_l & CVG_X_ALPHA) == CVG_X_ALPHA;
+            mCachedModeFlags.use_noise = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_DITHER;
+            mCachedModeFlags.use_2cyc = (mRdp->other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE;
+            mCachedModeFlags.alpha_threshold = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_THRESHOLD;
+            mCachedModeFlags.invisible =
+                (mRdp->other_mode_l & (3 << 24)) == (G_BL_0 << 24) && (mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20);
+        }
+        mRdp->other_mode_changed = false;
+        mRdp->geometry_mode_changed = false;
+    }
+
+    uint8_t depth_test_and_mask = mCachedModeFlags.depth_test_and_mask;
     bool depth_changed = (depth_test_and_mask != mRenderingState.depth_test_and_mask);
 
-    bool zmode_decal = (mRdp->other_mode_l & ZMODE_DEC) == ZMODE_DEC;
+    bool zmode_decal = mCachedModeFlags.zmode_decal;
     bool decal_changed = (zmode_decal != mRenderingState.decal_mode);
 
     bool viewport_changed = false;
@@ -2195,7 +2222,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             mFrameStats.flushCauseDepthViewport++;
         }
         if (depth_changed) {
-            mRapi->SetDepthTestAndMask(depth_test, depth_mask);
+            mRapi->SetDepthTestAndMask((depth_test_and_mask & 1) != 0, (depth_test_and_mask & 2) != 0);
             mRenderingState.depth_test_and_mask = depth_test_and_mask;
         }
         if (decal_changed) {
@@ -2217,17 +2244,13 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     uint64_t cc_id = mRdp->combine_mode;
     uint64_t cc_options = 0;
-    bool use_alpha = ((mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20) &&
-                      (mRdp->other_mode_l & (3 << 16)) == (G_BL_1MA << 16)) ||
-                     ((mRdp->other_mode_l & (3 << 22)) == (G_BL_CLR_MEM << 22) &&
-                      (mRdp->other_mode_l & (3 << 18)) == (G_BL_1MA << 18));
-    bool use_fog = (mRdp->other_mode_l >> 30) == G_BL_CLR_FOG;
-    bool texture_edge = (mRdp->other_mode_l & CVG_X_ALPHA) == CVG_X_ALPHA;
-    bool use_noise = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_DITHER;
-    bool use_2cyc = (mRdp->other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE;
-    bool alpha_threshold = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_THRESHOLD;
-    bool invisible =
-        (mRdp->other_mode_l & (3 << 24)) == (G_BL_0 << 24) && (mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20);
+    bool use_alpha = mCachedModeFlags.use_alpha;
+    bool use_fog = mCachedModeFlags.use_fog;
+    bool texture_edge = mCachedModeFlags.texture_edge;
+    bool use_noise = mCachedModeFlags.use_noise;
+    bool use_2cyc = mCachedModeFlags.use_2cyc;
+    bool alpha_threshold = mCachedModeFlags.alpha_threshold;
+    bool invisible = mCachedModeFlags.invisible;
     bool use_grayscale = mRdp->grayscale;
     auto shader = mRdp->current_shader;
 
@@ -2423,6 +2446,8 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRapi->UnloadShader(mRenderingState.mShaderProgram);
         mRapi->LoadShader(prg);
         mRenderingState.mShaderProgram = prg;
+        // Cache shader info on switch (avoids virtual call on every triangle)
+        mRapi->ShaderGetInfo(prg, &mCachedNumInputs, mCachedUsedTextures);
     }
     if (use_alpha != mRenderingState.alpha_blend) {
         state_change_flush();
@@ -2432,9 +2457,8 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRapi->SetUseAlpha(use_alpha);
         mRenderingState.alpha_blend = use_alpha;
     }
-    uint8_t numInputs = 0;
-    bool usedTextures[2] = { false, false };
-    mRapi->ShaderGetInfo(prg, &numInputs, usedTextures);
+    uint8_t numInputs = mCachedNumInputs;
+    bool usedTextures[2] = { mCachedUsedTextures[0], mCachedUsedTextures[1] };
 
     struct GfxClipParameters clip_parameters = mRapi->GetClipParameters();
 
@@ -2680,6 +2704,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 void Interpreter::GfxSpGeometryMode(uint32_t clear, uint32_t set) {
     mRsp->geometry_mode &= ~clear;
     mRsp->geometry_mode |= set;
+    mRdp->geometry_mode_changed = true;
 }
 
 void Interpreter::GfxSpExtraGeometryMode(uint32_t clear, uint32_t set) {
@@ -3381,11 +3406,13 @@ void Interpreter::GfxSpSetOtherMode(uint32_t shift, uint32_t num_bits, uint64_t 
     om = (om & ~mask) | mode;
     mRdp->other_mode_l = (uint32_t)om;
     mRdp->other_mode_h = (uint32_t)(om >> 32);
+    mRdp->other_mode_changed = true;
 }
 
 void Interpreter::GfxDpSetOtherMode(uint32_t h, uint32_t l) {
     mRdp->other_mode_h = h;
     mRdp->other_mode_l = l;
+    mRdp->other_mode_changed = true;
 }
 
 void Interpreter::Gfxs2dexBgCopy(F3DuObjBg* bg) {
@@ -5278,6 +5305,8 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
         mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
         mRapi->ClearFramebuffer(false, true);
         mRdp->viewport_or_scissor_changed = true;
+        mRdp->other_mode_changed = true;
+        mRdp->geometry_mode_changed = true;
         mRenderingState.viewport = {};
         mRenderingState.scissor = {};
     }

@@ -328,6 +328,8 @@ struct RDP {
     struct RGBA env_color, prim_color, fog_color, fill_color, grayscale_color;
     struct XYWidthHeight viewport, scissor;
     bool viewport_or_scissor_changed;
+    bool other_mode_changed;    // Set when other_mode_l or other_mode_h changes
+    bool geometry_mode_changed; // Set when geometry_mode changes
     void* z_buf_address;
     void* color_image_address;
 };
@@ -613,6 +615,26 @@ class Interpreter {
     std::vector<std::string> shader_ids;
     int mInterpolationIndex;
     int mInterpolationIndexTarget;
+
+    // Cached per-framebuffer clip parameters (updated on framebuffer change)
+    GfxClipParameters mCachedClipParams{};
+
+    // Cached shader info (updated on shader switch to avoid virtual call per triangle)
+    uint8_t mCachedNumInputs{};
+    bool mCachedUsedTextures[2]{};
+
+    // Cached other_mode_l / geometry_mode derived flags (updated when dirty)
+    struct {
+        bool use_alpha;
+        bool use_fog;
+        bool texture_edge;
+        bool use_noise;
+        bool use_2cyc;
+        bool alpha_threshold;
+        bool invisible;
+        uint8_t depth_test_and_mask;
+        bool zmode_decal;
+    } mCachedModeFlags{};
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

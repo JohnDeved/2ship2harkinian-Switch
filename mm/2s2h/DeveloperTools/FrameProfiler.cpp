@@ -308,7 +308,7 @@ static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
 
 // ── Helper functions ───────────────────────────────────────────────────
 
-static const float PROFILE_TARGET_FRAME_MS = 16.6f;
+static const float PROFILE_TARGET_FRAME_MS = 16.666667f;  // 1000ms / 60fps
 
 // Returns true for leaf phases (not parent/aggregate phases) used for bottleneck detection
 static bool IsLeafPhase(int phase) {
@@ -388,12 +388,12 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "--- Summary (" << PROFILE_RING_SIZE << "-frame average) ---" << std::endl;
     out << "Total Frame Time:               " << std::fixed << std::setprecision(2) << totalMs << " ms" << std::endl;
     out << "FPS:                            " << std::fixed << std::setprecision(1) << fps << std::endl;
-    out << "Target (60 FPS):                16.67 ms" << std::endl;
-    if (totalMs > 16.67f) {
-        float overhead = ((totalMs / 16.67f) - 1.0f) * 100.0f;
+    out << "Target (60 FPS):                " << std::fixed << std::setprecision(2) << PROFILE_TARGET_FRAME_MS << " ms" << std::endl;
+    if (totalMs > PROFILE_TARGET_FRAME_MS) {
+        float overhead = ((totalMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
         out << "Performance:                    " << std::fixed << std::setprecision(1) << overhead << "% over budget" << std::endl;
     } else {
-        float headroom = ((16.67f - totalMs) / 16.67f) * 100.0f;
+        float headroom = ((PROFILE_TARGET_FRAME_MS - totalMs) / PROFILE_TARGET_FRAME_MS) * 100.0f;
         out << "Performance:                    " << std::fixed << std::setprecision(1) << headroom << "% headroom remaining" << std::endl;
     }
     out << std::endl;
@@ -783,7 +783,7 @@ void FrameProfilerWindow::DrawElement() {
     // Enhanced summary with color coding
     if (totalMs > 20.0f) {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
-    } else if (totalMs > 16.67f) {
+    } else if (totalMs > PROFILE_TARGET_FRAME_MS) {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
     } else {
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
@@ -792,11 +792,11 @@ void FrameProfilerWindow::DrawElement() {
     ImGui::TextDisabled("Target: %.2f ms (60 FPS)", PROFILE_TARGET_FRAME_MS);
     
     // Show performance headroom or overhead
-    if (totalMs > 16.67f) {
-        float overhead = ((totalMs / 16.67f) - 1.0f) * 100.0f;
+    if (totalMs > PROFILE_TARGET_FRAME_MS) {
+        float overhead = ((totalMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
         ImGui::Text("Performance: %.1f%% over budget", overhead);
     } else {
-        float headroom = ((16.67f - totalMs) / 16.67f) * 100.0f;
+        float headroom = ((PROFILE_TARGET_FRAME_MS - totalMs) / PROFILE_TARGET_FRAME_MS) * 100.0f;
         ImGui::Text("Performance: %.1f%% headroom", headroom);
     }
     ImGui::Separator();
@@ -871,7 +871,7 @@ void FrameProfilerWindow::DrawElement() {
     float vertsPerTri = (tris > 0.5f) ? (verts / tris) : 0.0f;
     ImGui::Text("Verts/Tri: %.2f", vertsPerTri);
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Vertices per triangle (ideal: ~3.0 for indexed geometry)\nHigher values indicate inefficient vertex reuse");
+        ImGui::SetTooltip("Vertices per triangle (ideal: ~3.0 for indexed geometry)\nHigher values (>3.0) indicate vertex duplication or lack of indexed geometry");
     }
     
     ImGui::Text("Tex Loads: %.0f   Matrix Loads: %.0f   SetCombine: %.0f", texLoads, mtxLoads, setCombine);
@@ -893,7 +893,7 @@ void FrameProfilerWindow::DrawElement() {
     float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
     if (emptyPct > 30.0f) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "⚠");
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "⚠ High empty flushes");
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Warning: %.0f%% of flushes are empty (no geometry)\nConsider lazy state application", emptyPct);
         }

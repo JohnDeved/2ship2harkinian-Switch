@@ -3308,6 +3308,7 @@ void Interpreter::GfxDrawRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_
 
     if (cycle_type == G_CYC_COPY) {
         mRdp->other_mode_h = (mRdp->other_mode_h & ~(3U << G_MDSFT_TEXTFILT)) | G_TF_POINT;
+        mRdp->other_mode_changed = true;
     }
 
     // U10.2 coordinates
@@ -3376,6 +3377,7 @@ void Interpreter::GfxDrawRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_
 
     if (cycle_type == G_CYC_COPY) {
         mRdp->other_mode_h = saved_other_mode_h;
+        mRdp->other_mode_changed = true;
     }
 }
 
@@ -3479,17 +3481,16 @@ void Interpreter::GfxDpImageRectangle(int32_t tile, int32_t w, int32_t h, int32_
     loadtex.size_bytes = loadtex.orig_size_bytes = loadtex.line_size_bytes * h;
 
     uint8_t saved_tile = mRdp->first_tile_index;
-    if (saved_tile != tile) {
-        mRdp->textures_changed[0] = true;
-        mRdp->textures_changed[1] = true;
-    }
+    // Always mark textures changed since tile properties are modified above.
+    // Without this, cached tile state (mCachedTileState) would be stale,
+    // causing wrong tex_width/tex_height and incorrect UV scaling.
+    mRdp->textures_changed[0] = true;
+    mRdp->textures_changed[1] = true;
     mRdp->first_tile_index = tile;
 
     GfxDrawRectangle(ulx, uly, lrx, lry);
-    if (saved_tile != tile) {
-        mRdp->textures_changed[0] = true;
-        mRdp->textures_changed[1] = true;
-    }
+    mRdp->textures_changed[0] = true;
+    mRdp->textures_changed[1] = true;
     mRdp->first_tile_index = saved_tile;
 }
 

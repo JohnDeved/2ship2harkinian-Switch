@@ -2201,6 +2201,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 // Check if the "new" texture is actually the same one already bound.
                 // This avoids flushing the VBO batch when the N64 game redundantly
                 // reloads the same texture (very common — 0% cache miss rate in profiling).
+                // Only applies to non-masked/non-blended textures since those require
+                // additional texture uploads (mask textures, replacement textures) that
+                // would need their own same-texture checks to be safely skipped.
                 bool skipImport = false;
                 if (!mRdp->loaded_texture[i].masked && !mRdp->loaded_texture[i].blended) {
                     uint8_t fmt = mRdp->texture_tile[tile].fmt;

@@ -705,25 +705,33 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     // Ring buffer: allocate a large VBO once, write data sequentially.
     // Only orphan when the ring wraps (roughly once per frame), eliminating
     // the expensive orphan+SubData pair on every single draw call.
-    // With ~1100 draws/frame and avg 6.5 tris/draw, this reduces GL overhead significantly.
+    // 4MB accommodates ~1100 draws/frame × avg 6.5 tris × ~50 floats/tri ≈ 1.4MB,
+    // with headroom for heavier scenes and alignment.
     if (mVboAllocatedSize < VBO_RING_SIZE) {
         glBufferData(GL_ARRAY_BUFFER, VBO_RING_SIZE, NULL, GL_STREAM_DRAW);
         mVboAllocatedSize = VBO_RING_SIZE;
         mVboRingOffset = 0;
     }
-    if (mVboRingOffset + uploadBytes > VBO_RING_SIZE) {
-        // Ring wraps: orphan to get a fresh buffer
-        glBufferData(GL_ARRAY_BUFFER, VBO_RING_SIZE, NULL, GL_STREAM_DRAW);
-        mVboRingOffset = 0;
+    if (uploadBytes > VBO_RING_SIZE) {
+        // Oversized upload: fall back to direct upload (shouldn't happen in practice)
+        glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
+        glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+        mVboRingOffset = VBO_RING_SIZE; // Force re-alloc next draw
+    } else {
+        if (mVboRingOffset + uploadBytes > VBO_RING_SIZE) {
+            // Ring wraps: orphan to get a fresh buffer
+            glBufferData(GL_ARRAY_BUFFER, VBO_RING_SIZE, NULL, GL_STREAM_DRAW);
+            mVboRingOffset = 0;
+        }
+        glBufferSubData(GL_ARRAY_BUFFER, mVboRingOffset, uploadBytes, buf_vbo);
+        // Compute the first-vertex offset for glDrawArrays.
+        // Vertex attribute pointers were set up with offset 0 at shader load time.
+        // glDrawArrays(first=N) adds N*stride to each pointer, so N = byteOffset/stride.
+        const size_t floatsPerVertex = buf_vbo_len / (buf_vbo_num_tris * 3);
+        const GLint firstVertex = (GLint)(mVboRingOffset / (floatsPerVertex * sizeof(float)));
+        glDrawArrays(GL_TRIANGLES, firstVertex, 3 * buf_vbo_num_tris);
+        mVboRingOffset += uploadBytes;
     }
-    glBufferSubData(GL_ARRAY_BUFFER, mVboRingOffset, uploadBytes, buf_vbo);
-    // Compute the first-vertex offset for glDrawArrays.
-    // Vertex attribute pointers were set up with offset 0 at shader load time.
-    // glDrawArrays(first=N) adds N*stride to each pointer, so N = byteOffset/stride.
-    const size_t floatsPerVertex = buf_vbo_len / (buf_vbo_num_tris * 3);
-    const GLint firstVertex = (GLint)(mVboRingOffset / (floatsPerVertex * sizeof(float)));
-    glDrawArrays(GL_TRIANGLES, firstVertex, 3 * buf_vbo_num_tris);
-    mVboRingOffset += uploadBytes;
 #else
     glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);

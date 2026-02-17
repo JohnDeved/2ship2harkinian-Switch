@@ -593,10 +593,34 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
     {
         uint32_t i = 0;
         for (uint32_t y = 0; y < height; y++) {
-            for (uint32_t x = 0; x < width; x++) {
-                uint32_t clrIdx = (y * (fullImageLineSizeBytes / 2)) + (x);
-
-                uint16_t col16 = (addr[2 * clrIdx] << 8) | addr[2 * clrIdx + 1];
+            const uint8_t* rowAddr = addr + y * fullImageLineSizeBytes;
+            uint8_t* dst = mTexUploadBuffer + i * 4;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: process 8 RGBA5551 pixels per iteration within each row
+            uint32_t x = 0;
+            for (; x + 8 <= width; x += 8, dst += 32) {
+                uint8x16_t raw = vld1q_u8(rowAddr + x * 2);
+                uint8x16_t swapped = vrev16q_u8(raw);
+                uint16x8_t pixels = vreinterpretq_u16_u8(swapped);
+                uint16x8_t r5 = vshrq_n_u16(pixels, 11);
+                uint16x8_t g5 = vandq_u16(vshrq_n_u16(pixels, 6), vdupq_n_u16(0x1f));
+                uint16x8_t b5 = vandq_u16(vshrq_n_u16(pixels, 1), vdupq_n_u16(0x1f));
+                uint16x8_t a1 = vandq_u16(pixels, vdupq_n_u16(1));
+                uint8x8_t r8 = vmovn_u16(vorrq_u16(vshlq_n_u16(r5, 3), vshrq_n_u16(r5, 2)));
+                uint8x8_t g8 = vmovn_u16(vorrq_u16(vshlq_n_u16(g5, 3), vshrq_n_u16(g5, 2)));
+                uint8x8_t b8 = vmovn_u16(vorrq_u16(vshlq_n_u16(b5, 3), vshrq_n_u16(b5, 2)));
+                uint8x8_t a8 = vmovn_u16(vmulq_n_u16(a1, 255));
+                uint8x8x4_t rgba = {{ r8, g8, b8, a8 }};
+                vst4_u8(dst, rgba);
+            }
+            i += x;
+            // Scalar tail for remaining pixels in the row
+            for (; x < width; x++, i++) {
+                uint16_t col16 = (rowAddr[2 * x] << 8) | rowAddr[2 * x + 1];
+#else
+            for (uint32_t x = 0; x < width; x++, i++) {
+                uint16_t col16 = (rowAddr[2 * x] << 8) | rowAddr[2 * x + 1];
+#endif
                 uint8_t a = col16 & 1;
                 uint8_t r = col16 >> 11;
                 uint8_t g = (col16 >> 6) & 0x1f;
@@ -605,8 +629,6 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
                 mTexUploadBuffer[4 * i + 1] = SCALE_5_8(g);
                 mTexUploadBuffer[4 * i + 2] = SCALE_5_8(b);
                 mTexUploadBuffer[4 * i + 3] = a ? 255 : 0;
-
-                i++;
             }
         }
     }
@@ -826,17 +848,30 @@ void Interpreter::ImportTextureIA16(int tile, bool importReplacement) {
     {
         uint32_t i = 0;
         for (uint32_t y = 0; y < height; y++) {
-            for (uint32_t x = 0; x < width; x++) {
-                uint32_t clrIdx = (y * (full_image_line_size_bytes / 2)) + (x);
-
-                uint8_t intensity = addr[2 * clrIdx];
-                uint8_t alpha = addr[2 * clrIdx + 1];
-                mTexUploadBuffer[4 * i + 0] = intensity;
-                mTexUploadBuffer[4 * i + 1] = intensity;
-                mTexUploadBuffer[4 * i + 2] = intensity;
-                mTexUploadBuffer[4 * i + 3] = alpha;
-
-                i++;
+            const uint8_t* rowAddr = addr + y * full_image_line_size_bytes;
+            uint8_t* dst = mTexUploadBuffer + i * 4;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: process 16 IA16 pixels per iteration within each row
+            uint32_t x = 0;
+            for (; x + 16 <= width; x += 16, dst += 64) {
+                uint8x16x2_t ia = vld2q_u8(rowAddr + x * 2);
+                uint8x16x4_t rgba = {{ ia.val[0], ia.val[0], ia.val[0], ia.val[1] }};
+                vst4q_u8(dst, rgba);
+            }
+            i += x;
+            // Scalar tail for remaining pixels in the row
+            for (; x < width; x++, i++) {
+                mTexUploadBuffer[4 * i + 0] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 1] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 2] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 3] = rowAddr[2 * x + 1];
+#else
+            for (uint32_t x = 0; x < width; x++, i++) {
+                mTexUploadBuffer[4 * i + 0] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 1] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 2] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 3] = rowAddr[2 * x + 1];
+#endif
             }
         }
     }
@@ -1485,34 +1520,37 @@ void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[
 }
 
 void Interpreter::CalculateNormalDir(const F3DLight_t* light, float coeffs[3]) {
-    float light_dir[3] = { light->dir[0] / 127.0f, light->dir[1] / 127.0f, light->dir[2] / 127.0f };
-
 #if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON: convert light dir int8 → float and multiply by 1/127 in one step
+    float32x4_t dir_f = vmulq_n_f32(
+        (float32x4_t){ (float)light->dir[0], (float)light->dir[1], (float)light->dir[2], 0.0f },
+        1.0f / 127.0f);
+
     // Fused TransposedMatrixMul + NormalizeVector using NEON
-    // TransposedMatrixMul: res[i] = a[0]*b[0][i] + a[1]*b[0+1][i] + a[2]*b[0+2][i] for i=0,1,2
-    // Then normalize the result vector
+    // TransposedMatrixMul: res[k] = dir[0]*mtx[k][0] + dir[1]*mtx[k][1] + dir[2]*mtx[k][2]
+    // Each result is a dot product of dir with row k of mtx
     float(*mtx)[4] = mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1];
-    float32x4_t r0 = vld1q_f32(mtx[0]);
-    float32x4_t r1 = vld1q_f32(mtx[1]);
-    float32x4_t r2 = vld1q_f32(mtx[2]);
-    // res = light_dir[0] * mtx_row0 + light_dir[1] * mtx_row1 + light_dir[2] * mtx_row2
-    float32x4_t res = vmulq_n_f32(r0, light_dir[0]);
-    res = vmlaq_n_f32(res, r1, light_dir[1]);
-    res = vmlaq_n_f32(res, r2, light_dir[2]);
+    float32x4_t r0 = vmulq_f32(dir_f, vld1q_f32(mtx[0]));
+    float32x4_t r1 = vmulq_f32(dir_f, vld1q_f32(mtx[1]));
+    float32x4_t r2 = vmulq_f32(dir_f, vld1q_f32(mtx[2]));
+    float32x4_t res = {
+        vgetq_lane_f32(r0, 0) + vgetq_lane_f32(r0, 1) + vgetq_lane_f32(r0, 2),
+        vgetq_lane_f32(r1, 0) + vgetq_lane_f32(r1, 1) + vgetq_lane_f32(r1, 2),
+        vgetq_lane_f32(r2, 0) + vgetq_lane_f32(r2, 1) + vgetq_lane_f32(r2, 2),
+        0.0f
+    };
     // Normalize: compute length² = x² + y² + z², then rsqrt
     float32x4_t sq = vmulq_f32(res, res);
-    // Sum x² + y² + z² (lane 0 + lane 1 + lane 2)
     float len_sq = vgetq_lane_f32(sq, 0) + vgetq_lane_f32(sq, 1) + vgetq_lane_f32(sq, 2);
     float32x2_t len_sq_v = vdup_n_f32(len_sq);
     float32x2_t inv_len = vrsqrte_f32(len_sq_v);
-    // One Newton-Raphson iteration for better accuracy
     inv_len = vmul_f32(inv_len, vrsqrts_f32(vmul_f32(len_sq_v, inv_len), inv_len));
-    float32x4_t inv_len_q = vdupq_lane_f32(inv_len, 0);
-    res = vmulq_f32(res, inv_len_q);
+    res = vmulq_f32(res, vdupq_lane_f32(inv_len, 0));
     coeffs[0] = vgetq_lane_f32(res, 0);
     coeffs[1] = vgetq_lane_f32(res, 1);
     coeffs[2] = vgetq_lane_f32(res, 2);
 #else
+    float light_dir[3] = { light->dir[0] / 127.0f, light->dir[1] / 127.0f, light->dir[2] / 127.0f };
     Interpreter::TransposedMatrixMul(coeffs, light_dir,
                                      mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1]);
     Interpreter::NormalizeVector(coeffs);
@@ -1754,12 +1792,10 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
 
                     // TransposedMatrixMul: light_model[k] = sum_j(dist_vec[j] * mtx[k][j])
                     float(*mtx_p)[4] = mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1];
-                    float dx = vgetq_lane_f32(dv, 0), dy = vgetq_lane_f32(dv, 1), dz = vgetq_lane_f32(dv, 2);
                     // NEON: element-wise multiply + horizontal sum for 3 dot products
-                    float32x4_t dv3 = { dx, dy, dz, 0.0f };
-                    float32x4_t p0 = vmulq_f32(dv3, vld1q_f32(mtx_p[0]));
-                    float32x4_t p1 = vmulq_f32(dv3, vld1q_f32(mtx_p[1]));
-                    float32x4_t p2 = vmulq_f32(dv3, vld1q_f32(mtx_p[2]));
+                    float32x4_t p0 = vmulq_f32(dv, vld1q_f32(mtx_p[0]));
+                    float32x4_t p1 = vmulq_f32(dv, vld1q_f32(mtx_p[1]));
+                    float32x4_t p2 = vmulq_f32(dv, vld1q_f32(mtx_p[2]));
                     float light_model[3] = {
                         vgetq_lane_f32(p0, 0) + vgetq_lane_f32(p0, 1) + vgetq_lane_f32(p0, 2),
                         vgetq_lane_f32(p1, 0) + vgetq_lane_f32(p1, 1) + vgetq_lane_f32(p1, 2),

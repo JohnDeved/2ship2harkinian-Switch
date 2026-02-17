@@ -161,7 +161,13 @@ constexpr size_t MAX_SEGMENT_POINTERS = 16;
 
 struct GfxExecStack {
     // This is a dlist stack used to handle dlist calls.
+#ifdef __SWITCH__
+    // Use vector-backed stack for better cache locality on A57
+    // (std::deque allocates in scattered 512B chunks)
+    std::stack<F3DGfx*, std::vector<F3DGfx*>> cmd_stack = {};
+#else
     std::stack<F3DGfx*> cmd_stack = {};
+#endif
     // This is also a dlist stack but a std::vector is used to make it possible
     // to iterate on the elements.
     // The purpose of this is to identify an instruction at a poin in time

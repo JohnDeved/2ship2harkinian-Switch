@@ -730,7 +730,12 @@ void GfxWindowBackendSDL2::SwapBuffersBegin() {
         SDL_RenderSetVSync(mRenderer, mVsyncEnabled ? 1 : 0);
     }
 
+#ifndef __SWITCH__
+    // On Switch, we skip the software framerate sync — the render thread runs
+    // continuously and vsync is handled by SDL_GL_SwapWindow. The nanosleep
+    // in SyncFramerateWithTime adds unwanted latency on the render thread.
     SyncFramerateWithTime();
+#endif
     SDL_GL_SwapWindow(mWnd);
 }
 

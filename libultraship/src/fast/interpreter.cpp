@@ -3694,7 +3694,9 @@ void* Interpreter::SegAddr(uintptr_t w1) {
 void GfxExecStack::start(F3DGfx* dlist) {
     while (!cmd_stack.empty())
         cmd_stack.pop();
+#ifndef __SWITCH__
     gfx_path.clear();
+#endif
     cmd_stack.push(dlist);
     disp_stack.clear();
 }
@@ -3702,7 +3704,9 @@ void GfxExecStack::start(F3DGfx* dlist) {
 void GfxExecStack::stop() {
     while (!cmd_stack.empty())
         cmd_stack.pop();
+#ifndef __SWITCH__
     gfx_path.clear();
+#endif
 }
 
 F3DGfx*& GfxExecStack::currCmd() {
@@ -3725,27 +3729,35 @@ void GfxExecStack::branch(F3DGfx* caller) {
     cmd_stack.push(nullptr);
     cmd_stack.push(old);
 
+#ifndef __SWITCH__
     gfx_path.push_back(caller);
+#endif
 }
 
 void GfxExecStack::call(F3DGfx* caller, F3DGfx* callee) {
     cmd_stack.push(callee);
+#ifndef __SWITCH__
     gfx_path.push_back(caller);
+#endif
 }
 
 F3DGfx* GfxExecStack::ret() {
     F3DGfx* cmd = cmd_stack.top();
 
     cmd_stack.pop();
+#ifndef __SWITCH__
     if (!gfx_path.empty()) {
         gfx_path.pop_back();
     }
+#endif
 
     while (cmd_stack.size() > 0 && cmd_stack.top() == nullptr) {
         cmd_stack.pop();
+#ifndef __SWITCH__
         if (!gfx_path.empty()) {
             gfx_path.pop_back();
         }
+#endif
     }
     return cmd;
 }
@@ -5504,17 +5516,19 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
         mCachedCombinerKey.options = UINT64_MAX;
     }
 
+#ifndef __SWITCH__
     auto dbg = Ship::Context::GetInstance()->GetGfxDebugger();
+#endif
     g_exec_stack.start((F3DGfx*)commands);
 
     while (!g_exec_stack.cmd_stack.empty()) {
+#ifndef __SWITCH__
+        // GfxDebugger: breakpoint support (skipped on Switch for performance)
         auto cmd = g_exec_stack.cmd_stack.top();
 
         if (dbg->IsDebugging()) {
             g_exec_stack.gfx_path.push_back(cmd);
             if (dbg->HasBreakPoint(g_exec_stack.gfx_path)) {
-                // On a breakpoint with the active framebuffer still set, we need to reset back to prevent
-                // soft locking the renderer
                 if (mFbActive) {
                     mFbActive = 0;
                     mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, 1);
@@ -5524,30 +5538,40 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             }
             g_exec_stack.gfx_path.pop_back();
         }
+#endif
 
-        // A3: Inlined dispatch — avoids per-command function call overhead of gfx_step().
+        // Inlined dispatch — avoids per-command function call overhead of gfx_step().
         {
             auto& stepCmd = g_exec_stack.currCmd();
-            int8_t opcode = (int8_t)(stepCmd->words.w0 >> 24);
+            uint8_t opcode = (uint8_t)(stepCmd->words.w0 >> 24);
 
 #ifdef USE_GBI_TRACE
             if (stepCmd->words.trace.valid &&
                 Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger("gEnableGFXTrace", 0)) {
-                SPDLOG_INFO(TRACE, (uint8_t)opcode, stepCmd->words.trace.file, stepCmd->words.trace.idx,
+                SPDLOG_INFO(TRACE, opcode, stepCmd->words.trace.file, stepCmd->words.trace.idx,
                             stepCmd->words.w0, stepCmd->words.w1);
             }
 #endif
 
-            if (opcode == F3DEX2_G_LOAD_UCODE) {
+#ifdef __SWITCH__
+            // Fast-path: inline no-op RDP sync commands (0xe6-0xe9) to avoid
+            // function pointer dispatch overhead for ~109+ sync cmds/iteration.
+            if (opcode >= 0xe6 && opcode <= 0xe9) {
+                ++stepCmd;
+                continue;
+            }
+#endif
+
+            if ((int8_t)opcode == F3DEX2_G_LOAD_UCODE) {
                 gfx_load_ucode_handler_f3dex2(&stepCmd);
             } else {
-                GfxOpcodeHandlerFunc handler = sUnifiedHandlers[static_cast<uint8_t>(opcode)];
+                GfxOpcodeHandlerFunc handler = sUnifiedHandlers[opcode];
                 if (handler) {
                     if (!handler(&stepCmd)) {
                         ++stepCmd;
                     }
                 } else {
-                    SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, ucode: {}", (uint8_t)opcode,
+                    SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, ucode: {}", opcode,
                                     (uint32_t)ucode_handler_index);
                     ++stepCmd;
                 }

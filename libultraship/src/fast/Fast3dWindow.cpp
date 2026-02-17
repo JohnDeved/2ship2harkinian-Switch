@@ -419,6 +419,10 @@ void Fast3dWindow::RenderThreadLoop() {
     // Acquire GL context on this thread
     mWindowManagerApi->MakeContextCurrent();
 
+    // Cache the Gui pointer once — it doesn't change during the render thread's lifetime.
+    // This avoids shared_ptr refcount ops (atomic inc/dec) per sub-frame.
+    auto gui = Ship::Context::GetInstance()->GetWindow()->GetGui();
+
     std::unique_lock<std::mutex> lock(mRenderMutex);
     while (mRenderThreadRunning) {
         // Wait for work
@@ -435,9 +439,6 @@ void Fast3dWindow::RenderThreadLoop() {
         lock.unlock();
 
         // Execute the full render pipeline on Core 1 (with GL context)
-        std::shared_ptr<Ship::Window> wnd = Ship::Context::GetInstance()->GetWindow();
-        auto gui = wnd->GetGui();
-
         gui->StartDraw();
         mInterpreter->StartFrame();
         mInterpreter->Run(commands, *mtxReplacements);
@@ -492,12 +493,6 @@ bool Fast3dWindow::SubmitRenderWork(Gfx* commands, const std::unordered_map<Mtx*
     if (!mRenderThreadRunning) {
         // Fallback: run inline if render thread not active
         return DrawAndRunGraphicsCommands(commands, mtxReplacements);
-    }
-
-    // Skip dropped frames
-    std::shared_ptr<Ship::Window> wnd = Ship::Context::GetInstance()->GetWindow();
-    if (!wnd->IsFrameReady()) {
-        return false;
     }
 
     {

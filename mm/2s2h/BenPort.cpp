@@ -427,6 +427,167 @@ static struct {
     bool processing;
 } audio;
 
+#if defined(__SWITCH__)
+static struct {
+    std::thread thread;
+    std::condition_variable cv_to_thread, cv_from_thread;
+    std::mutex mutex;
+    bool running = false;
+    bool processing = false;
+    bool isContextOwnedByRenderThread = false;
+    bool clearTextureCacheRequested = false;
+    Gfx* commands = nullptr;
+    std::vector<std::unordered_map<Mtx*, MtxF>> mtxReplacements;
+} renderThread;
+#endif
+
+void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>>& mtx_replacements);
+
+#if defined(__SWITCH__)
+static void EnsureRenderThreadStarted() {
+    if (renderThread.running || renderThread.thread.joinable()) {
+        return;
+    }
+
+    auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
+    if (wnd == nullptr || wnd->GetWindowBackend() != Ship::WindowBackend::FAST3D_SDL_OPENGL) {
+        return;
+    }
+
+    if (!wnd->ClearOpenGLContextCurrent()) {
+        SPDLOG_ERROR("B1 render thread: failed to clear OpenGL context on main thread");
+        return;
+    }
+
+    renderThread.running = true;
+    renderThread.thread = std::thread([]() {
+        // Pin render thread to core 1 so GL + DL work does not run on game thread core.
+        // preferredCore=1 and mask=(1<<1) pins strictly to core 1.
+        Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, 1, (1U << 1));
+        if (R_FAILED(rc)) {
+            SPDLOG_ERROR("B1 render thread: failed to pin to core 1 (rc=0x{:X})", (uint32_t)rc);
+            std::lock_guard<std::mutex> lock(renderThread.mutex);
+            renderThread.running = false;
+            renderThread.processing = false;
+            renderThread.cv_from_thread.notify_one();
+            return;
+        }
+
+        auto renderWnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
+        if (renderWnd != nullptr) {
+            renderThread.isContextOwnedByRenderThread = renderWnd->MakeOpenGLContextCurrent();
+            if (!renderThread.isContextOwnedByRenderThread) {
+                SPDLOG_ERROR("B1 render thread: failed to bind OpenGL context on render thread");
+                {
+                    std::lock_guard<std::mutex> lock(renderThread.mutex);
+                    renderThread.running = false;
+                    renderThread.processing = false;
+                    renderThread.cv_from_thread.notify_one();
+                }
+                return;
+            }
+        }
+
+        while (true) {
+            Gfx* commands = nullptr;
+            std::vector<std::unordered_map<Mtx*, MtxF>> mtxReplacements;
+            bool clearTextureCacheRequested = false;
+
+            {
+                std::unique_lock<std::mutex> lock(renderThread.mutex);
+                while (!renderThread.processing && renderThread.running) {
+                    renderThread.cv_to_thread.wait(lock);
+                }
+
+                if (!renderThread.running) {
+                    break;
+                }
+
+                commands = renderThread.commands;
+                mtxReplacements = std::move(renderThread.mtxReplacements);
+                clearTextureCacheRequested = renderThread.clearTextureCacheRequested;
+                renderThread.clearTextureCacheRequested = false;
+            }
+
+            if (clearTextureCacheRequested) {
+                gfx_texture_cache_clear();
+            }
+
+            if (commands != nullptr) {
+                RunCommands(commands, mtxReplacements);
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(renderThread.mutex);
+                renderThread.processing = false;
+            }
+            renderThread.cv_from_thread.notify_one();
+        }
+    });
+}
+
+static void StopRenderThread() {
+    if (!renderThread.running) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(renderThread.mutex);
+        renderThread.running = false;
+        renderThread.processing = false;
+        renderThread.cv_to_thread.notify_one();
+        renderThread.cv_from_thread.notify_one();
+    }
+    if (renderThread.thread.joinable()) {
+        renderThread.thread.join();
+    }
+}
+
+static void WaitForRenderThreadIdle(std::unique_lock<std::mutex>& lock) {
+    renderThread.cv_from_thread.wait(lock, [] { return !renderThread.running || !renderThread.processing; });
+}
+
+// Submits one frame of DL work to the render thread.
+// Guarantees at most one in-flight frame so command memory from double-buffered
+// pools is not overwritten before render completion. If B1 thread startup fails,
+// it falls back to synchronous execution on the caller thread.
+static void SubmitRenderFrame(Gfx* commands, std::vector<std::unordered_map<Mtx*, MtxF>>&& mtxReplacements) {
+    EnsureRenderThreadStarted();
+    if (!renderThread.running) {
+        RunCommands(commands, mtxReplacements);
+        return;
+    }
+
+    // Keep at most one in-flight frame to align with double-buffered command pools.
+    {
+        std::unique_lock<std::mutex> lock(renderThread.mutex);
+        WaitForRenderThreadIdle(lock);
+
+        renderThread.commands = commands;
+        renderThread.mtxReplacements = std::move(mtxReplacements);
+        renderThread.processing = true;
+    }
+    renderThread.cv_to_thread.notify_one();
+}
+
+static void RequestTextureCacheClearOnRenderThread() {
+    if (!renderThread.running) {
+        gfx_texture_cache_clear();
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock(renderThread.mutex);
+    // Drain any queued frame first so the cache clear runs in deterministic order.
+    WaitForRenderThreadIdle(lock);
+    renderThread.clearTextureCacheRequested = true;
+    renderThread.commands = nullptr;
+    renderThread.mtxReplacements.clear();
+    renderThread.processing = true;
+    renderThread.cv_to_thread.notify_one();
+    WaitForRenderThreadIdle(lock);
+}
+#endif
+
 void OTRAudio_Thread() {
 #ifdef __SWITCH__
     // Pin audio thread to core 2 so it never competes with the main/render
@@ -803,6 +964,9 @@ extern "C" void SaveManager_ThreadPoolWait() {
 
 extern "C" void DeinitOTR() {
     SaveManager_ThreadPoolWait();
+#if defined(__SWITCH__)
+    StopRenderThread();
+#endif
     TaskWorker_Destroy();
     OTRAudio_Exit();
 #ifdef ENABLE_CROWD_CONTROL
@@ -956,8 +1120,17 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
         return;
     }
 
-    // Process window events for resize, mouse, keyboard events
+    // Process window events for resize, mouse, keyboard events.
+    // In normal B1 mode on Switch, this function runs on the render thread and
+    // events are already handled on the game thread before SubmitRenderFrame().
+    // So we only handle events here for the non-threaded fallback path.
+#if defined(__SWITCH__)
+    if (!renderThread.running) {
+        wnd->HandleEvents();
+    }
+#else
     wnd->HandleEvents();
+#endif
 
     const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
     wnd->SetProfilingEnabled(profilerEnabled);
@@ -1076,168 +1249,36 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     }
 
 #if defined(__SWITCH__)
-    // Multi-core pipelining: overlap matrix interpolation for sub-frame N+1
-    // on the worker thread (Core 3) while Core 0 renders DL iteration N.
-    // This utilizes an otherwise-idle core during rendering, saving ~0.3ms
-    // per overlap (typically 2 overlaps for 3 sub-frames).
-    //
-    // For this to work, we interleave interpolation and rendering instead
-    // of computing all interpolations first. The recording data is read-only
-    // during the rendering phase, so concurrent reads are safe.
-    {
-        struct AsyncInterpJob {
-            float fraction;
-            std::unordered_map<Mtx*, MtxF> result;
-        };
-        static auto asyncInterpTask = [](void* arg) {
-            auto* job = static_cast<AsyncInterpJob*>(arg);
-            job->result = FrameInterpolation_Interpolate(job->fraction);
-        };
-
-        // Collect all time values first
-        struct SubFrame { int time_val; float fraction; bool isIdentity; };
-        thread_local std::vector<SubFrame> sub_frames;
-        sub_frames.clear();
-        {
-            int t = time;
-            while (t + original_fps <= next_original_frame) {
-                t += original_fps;
-                bool identity = (t == next_original_frame);
-                float frac = identity ? 1.0f : (float)t / next_original_frame;
-                sub_frames.push_back({t, frac, identity});
-            }
-            time = t;
-        }
-
-        // If multiple sub-frames and not debugging: pipeline interp with rendering
-        if (sub_frames.size() > 1 && !GfxDebuggerIsDebugging()) {
-            auto intp = wnd->GetInterpreterWeak().lock().get();
-
-            FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
-
-            // Compute first sub-frame synchronously
-            std::unordered_map<Mtx*, MtxF> current_m;
-            if (!sub_frames[0].isIdentity) {
-                current_m = FrameInterpolation_Interpolate(sub_frames[0].fraction);
-            }
-
-            FrameProfiler_EndPhase(PROFILE_PHASE_FRAME_INTERP);
-
-            wnd->SetTargetFps(fps);
-            wnd->HandleEvents();
-            const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
-            wnd->SetProfilingEnabled(profilerEnabled);
-            if (intp) { intp->mInterpolationIndex = 0; }
-
-            for (size_t i = 0; i < sub_frames.size(); i++) {
-                // Start async interpolation for NEXT sub-frame (if any)
-                AsyncInterpJob nextJob;
-                bool hasNext = (i + 1 < sub_frames.size());
-                if (hasNext && !sub_frames[i + 1].isIdentity) {
-                    nextJob.fraction = sub_frames[i + 1].fraction;
-                    TaskWorker_Submit(asyncInterpTask, &nextJob);
-                }
-
-                // Render current sub-frame on Core 0
-                // (while Core 3 computes next interpolation)
-                FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
-                FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
-                // Track replay diagnostics only when profiler is active to avoid
-                // branch/store overhead in the normal rendering hot path.
-                bool usedReplayThisIter = false;
-                bool fallbackThisIter = false;
-
-                wnd->DrawAndRunGraphicsCommands(commands, current_m);
-
-                if (profilerEnabled) {
-                    const auto& stats = wnd->GetFrameStats();
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, (float)stats.drawCalls);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BATCH_FLUSHES, (float)stats.batchFlushes);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BUFFER_FULL_FLUSHES, (float)stats.bufferFullFlushes);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_STATE_FLUSHES, (float)stats.stateChangeFlushes);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_SWITCHES, (float)stats.shaderSwitches);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_COMPILATIONS, (float)stats.shaderCompilations);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_BINDS, (float)stats.textureBinds);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_CACHE_MISSES, (float)stats.textureCacheMisses);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_VERTICES_SUBMITTED, (float)stats.verticesSubmitted);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED, (float)stats.trianglesSubmitted);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TOTAL_MS, (float)stats.timeTotal / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DISPATCH_MS, (float)stats.timeGbiDispatch / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TRI_MS, (float)stats.timeTriProcessing / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEX_MS, (float)stats.timeTextureSetup / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)stats.timeShaderSetup / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DRAW_MS, (float)stats.timeDrawSubmit / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VBO_UPLOAD_MS, (float)stats.timeVboUpload / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_GL_DRAW_MS, (float)stats.timeGlDraw / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VTX_MS, (float)stats.timeVertexLoad / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_MTX_MS, (float)stats.timeMatrixOps / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DEPTH_MS, (float)stats.timePixelDepth / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SETUP_MS, (float)stats.timeFrameSetup / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)stats.pixelDepthQueries);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE, (float)stats.flushCauseTexture);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER, (float)stats.flushCauseSampler);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER, (float)stats.flushCauseShader);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_ALPHA, (float)stats.flushCauseAlpha);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_DEPTH_VIEWPORT, (float)stats.flushCauseDepthViewport);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER, (float)stats.flushCauseCombiner);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS, (float)stats.textureReloadSkips);
-                    for (int b = 0; b < Fast::Fast3DStats::BATCH_HISTOGRAM_BUCKETS; b++) {
-                        FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)stats.batchHistogram[b]);
-                    }
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
-                }
-                if (intp) { intp->mInterpolationIndex++; }
-                if (profilerEnabled) {
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
-                }
-
-                FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
-                FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
-
-                // Wait for next interpolation result (if submitted)
-                if (hasNext) {
-                    FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
-                    if (!sub_frames[i + 1].isIdentity) {
-                        TaskWorker_Wait();
-                        current_m = std::move(nextJob.result);
-                    } else {
-                        current_m.clear();
-                    }
-                    FrameProfiler_EndPhase(PROFILE_PHASE_FRAME_INTERP);
-                }
-            }
-
-            time -= fps;
-            last_fps = fps;
-            last_update_rate = R_UPDATE_RATE;
+    FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
+    while (time + original_fps <= next_original_frame) {
+        time += original_fps;
+        if (time != next_original_frame) {
+            mtx_replacements.push_back(FrameInterpolation_Interpolate((float)time / next_original_frame));
         } else {
-            // Single sub-frame or debug mode: standard path
-            FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
-            for (const auto& sf : sub_frames) {
-                if (!sf.isIdentity) {
-                    mtx_replacements.push_back(FrameInterpolation_Interpolate(sf.fraction));
-                } else {
-                    mtx_replacements.emplace_back();
-                }
-            }
-            FrameProfiler_EndPhase(PROFILE_PHASE_FRAME_INTERP);
-
-            time -= fps;
-            if (wnd != nullptr) { wnd->SetTargetFps(fps); }
-            if (GfxDebuggerIsDebugging()) {
-                mtx_replacements.clear();
-                mtx_replacements.emplace_back();
-            }
-            FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
-            FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
-            RunCommands(commands, mtx_replacements);
-            FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
-            FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
-            last_fps = fps;
-            last_update_rate = R_UPDATE_RATE;
+            mtx_replacements.emplace_back();
         }
     }
+    FrameProfiler_EndPhase(PROFILE_PHASE_FRAME_INTERP);
+
+    time -= fps;
+    wnd->SetTargetFps(fps);
+    // In normal B1 mode, events are handled here on the game thread before
+    // frame submission. RunCommands skips HandleEvents while render thread runs.
+    wnd->HandleEvents();
+
+    if (GfxDebuggerIsDebugging()) {
+        mtx_replacements.clear();
+        mtx_replacements.emplace_back();
+    }
+
+    FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
+    FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
+    SubmitRenderFrame(commands, std::move(mtx_replacements));
+    FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
+    FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
+
+    last_fps = fps;
+    last_update_rate = R_UPDATE_RATE;
 #else
     FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
     while (time + original_fps <= next_original_frame) {
@@ -1276,7 +1317,11 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     if (prevAltAssets != curAltAssets) {
         prevAltAssets = curAltAssets;
         Ship::Context::GetInstance()->GetResourceManager()->SetAltAssetsEnabled(curAltAssets);
+#if defined(__SWITCH__)
+        RequestTextureCacheClearOnRenderThread();
+#else
         gfx_texture_cache_clear();
+#endif
         // TODO: skeleton patch, hooks
         // SOH::SkeletonPatcher::UpdateSkeletons();
         // GameInteractor::Instance->ExecuteHooks<GameInteractor::OnAssetAltChange>();

@@ -222,6 +222,22 @@ void Fast3dWindow::SetProfilingEnabled(bool enabled) {
     mInterpreter->SetProfilingEnabled(enabled);
 }
 
+bool Fast3dWindow::MakeOpenGLContextCurrent() {
+    auto* sdlBackend = dynamic_cast<GfxWindowBackendSDL2*>(mWindowManagerApi);
+    if (sdlBackend == nullptr) {
+        return false;
+    }
+    return sdlBackend->MakeOpenGLContextCurrent();
+}
+
+bool Fast3dWindow::ClearOpenGLContextCurrent() {
+    auto* sdlBackend = dynamic_cast<GfxWindowBackendSDL2*>(mWindowManagerApi);
+    if (sdlBackend == nullptr) {
+        return false;
+    }
+    return sdlBackend->ClearOpenGLContextCurrent();
+}
+
 void Fast3dWindow::HandleEvents() {
     mWindowManagerApi->HandleEvents();
 }

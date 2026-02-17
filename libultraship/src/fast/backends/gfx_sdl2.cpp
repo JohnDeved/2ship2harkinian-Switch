@@ -779,5 +779,19 @@ void GfxWindowBackendSDL2::Destroy() {
 bool GfxWindowBackendSDL2::IsFullscreen() {
     return mFullScreen;
 }
+
+bool GfxWindowBackendSDL2::MakeOpenGLContextCurrent() {
+    if (mWnd == nullptr || mCtx == nullptr) {
+        return false;
+    }
+    return SDL_GL_MakeCurrent(mWnd, mCtx) == 0;
+}
+
+bool GfxWindowBackendSDL2::ClearOpenGLContextCurrent() {
+    if (mWnd == nullptr || mCtx == nullptr) {
+        return false;
+    }
+    return SDL_GL_MakeCurrent(mWnd, nullptr) == 0;
+}
 } // namespace Fast
 #endif

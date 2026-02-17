@@ -58,6 +58,8 @@ class Fast3dWindow : public Ship::Window {
     const Fast3DStats& GetFrameStats() const;
     void ResetFrameStats();
     void SetProfilingEnabled(bool enabled);
+    bool MakeOpenGLContextCurrent();
+    bool ClearOpenGLContextCurrent();
 
     std::weak_ptr<Interpreter> GetInterpreterWeak() const;
 

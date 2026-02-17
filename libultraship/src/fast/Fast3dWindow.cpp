@@ -50,6 +50,7 @@ Fast3dWindow::Fast3dWindow() : Fast3dWindow(std::vector<std::shared_ptr<Ship::Gu
 Fast3dWindow::~Fast3dWindow() {
     SPDLOG_DEBUG("destruct fast3dwindow");
     mInterpreter->Destroy();
+    GfxSetInstance(nullptr);
     delete mRenderingApi;
     delete mWindowManagerApi;
 }

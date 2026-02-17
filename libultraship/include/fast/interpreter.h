@@ -399,6 +399,8 @@ struct Fast3DStats {
     uint64_t timeTextureSetup;
     uint64_t timeShaderSetup;
     uint64_t timeDrawSubmit;
+    uint64_t timeVboUpload;    // VBO data upload (glBufferData/glBufferSubData) — sub-component of timeDrawSubmit
+    uint64_t timeGlDraw;       // actual glDrawArrays call — sub-component of timeDrawSubmit
     uint64_t timeVertexLoad;
     uint64_t timeMatrixOps;    // matrix multiply, push/pop, normal dir calculations
     uint64_t timePixelDepth;   // pixel depth prepare + readback

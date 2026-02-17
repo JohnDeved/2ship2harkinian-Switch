@@ -501,6 +501,8 @@ static void FrameProfiler_ExportSnapshot(void) {
     float glTimeTex = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TEX_MS);
     float glTimeShader = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_SHADER_MS);
     float glTimeDraw = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DRAW_MS);
+    float glTimeVboUpload = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_VBO_UPLOAD_MS);
+    float glTimeGlDraw = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_GL_DRAW_MS);
     float glTimeVtx = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_VTX_MS);
     float glTimeMtx = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_MTX_MS);
     float glTimeDepth = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DEPTH_MS);
@@ -560,9 +562,13 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "Fast3D Timing Breakdown:" << std::endl;
     out << "  Total:                        " << std::fixed << std::setprecision(2) << glTimeTotal << " ms" << std::endl;
     float glTimeTriExcl = glTimeTri > glTimeDraw ? glTimeTri - glTimeDraw : 0.0f;
+    float glTimeDrawOther = glTimeDraw > (glTimeVboUpload + glTimeGlDraw) ? glTimeDraw - glTimeVboUpload - glTimeGlDraw : 0.0f;
     out << "  Triangle Processing:          " << std::fixed << std::setprecision(2) << glTimeTri << " ms (incl. draw submit)" << std::endl;
     out << "    Per-vertex work:            " << std::fixed << std::setprecision(2) << glTimeTriExcl << " ms" << std::endl;
     out << "    Draw Submit (GL calls):     " << std::fixed << std::setprecision(2) << glTimeDraw << " ms" << std::endl;
+    out << "      VBO Upload:               " << std::fixed << std::setprecision(2) << glTimeVboUpload << " ms (glBufferData/glBufferSubData)" << std::endl;
+    out << "      glDrawArrays:             " << std::fixed << std::setprecision(2) << glTimeGlDraw << " ms" << std::endl;
+    out << "      State/Uniform setup:      " << std::fixed << std::setprecision(2) << glTimeDrawOther << " ms (depth/decal/uniforms)" << std::endl;
     out << "  Vertex Transform:             " << std::fixed << std::setprecision(2) << glTimeVtx << " ms" << std::endl;
     out << "  Texture Setup:                " << std::fixed << std::setprecision(2) << glTimeTex << " ms" << std::endl;
     out << "  Matrix Operations:            " << std::fixed << std::setprecision(2) << glTimeMtx << " ms" << std::endl;
@@ -578,6 +584,9 @@ static void FrameProfiler_ExportSnapshot(void) {
         out << "  Triangle Processing:          " << std::fixed << std::setprecision(1) << (glTimeTri / glTimeTotal * 100.0f) << "% (incl. draw submit)" << std::endl;
         out << "    Per-vertex work:            " << std::fixed << std::setprecision(1) << (glTimeTriExcl / glTimeTotal * 100.0f) << "%" << std::endl;
         out << "    Draw Submit (GL calls):     " << std::fixed << std::setprecision(1) << (glTimeDraw / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "      VBO Upload:               " << std::fixed << std::setprecision(1) << (glTimeVboUpload / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "      glDrawArrays:             " << std::fixed << std::setprecision(1) << (glTimeGlDraw / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "      State/Uniform setup:      " << std::fixed << std::setprecision(1) << (glTimeDrawOther / glTimeTotal * 100.0f) << "%" << std::endl;
         out << "  Vertex Transform:             " << std::fixed << std::setprecision(1) << (glTimeVtx / glTimeTotal * 100.0f) << "%" << std::endl;
         out << "  Texture Setup:                " << std::fixed << std::setprecision(1) << (glTimeTex / glTimeTotal * 100.0f) << "%" << std::endl;
         out << "  Matrix Operations:            " << std::fixed << std::setprecision(1) << (glTimeMtx / glTimeTotal * 100.0f) << "%" << std::endl;
@@ -585,6 +594,38 @@ static void FrameProfiler_ExportSnapshot(void) {
         out << "  Pixel Depth Readback:         " << std::fixed << std::setprecision(1) << (glTimeDepth / glTimeTotal * 100.0f) << "%" << std::endl;
         out << "  Frame Setup:                  " << std::fixed << std::setprecision(1) << (glTimeSetup / glTimeTotal * 100.0f) << "%" << std::endl;
         out << "  Shader Compile/Switch:        " << std::fixed << std::setprecision(1) << (glTimeShader / glTimeTotal * 100.0f) << "%" << std::endl;
+    }
+    out << std::endl;
+
+    // CPU vs GL summary — shows total time in GL driver calls vs CPU-side processing
+    out << "--- CPU vs GL Driver Time ---" << std::endl;
+    float glDriverTime = glTimeVboUpload + glTimeGlDraw + glTimeSetup + glTimeDepth;
+    float cpuProcessingTime = glTimeTotal > glDriverTime ? glTimeTotal - glDriverTime : 0.0f;
+    out << "GL Driver (VBO + Draw + Setup + Depth): " << std::fixed << std::setprecision(2) << glDriverTime << " ms";
+    if (glTimeTotal > 0.01f) {
+        out << " (" << std::setprecision(1) << (glDriverTime / glTimeTotal * 100.0f) << "%)";
+    }
+    out << std::endl;
+    out << "  VBO Upload (glBufferData/Sub):  " << std::fixed << std::setprecision(2) << glTimeVboUpload << " ms" << std::endl;
+    out << "  glDrawArrays:                   " << std::fixed << std::setprecision(2) << glTimeGlDraw << " ms" << std::endl;
+    out << "  Frame Setup (FB/clear/resolve):  " << std::fixed << std::setprecision(2) << glTimeSetup << " ms" << std::endl;
+    out << "  Pixel Depth (glReadPixels):      " << std::fixed << std::setprecision(2) << glTimeDepth << " ms" << std::endl;
+    out << "CPU Processing (DL + tri + tex + vtx + mtx + shader): " << std::fixed << std::setprecision(2) << cpuProcessingTime << " ms";
+    if (glTimeTotal > 0.01f) {
+        out << " (" << std::setprecision(1) << (cpuProcessingTime / glTimeTotal * 100.0f) << "%)";
+    }
+    out << std::endl;
+    out << "  DL Dispatch (command walk):     " << std::fixed << std::setprecision(2) << glTimeDispatch << " ms" << std::endl;
+    out << "  Triangle Processing (CPU):      " << std::fixed << std::setprecision(2) << glTimeTriExcl << " ms" << std::endl;
+    out << "  Vertex Transform:               " << std::fixed << std::setprecision(2) << glTimeVtx << " ms" << std::endl;
+    out << "  Texture Setup:                  " << std::fixed << std::setprecision(2) << glTimeTex << " ms" << std::endl;
+    out << "  Matrix Operations:              " << std::fixed << std::setprecision(2) << glTimeMtx << " ms" << std::endl;
+    out << "  Shader Compile/Switch:          " << std::fixed << std::setprecision(2) << glTimeShader << " ms" << std::endl;
+    if (glDrawCalls > 0.5f) {
+        out << "Per GL Draw Call: " << std::fixed << std::setprecision(1)
+            << (glTimeVboUpload * 1000.0f / glDrawCalls) << " us VBO + "
+            << (glTimeGlDraw * 1000.0f / glDrawCalls) << " us draw = "
+            << (glTimeDraw * 1000.0f / glDrawCalls) << " us total" << std::endl;
     }
     out << std::endl;
 
@@ -813,6 +854,8 @@ static void FrameProfiler_ExportSnapshot(void) {
             GlPhaseInfo glPhases[] = {
                 {"tri (per-vertex work)", glTimeTriExcl, "Pre-compute combiner inputs, NEON vectorize inner loop, reduce per-vertex work"},
                 {"draw (GL submit)", glTimeDraw, "Reduce draw calls by batching, minimize state-change flushes, lazy state"},
+                {"  VBO upload", glTimeVboUpload, "Reduce vertex count, use indexed geometry, or batch multiple draws into one VBO upload"},
+                {"  glDrawArrays", glTimeGlDraw, "Reduce draw call count via state sorting, or merge compatible draws"},
                 {"vtx (vertex transform)", glTimeVtx, "NEON-optimize matrix*vertex, reduce lighting calculations"},
                 {"tex (texture setup)", glTimeTex, "NEON texture conversion, increase texture cache hit rate"},
                 {"mtx (matrix ops)", glTimeMtx, "NEON 4x4 matrix multiply, reduce matrix stack depth"},
@@ -1112,6 +1155,8 @@ void FrameProfilerWindow::DrawElement() {
     float glTimeTex = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TEX_MS);
     float glTimeShader = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_SHADER_MS);
     float glTimeDraw = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DRAW_MS);
+    float glTimeVboUpload = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_VBO_UPLOAD_MS);
+    float glTimeGlDraw = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_GL_DRAW_MS);
     float glTimeVtx = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_VTX_MS);
     float glTimeMtx = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_MTX_MS);
     float glTimeDepth = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DEPTH_MS);
@@ -1253,11 +1298,15 @@ void FrameProfilerWindow::DrawElement() {
     float timingBarMax = glTimeTotal > 0.01f ? glTimeTotal : 1.0f;
 
     float glTimeTriExcl = glTimeTri > glTimeDraw ? glTimeTri - glTimeDraw : 0.0f;
+    float glTimeDrawOther = glTimeDraw > (glTimeVboUpload + glTimeGlDraw) ? glTimeDraw - glTimeVboUpload - glTimeGlDraw : 0.0f;
     struct TimingEntry { const char* name; float ms; ImVec4 color; float baseline; };
     TimingEntry timings[] = {
         { "Triangle Processing", glTimeTri, ImVec4(1.0f, 0.4f, 0.4f, 1.0f), sPrevSnapshot.glTimeTri },
         { "  Per-vertex work",   glTimeTriExcl, ImVec4(1.0f, 0.5f, 0.5f, 1.0f), 0.0f },
         { "  Draw Submit (GL)",  glTimeDraw, ImVec4(1.0f, 0.7f, 0.3f, 1.0f), sPrevSnapshot.glTimeDraw },
+        { "    VBO Upload",      glTimeVboUpload, ImVec4(1.0f, 0.8f, 0.4f, 1.0f), 0.0f },
+        { "    glDrawArrays",    glTimeGlDraw, ImVec4(1.0f, 0.6f, 0.2f, 1.0f), 0.0f },
+        { "    State/Uniforms",  glTimeDrawOther, ImVec4(0.9f, 0.7f, 0.5f, 1.0f), 0.0f },
         { "Vertex Load",         glTimeVtx, ImVec4(0.4f, 0.8f, 1.0f, 1.0f), sPrevSnapshot.glTimeVtx },
         { "Texture Setup",       glTimeTex, ImVec4(0.4f, 1.0f, 0.6f, 1.0f), sPrevSnapshot.glTimeTex },
         { "Matrix Ops",          glTimeMtx, ImVec4(0.8f, 0.6f, 1.0f, 1.0f), 0.0f },
@@ -1307,6 +1356,29 @@ void FrameProfilerWindow::DrawElement() {
                               "<0.15 = well batched\n"
                               "0.15-0.30 = moderate fragmentation\n"
                               ">0.30 = severe fragmentation (nearly 1 flush per 3 tris)");
+        }
+    }
+
+    // CPU vs GL Driver summary
+    if (glTimeTotal > 0.01f) {
+        ImGui::Separator();
+        float glDriverTime = glTimeVboUpload + glTimeGlDraw + glTimeSetup + glTimeDepth;
+        float cpuTime = glTimeTotal > glDriverTime ? glTimeTotal - glDriverTime : 0.0f;
+        float glPct = glDriverTime / glTimeTotal * 100.0f;
+        float cpuPct = cpuTime / glTimeTotal * 100.0f;
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "CPU vs GL: CPU %.1f ms (%.0f%%) | GL %.1f ms (%.0f%%)",
+                           cpuTime, cpuPct, glDriverTime, glPct);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("GL Driver = VBO upload + glDrawArrays + frame setup + depth readback\n"
+                              "CPU = DL dispatch + triangle processing + vertex transform + texture + matrix + shader\n\n"
+                              "If GL-bound: reduce draw calls or VBO data size\n"
+                              "If CPU-bound: optimize DL dispatch or per-triangle work");
+        }
+        if (glDrawCalls > 0.5f) {
+            ImGui::Text("  Per draw: %.1f us VBO + %.1f us draw = %.1f us total",
+                        glTimeVboUpload * 1000.0f / glDrawCalls,
+                        glTimeGlDraw * 1000.0f / glDrawCalls,
+                        glTimeDraw * 1000.0f / glDrawCalls);
         }
     }
 

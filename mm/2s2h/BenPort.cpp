@@ -989,6 +989,8 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEX_MS, (float)stats.timeTextureSetup / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)stats.timeShaderSetup / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DRAW_MS, (float)stats.timeDrawSubmit / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VBO_UPLOAD_MS, (float)stats.timeVboUpload / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_GL_DRAW_MS, (float)stats.timeGlDraw / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VTX_MS, (float)stats.timeVertexLoad / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_MTX_MS, (float)stats.timeMatrixOps / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DEPTH_MS, (float)stats.timePixelDepth / 1000000.0f);
@@ -1146,6 +1148,8 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEX_MS, (float)stats.timeTextureSetup / 1000000.0f);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)stats.timeShaderSetup / 1000000.0f);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DRAW_MS, (float)stats.timeDrawSubmit / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VBO_UPLOAD_MS, (float)stats.timeVboUpload / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_GL_DRAW_MS, (float)stats.timeGlDraw / 1000000.0f);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VTX_MS, (float)stats.timeVertexLoad / 1000000.0f);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_MTX_MS, (float)stats.timeMatrixOps / 1000000.0f);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DEPTH_MS, (float)stats.timePixelDepth / 1000000.0f);

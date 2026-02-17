@@ -701,6 +701,10 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
 
     // printf("flushing %d tris\n", buf_vbo_num_tris);
     const size_t uploadBytes = sizeof(float) * buf_vbo_len;
+    const bool profiling = (mStats != nullptr);
+    static uint64_t sDummy = 0; // sink for timers when profiling is off
+    uint64_t& vboTarget = profiling ? mStats->timeVboUpload : sDummy;
+    uint64_t& drawTarget = profiling ? mStats->timeGlDraw : sDummy;
 
 #if defined(__SWITCH__)
     // Per-iteration VBO batching: orphan the VBO once per DL iteration,
@@ -709,34 +713,52 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     size_t strideBytes = mCurrentShaderProgram ? (size_t)mCurrentShaderProgram->numFloats * sizeof(float) : 0;
     if (strideBytes == 0) {
         // Fallback: no valid shader, use simple upload
-        glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
-        glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+        {
+            Fast3DScopedTimer t(vboTarget, profiling);
+            glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
+        }
+        {
+            Fast3DScopedTimer t(drawTarget, profiling);
+            glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+        }
     } else {
-        if (!mVboIterActive) {
-            glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
-            mVboIterOffset = 0;
-            mVboIterActive = true;
-        }
+        {
+            Fast3DScopedTimer t(vboTarget, profiling);
+            if (!mVboIterActive) {
+                glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
+                mVboIterOffset = 0;
+                mVboIterActive = true;
+            }
 
-        // Align offset to vertex stride
-        if ((mVboIterOffset % strideBytes) != 0) {
-            mVboIterOffset += strideBytes - (mVboIterOffset % strideBytes);
-        }
+            // Align offset to vertex stride
+            if ((mVboIterOffset % strideBytes) != 0) {
+                mVboIterOffset += strideBytes - (mVboIterOffset % strideBytes);
+            }
 
-        // Re-orphan if data doesn't fit after alignment
-        if (mVboIterOffset + uploadBytes > VBO_ITER_SIZE) {
-            glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
-            mVboIterOffset = 0;
-        }
+            // Re-orphan if data doesn't fit after alignment
+            if (mVboIterOffset + uploadBytes > VBO_ITER_SIZE) {
+                glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
+                mVboIterOffset = 0;
+            }
 
-        glBufferSubData(GL_ARRAY_BUFFER, mVboIterOffset, uploadBytes, buf_vbo);
+            glBufferSubData(GL_ARRAY_BUFFER, mVboIterOffset, uploadBytes, buf_vbo);
+        }
         GLint firstVertex = (GLint)(mVboIterOffset / strideBytes);
-        glDrawArrays(GL_TRIANGLES, firstVertex, 3 * buf_vbo_num_tris);
+        {
+            Fast3DScopedTimer t(drawTarget, profiling);
+            glDrawArrays(GL_TRIANGLES, firstVertex, 3 * buf_vbo_num_tris);
+        }
         mVboIterOffset += uploadBytes;
     }
 #else
-    glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
-    glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+    {
+        Fast3DScopedTimer t(vboTarget, profiling);
+        glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
+    }
+    {
+        Fast3DScopedTimer t(drawTarget, profiling);
+        glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+    }
 #endif
 }
 

@@ -118,6 +118,21 @@ constexpr size_t MAX_TRI_BUFFER = 1024;
 constexpr size_t MAX_TRI_BUFFER = 256;
 #endif
 
+// Helper: upload texture to GPU, or defer if async conversion is active.
+// When mDeferTextureUpload is true (running on worker thread), just save
+// the dimensions for later GPU upload on the main thread.
+inline void Interpreter::MaybeUploadTexture(const uint8_t* buf, uint32_t width, uint32_t height) {
+#if defined(__SWITCH__)
+    if (mDeferTextureUpload) {
+        mDeferredUploadBuf = buf;
+        mDeferredUploadWidth = width;
+        mDeferredUploadHeight = height;
+        return;
+    }
+#endif
+    mRapi->UploadTexture(buf, width, height);
+}
+
 Interpreter::Interpreter() {
     mRsp = new RSP();
     mRdp = new RDP();
@@ -135,12 +150,103 @@ Interpreter::Interpreter() {
 }
 
 Interpreter::~Interpreter() {
+#if defined(__SWITCH__)
+    // Shut down async texture conversion thread
+    if (mTexConvertActive.load(std::memory_order_relaxed)) {
+        mTexConvertActive.store(false, std::memory_order_release);
+        mTexConvertHasWork.store(true, std::memory_order_release); // wake up to exit
+        if (mTexConvertThread.joinable()) {
+            mTexConvertThread.join();
+        }
+    }
+    free(mTexConvertBuffer);
+#endif
     delete mRsp;
     delete mRdp;
     delete[] mBufVbo;
 }
 
 static std::weak_ptr<Interpreter> mInstance;
+
+#if defined(__SWITCH__)
+void Interpreter::TexConvertWorkerLoop() {
+    while (mTexConvertActive.load(std::memory_order_relaxed)) {
+        while (!mTexConvertHasWork.load(std::memory_order_acquire)) {
+            if (!mTexConvertActive.load(std::memory_order_relaxed)) return;
+            // Busy-wait with yield — conversion jobs are frequent and short-lived
+            std::this_thread::yield();
+        }
+        if (!mTexConvertActive.load(std::memory_order_relaxed)) return;
+        // Execute the conversion job
+        if (mTexConvertJob) {
+            mTexConvertJob();
+        }
+        mTexConvertDone.store(true, std::memory_order_release);
+        mTexConvertHasWork.store(false, std::memory_order_release);
+    }
+}
+
+void Interpreter::StartAsyncTexConvert(int i, int tile, bool importReplacement) {
+    // Capture the conversion as a lambda (runs on worker thread)
+    // All mRdp state is read-only during flush, so concurrent access is safe
+    mTexConvertJob = [this, i, tile, importReplacement]() {
+        // Worker writes to mTexConvertBuffer instead of mTexUploadBuffer
+        uint8_t* savedBuf = mTexUploadBuffer;
+        mTexUploadBuffer = mTexConvertBuffer;
+        mDeferTextureUpload = true;
+
+        uint8_t fmt = mRdp->texture_tile[tile].fmt;
+        uint8_t siz = mRdp->texture_tile[tile].siz;
+        uint32_t texFlags = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags;
+
+        if ((texFlags & TEX_FLAG_LOAD_AS_IMG) != 0) {
+            ImportTextureImg(tile, importReplacement);
+        } else if ((texFlags & TEX_FLAG_LOAD_AS_RAW) != 0) {
+            ImportTextureRaw(tile, importReplacement);
+        } else {
+            switch (fmt) {
+                case G_IM_FMT_RGBA:
+                    if (siz == G_IM_SIZ_16b) ImportTextureRgba16(tile, importReplacement);
+                    else if (siz == G_IM_SIZ_32b) ImportTextureRgba32(tile, importReplacement);
+                    break;
+                case G_IM_FMT_IA:
+                    if (siz == G_IM_SIZ_4b) ImportTextureIA4(tile, importReplacement);
+                    else if (siz == G_IM_SIZ_8b) ImportTextureIA8(tile, importReplacement);
+                    else if (siz == G_IM_SIZ_16b) ImportTextureIA16(tile, importReplacement);
+                    break;
+                case G_IM_FMT_CI:
+                    if (siz == G_IM_SIZ_4b) ImportTextureCi4(tile, importReplacement);
+                    else if (siz == G_IM_SIZ_8b) ImportTextureCi8(tile, importReplacement);
+                    break;
+                case G_IM_FMT_I:
+                    if (siz == G_IM_SIZ_4b) ImportTextureI4(tile, importReplacement);
+                    else if (siz == G_IM_SIZ_8b) ImportTextureI8(tile, importReplacement);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        // Restore (worker done)
+        mTexUploadBuffer = savedBuf;
+        mDeferTextureUpload = false;
+    };
+
+    // Kick off the worker thread
+    mTexConvertDone.store(false, std::memory_order_release);
+    mTexConvertHasWork.store(true, std::memory_order_release);
+}
+
+void Interpreter::FinishAsyncTexConvert(int i) {
+    // Wait for worker to finish
+    while (!mTexConvertDone.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    // GPU upload on main thread using the buffer the worker wrote to
+    mRapi->UploadTexture(mDeferredUploadBuf, mDeferredUploadWidth, mDeferredUploadHeight);
+}
+#endif
+
 // Set a cached pointer to the instance so we don't need to go through the window every time
 void GfxSetInstance(std::shared_ptr<Interpreter> gfx) {
     mInstance = gfx;
@@ -643,7 +749,7 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
         }
     }
 
-    mRapi->UploadTexture(mTexUploadBuffer, width, height);
+    MaybeUploadTexture(mTexUploadBuffer, width, height);
 }
 
 void Interpreter::ImportTextureRgba32(int tile, bool importReplacement) {
@@ -660,7 +766,7 @@ void Interpreter::ImportTextureRgba32(int tile, bool importReplacement) {
 
     uint32_t width = mRdp->texture_tile[tile].line_size_bytes / 2;
     uint32_t height = (size_bytes / 2) / mRdp->texture_tile[tile].line_size_bytes;
-    mRapi->UploadTexture(addr, width, height);
+    MaybeUploadTexture(addr, width, height);
 }
 
 void Interpreter::ImportTextureIA4(int tile, bool importReplacement) {
@@ -747,7 +853,7 @@ void Interpreter::ImportTextureIA4(int tile, bool importReplacement) {
     uint32_t width = mRdp->texture_tile[tile].line_size_bytes * 2;
     uint32_t height = sizeBytes / mRdp->texture_tile[tile].line_size_bytes;
 
-    mRapi->UploadTexture(mTexUploadBuffer, width, height);
+    MaybeUploadTexture(mTexUploadBuffer, width, height);
 }
 
 void Interpreter::ImportTextureIA8(int tile, bool importReplacement) {
@@ -807,7 +913,7 @@ void Interpreter::ImportTextureIA8(int tile, bool importReplacement) {
     uint32_t width = mRdp->texture_tile[tile].line_size_bytes;
     uint32_t height = sizeBytes / mRdp->texture_tile[tile].line_size_bytes;
 
-    mRapi->UploadTexture(mTexUploadBuffer, width, height);
+    MaybeUploadTexture(mTexUploadBuffer, width, height);
 }
 
 void Interpreter::ImportTextureIA16(int tile, bool importReplacement) {
@@ -886,7 +992,7 @@ void Interpreter::ImportTextureIA16(int tile, bool importReplacement) {
         }
     }
 
-    mRapi->UploadTexture(mTexUploadBuffer, width, height);
+    MaybeUploadTexture(mTexUploadBuffer, width, height);
 }
 
 void Interpreter::ImportTextureI4(int tile, bool importReplacement) {
@@ -964,7 +1070,7 @@ void Interpreter::ImportTextureI4(int tile, bool importReplacement) {
         }
     }
 
-    mRapi->UploadTexture(mTexUploadBuffer, width, height);
+    MaybeUploadTexture(mTexUploadBuffer, width, height);
 }
 
 void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
@@ -1010,7 +1116,7 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
     uint32_t width = mRdp->texture_tile[tile].line_size_bytes;
     uint32_t height = sizeBytes / mRdp->texture_tile[tile].line_size_bytes;
 
-    mRapi->UploadTexture(mTexUploadBuffer, width, height);
+    MaybeUploadTexture(mTexUploadBuffer, width, height);
 }
 
 void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
@@ -1121,7 +1227,7 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
     uint32_t width = resultLineSizeBytes * 2;
     uint32_t height = sizeBytes / resultLineSizeBytes;
 
-    mRapi->UploadTexture(mTexUploadBuffer, width, height);
+    MaybeUploadTexture(mTexUploadBuffer, width, height);
 }
 
 void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
@@ -1192,7 +1298,7 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
     uint32_t width = resultLineSizeBytes;
     uint32_t height = sizeBytes / resultLineSizeBytes;
 
-    mRapi->UploadTexture(mTexUploadBuffer, width, height);
+    MaybeUploadTexture(mTexUploadBuffer, width, height);
 }
 
 void Interpreter::ImportTextureImg(int tile, bool importReplacement) {
@@ -1204,7 +1310,7 @@ void Interpreter::ImportTextureImg(int tile, bool importReplacement) {
 
     uint16_t width = metadata->width;
     uint16_t height = metadata->height;
-    mRapi->UploadTexture(addr, width, height);
+    MaybeUploadTexture(addr, width, height);
 }
 
 void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
@@ -1246,7 +1352,7 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
 
     if (resultNewLineSize == 4 * width && resultNewHeight == height) {
         // Can use the texture directly since it has the correct dimensions
-        mRapi->UploadTexture(addr, width, height);
+        MaybeUploadTexture(addr, width, height);
         return;
     }
 
@@ -1279,7 +1385,7 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
         memset(mTexUploadBuffer + resourceImageSizeBytes, 0, numLoadedBytes - resourceImageSizeBytes);
     }
 
-    mRapi->UploadTexture(mTexUploadBuffer, resultNewLineSize / 4, resultNewHeight);
+    MaybeUploadTexture(mTexUploadBuffer, resultNewLineSize / 4, resultNewHeight);
 }
 
 void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
@@ -1455,7 +1561,7 @@ void Interpreter::ImportTextureMask(int i, int tile) {
     }
 #endif
 
-    mRapi->UploadTexture(mTexUploadBuffer, width, height);
+    MaybeUploadTexture(mTexUploadBuffer, width, height);
 }
 
 void Interpreter::NormalizeVector(float v[3]) {
@@ -2369,16 +2475,59 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                     }
                 }
                 if (!skipImport) {
-                    state_change_flush();
-                    if (mProfilingEnabled) {
-                        mFrameStats.flushCauseTexture++;
-                    }
-                    ImportTexture(i, tile, false);
-                    if (mRdp->loaded_texture[i].masked) {
-                        ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
-                    }
-                    if (mRdp->loaded_texture[i].blended) {
-                        ImportTexture(SHADER_FIRST_REPLACEMENT_TEXTURE + i, tile, true);
+#if defined(__SWITCH__)
+                    // Async texture conversion: overlap CPU format conversion with VBO flush.
+                    // Only for simple textures (no mask/blend). The key optimization:
+                    // Start conversion on Core 1 worker → flush VBO on Core 0 → sync → GPU upload.
+                    if (mTexConvertActive.load(std::memory_order_relaxed) &&
+                        !mRdp->loaded_texture[i].masked && !mRdp->loaded_texture[i].blended) {
+                        // Step 1: Cache lookup on main thread (creates GL texture if miss)
+                        uint8_t fmt_i = mRdp->texture_tile[tile].fmt;
+                        uint8_t siz_i = mRdp->texture_tile[tile].siz;
+                        uint32_t tmemIdex_i = mRdp->texture_tile[tile].tmem_index;
+                        uint8_t palIdx_i = mRdp->texture_tile[tile].palette;
+                        uint32_t origSz_i = mRdp->loaded_texture[tmemIdex_i].orig_size_bytes;
+                        const uint8_t* origAddr_i = mRdp->loaded_texture[tmemIdex_i].addr;
+
+                        TextureCacheKey key_i;
+                        if (fmt_i == G_IM_FMT_CI) {
+                            key_i = { origAddr_i, { mRdp->palettes[0], mRdp->palettes[1] }, fmt_i, siz_i, palIdx_i, origSz_i };
+                        } else {
+                            key_i = { origAddr_i, {}, fmt_i, siz_i, palIdx_i, origSz_i };
+                        }
+
+                        if (!TextureCacheLookup(i, key_i)) {
+                            // Cache miss — need format conversion
+                            // Step 2: Start async conversion on worker thread
+                            StartAsyncTexConvert(i, tile, false);
+                            // Step 3: Flush previous batch while worker converts (overlapping!)
+                            state_change_flush();
+                            if (mProfilingEnabled) {
+                                mFrameStats.flushCauseTexture++;
+                            }
+                            // Step 4: Wait for conversion + GPU upload
+                            FinishAsyncTexConvert(i);
+                        } else {
+                            // Cache hit — still need to flush for the state change
+                            state_change_flush();
+                            if (mProfilingEnabled) {
+                                mFrameStats.flushCauseTexture++;
+                            }
+                        }
+                    } else
+#endif
+                    {
+                        state_change_flush();
+                        if (mProfilingEnabled) {
+                            mFrameStats.flushCauseTexture++;
+                        }
+                        ImportTexture(i, tile, false);
+                        if (mRdp->loaded_texture[i].masked) {
+                            ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
+                        }
+                        if (mRdp->loaded_texture[i].blended) {
+                            ImportTexture(SHADER_FIRST_REPLACEMENT_TEXTURE + i, tile, true);
+                        }
                     }
                 }
                 mRdp->textures_changed[i] = false;
@@ -5280,6 +5429,17 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
         // We cap texture max to 8k, because why would you need more?
         int max_tex_size = std::min(8192, mRapi->GetMaxTextureSize());
         mTexUploadBuffer = (uint8_t*)malloc(max_tex_size * max_tex_size * 4);
+#if defined(__SWITCH__)
+        // Allocate second buffer for async texture conversion
+        mTexConvertBuffer = (uint8_t*)malloc(max_tex_size * max_tex_size * 4);
+        // Start worker thread (OS will schedule it on an idle core)
+        if (!mTexConvertActive.load(std::memory_order_relaxed)) {
+            mTexConvertActive.store(true, std::memory_order_release);
+            mTexConvertThread = std::thread([this]() {
+                TexConvertWorkerLoop();
+            });
+        }
+#endif
     }
 
     ucode_handler_index = UcodeHandlers::ucode_f3dex2;
@@ -5288,6 +5448,16 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
 void Interpreter::Destroy() {
     // TODO: should also destroy rapi, and any other resources acquired in fast3d
     free(mTexUploadBuffer);
+#if defined(__SWITCH__)
+    if (mTexConvertActive.load(std::memory_order_relaxed)) {
+        mTexConvertActive.store(false, std::memory_order_release);
+        mTexConvertHasWork.store(true, std::memory_order_release);
+        if (mTexConvertThread.joinable()) {
+            mTexConvertThread.join();
+        }
+    }
+    free(mTexConvertBuffer);
+#endif
     mWapi->Destroy();
 
     // Texture cache and loaded textures store references to Resources which need to be unreferenced.

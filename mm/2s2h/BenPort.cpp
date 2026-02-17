@@ -1076,14 +1076,12 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     }
 
 #if defined(__SWITCH__)
-    // Multi-core pipelining: overlap matrix interpolation for sub-frame N+1
-    // on the worker thread (Core 3) while Core 0 renders DL iteration N.
-    // This utilizes an otherwise-idle core during rendering, saving ~0.3ms
-    // per overlap (typically 2 overlaps for 3 sub-frames).
+    // B1: Render thread — moves GL context + DL interpretation to Core 1.
+    // Core 0 handles: game logic, interpolation, event handling, profiler.
+    // Core 1 handles: GL context, DL interpretation, ImGui, buffer swap.
     //
-    // For this to work, we interleave interpolation and rendering instead
-    // of computing all interpolations first. The recording data is read-only
-    // during the rendering phase, so concurrent reads are safe.
+    // Multi-core pipelining: overlap matrix interpolation for sub-frame N+1
+    // on the worker thread (Core 3) while Core 1 renders DL iteration N.
     {
         struct AsyncInterpJob {
             float fraction;
@@ -1107,6 +1105,11 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 sub_frames.push_back({t, frac, identity});
             }
             time = t;
+        }
+
+        // Initialize render thread lazily on first frame
+        if (!wnd->IsRenderThreadActive()) {
+            wnd->InitRenderThread();
         }
 
         // If multiple sub-frames and not debugging: pipeline interp with rendering
@@ -1138,16 +1141,14 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                     TaskWorker_Submit(asyncInterpTask, &nextJob);
                 }
 
-                // Render current sub-frame on Core 0
-                // (while Core 3 computes next interpolation)
+                // Submit render work to Core 1 render thread
+                // (while Core 3 computes next interpolation concurrently)
                 FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
                 FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
-                // Track replay diagnostics only when profiler is active to avoid
-                // branch/store overhead in the normal rendering hot path.
-                bool usedReplayThisIter = false;
-                bool fallbackThisIter = false;
 
-                wnd->DrawAndRunGraphicsCommands(commands, current_m);
+                wnd->SubmitRenderWork(commands, current_m);
+                // Wait for render thread to finish this sub-frame's GL work
+                wnd->WaitForRenderDone();
 
                 if (profilerEnabled) {
                     const auto& stats = wnd->GetFrameStats();
@@ -1212,7 +1213,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             last_fps = fps;
             last_update_rate = R_UPDATE_RATE;
         } else {
-            // Single sub-frame or debug mode: standard path
+            // Single sub-frame or debug mode: use render thread too
             FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
             for (const auto& sf : sub_frames) {
                 if (!sf.isIdentity) {
@@ -1229,9 +1230,63 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 mtx_replacements.clear();
                 mtx_replacements.emplace_back();
             }
+
+            wnd->HandleEvents();
+            const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
+            wnd->SetProfilingEnabled(profilerEnabled);
+            auto intp = wnd->GetInterpreterWeak().lock().get();
+            if (intp) { intp->mInterpolationIndex = 0; }
+
             FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
             FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
-            RunCommands(commands, mtx_replacements);
+            for (const auto& m : mtx_replacements) {
+                wnd->SubmitRenderWork(commands, m);
+                wnd->WaitForRenderDone();
+
+                if (profilerEnabled) {
+                    const auto& stats = wnd->GetFrameStats();
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, (float)stats.drawCalls);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BATCH_FLUSHES, (float)stats.batchFlushes);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BUFFER_FULL_FLUSHES, (float)stats.bufferFullFlushes);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_STATE_FLUSHES, (float)stats.stateChangeFlushes);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_SWITCHES, (float)stats.shaderSwitches);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_COMPILATIONS, (float)stats.shaderCompilations);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_BINDS, (float)stats.textureBinds);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_CACHE_MISSES, (float)stats.textureCacheMisses);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_VERTICES_SUBMITTED, (float)stats.verticesSubmitted);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED, (float)stats.trianglesSubmitted);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TOTAL_MS, (float)stats.timeTotal / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DISPATCH_MS, (float)stats.timeGbiDispatch / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TRI_MS, (float)stats.timeTriProcessing / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEX_MS, (float)stats.timeTextureSetup / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)stats.timeShaderSetup / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DRAW_MS, (float)stats.timeDrawSubmit / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VBO_UPLOAD_MS, (float)stats.timeVboUpload / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_GL_DRAW_MS, (float)stats.timeGlDraw / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VTX_MS, (float)stats.timeVertexLoad / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_MTX_MS, (float)stats.timeMatrixOps / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DEPTH_MS, (float)stats.timePixelDepth / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SETUP_MS, (float)stats.timeFrameSetup / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)stats.pixelDepthQueries);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE, (float)stats.flushCauseTexture);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER, (float)stats.flushCauseSampler);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER, (float)stats.flushCauseShader);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_ALPHA, (float)stats.flushCauseAlpha);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_DEPTH_VIEWPORT, (float)stats.flushCauseDepthViewport);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER, (float)stats.flushCauseCombiner);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS, (float)stats.textureReloadSkips);
+                    for (int b = 0; b < Fast::Fast3DStats::BATCH_HISTOGRAM_BUCKETS; b++) {
+                        FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)stats.batchHistogram[b]);
+                    }
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
+                }
+
+                if (intp) { intp->mInterpolationIndex++; }
+                if (profilerEnabled) {
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
+                }
+            }
             FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
             FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
             last_fps = fps;

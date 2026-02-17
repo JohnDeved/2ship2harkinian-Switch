@@ -779,5 +779,17 @@ void GfxWindowBackendSDL2::Destroy() {
 bool GfxWindowBackendSDL2::IsFullscreen() {
     return mFullScreen;
 }
+
+void GfxWindowBackendSDL2::MakeContextCurrent() {
+    if (mWnd && mCtx) {
+        SDL_GL_MakeCurrent(mWnd, mCtx);
+    }
+}
+
+void GfxWindowBackendSDL2::ReleaseContext() {
+    if (mWnd) {
+        SDL_GL_MakeCurrent(mWnd, nullptr);
+    }
+}
 } // namespace Fast
 #endif

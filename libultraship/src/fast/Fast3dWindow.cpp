@@ -49,6 +49,9 @@ Fast3dWindow::Fast3dWindow() : Fast3dWindow(std::vector<std::shared_ptr<Ship::Gu
 
 Fast3dWindow::~Fast3dWindow() {
     SPDLOG_DEBUG("destruct fast3dwindow");
+#ifdef __SWITCH__
+    DestroyRenderThread();
+#endif
     mInterpreter->Destroy();
     delete mRenderingApi;
     delete mWindowManagerApi;
@@ -396,5 +399,124 @@ void Fast3dWindow::OnFullscreenChanged(bool isNowFullscreen) {
 std::weak_ptr<Interpreter> Fast3dWindow::GetInterpreterWeak() const {
     return mInterpreter;
 }
+
+#ifdef __SWITCH__
+#include <switch.h>
+
+void Fast3dWindow::RenderThreadLoop() {
+    // Pin render thread to Core 1
+    Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, 1, (1U << 1));
+    if (R_FAILED(rc)) {
+        // Fallback: allow any core except 0
+        static const u64 NON_CORE0_MASK = (1U << 1) | (1U << 2) | (1U << 3);
+        svcSetThreadCoreMask(CUR_THREAD_HANDLE, -1, NON_CORE0_MASK);
+    }
+
+    // Acquire GL context on this thread
+    mWindowManagerApi->MakeContextCurrent();
+
+    std::unique_lock<std::mutex> lock(mRenderMutex);
+    while (mRenderThreadRunning) {
+        // Wait for work
+        while (!mRenderHasWork && mRenderThreadRunning) {
+            mRenderCV.wait(lock);
+        }
+        if (!mRenderThreadRunning) {
+            break;
+        }
+
+        // Capture work parameters
+        Gfx* commands = mRenderCommands;
+        const std::unordered_map<Mtx*, MtxF>* mtxReplacements = mRenderMtxReplacements;
+        lock.unlock();
+
+        // Execute the full render pipeline on Core 1 (with GL context)
+        std::shared_ptr<Ship::Window> wnd = Ship::Context::GetInstance()->GetWindow();
+        auto gui = wnd->GetGui();
+
+        gui->StartDraw();
+        mInterpreter->StartFrame();
+        mInterpreter->Run(commands, *mtxReplacements);
+        gui->EndDraw();
+        mInterpreter->EndFrame();
+
+        lock.lock();
+        mRenderHasWork = false;
+        mRenderWorkDone = true;
+        mRenderDoneCV.notify_one();
+    }
+
+    // Release GL context before thread exits
+    mWindowManagerApi->ReleaseContext();
+}
+
+void Fast3dWindow::InitRenderThread() {
+    if (mRenderThreadRunning) {
+        return;
+    }
+
+    // Release GL context from main thread so the render thread can acquire it
+    mWindowManagerApi->ReleaseContext();
+
+    {
+        std::unique_lock<std::mutex> lock(mRenderMutex);
+        mRenderThreadRunning = true;
+        mRenderHasWork = false;
+        mRenderWorkDone = true;
+    }
+    mRenderThread = std::thread(&Fast3dWindow::RenderThreadLoop, this);
+}
+
+void Fast3dWindow::DestroyRenderThread() {
+    if (!mRenderThreadRunning) {
+        return;
+    }
+    {
+        std::unique_lock<std::mutex> lock(mRenderMutex);
+        mRenderThreadRunning = false;
+    }
+    mRenderCV.notify_all();
+    if (mRenderThread.joinable()) {
+        mRenderThread.join();
+    }
+
+    // Re-acquire GL context on main thread
+    mWindowManagerApi->MakeContextCurrent();
+}
+
+bool Fast3dWindow::SubmitRenderWork(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtxReplacements) {
+    if (!mRenderThreadRunning) {
+        // Fallback: run inline if render thread not active
+        return DrawAndRunGraphicsCommands(commands, mtxReplacements);
+    }
+
+    // Skip dropped frames
+    std::shared_ptr<Ship::Window> wnd = Ship::Context::GetInstance()->GetWindow();
+    if (!wnd->IsFrameReady()) {
+        return false;
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(mRenderMutex);
+        // Wait for any previous work to complete
+        while (!mRenderWorkDone) {
+            mRenderDoneCV.wait(lock);
+        }
+        mRenderCommands = commands;
+        mRenderMtxReplacements = &mtxReplacements;
+        mRenderHasWork = true;
+        mRenderWorkDone = false;
+    }
+    mRenderCV.notify_one();
+    return true;
+}
+
+void Fast3dWindow::WaitForRenderDone() {
+    std::unique_lock<std::mutex> lock(mRenderMutex);
+    while (!mRenderWorkDone) {
+        mRenderDoneCV.wait(lock);
+    }
+}
+#endif
 
 } // namespace Fast

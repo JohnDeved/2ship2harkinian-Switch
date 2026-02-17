@@ -353,6 +353,35 @@ struct SnapshotBaseline {
 };
 static SnapshotBaseline sPrevSnapshot;
 
+static std::string FrameProfiler_GetBaselinePath(void) {
+    return Ship::Context::GetPathRelativeToAppDirectory("profiler_baseline.txt");
+}
+
+static void FrameProfiler_SaveBaseline(const SnapshotBaseline& b) {
+    std::ofstream f(FrameProfiler_GetBaselinePath());
+    if (!f.is_open()) return;
+    f << b.commitShort << "\n"
+      << b.renderFrameMs << "\n" << b.fps << "\n" << b.dlProcessMs << "\n"
+      << b.glTimeTri << "\n" << b.glTimeDraw << "\n" << b.glTimeVtx << "\n"
+      << b.glTimeTex << "\n" << b.glDrawCalls << "\n" << b.glAvgBatch << "\n"
+      << b.glTris << "\n" << b.emptyFlushPct << "\n";
+}
+
+static void FrameProfiler_LoadBaseline(void) {
+    std::ifstream f(FrameProfiler_GetBaselinePath());
+    if (!f.is_open()) return;
+    std::string commit;
+    if (!std::getline(f, commit) || commit.empty()) return;
+    SnapshotBaseline b;
+    if (!(f >> b.renderFrameMs >> b.fps >> b.dlProcessMs
+            >> b.glTimeTri >> b.glTimeDraw >> b.glTimeVtx >> b.glTimeTex
+            >> b.glDrawCalls >> b.glAvgBatch >> b.glTris >> b.emptyFlushPct))
+        return;
+    b.valid = true;
+    b.commitShort = commit;
+    sPrevSnapshot = b;
+}
+
 static void FrameProfiler_ExportSnapshot(void) {
     // Build timestamped filename
     time_t now = std::time(nullptr);
@@ -927,6 +956,7 @@ static void FrameProfiler_ExportSnapshot(void) {
     sPrevSnapshot.glAvgBatch = glAvgBatch;
     sPrevSnapshot.glTris = glTris;
     sPrevSnapshot.emptyFlushPct = emptyPct;
+    FrameProfiler_SaveBaseline(sPrevSnapshot);
 
     sLastExportPath = filepath;
     sExportMsgTimer = 5.0f;
@@ -935,6 +965,7 @@ static void FrameProfiler_ExportSnapshot(void) {
 // ── ImGui Window ───────────────────────────────────────────────────────
 
 void FrameProfilerWindow::InitElement() {
+    FrameProfiler_LoadBaseline();
 }
 
 void FrameProfilerWindow::UpdateElement() {

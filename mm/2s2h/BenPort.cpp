@@ -1006,7 +1006,7 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS, (float)stats.textureReloadSkips);
 
             // Batch size histogram
-            for (int b = 0; b < Fast3DStats::BATCH_HISTOGRAM_BUCKETS; b++) {
+            for (int b = 0; b < Fast::Fast3DStats::BATCH_HISTOGRAM_BUCKETS; b++) {
                 FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)stats.batchHistogram[b]);
             }
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);

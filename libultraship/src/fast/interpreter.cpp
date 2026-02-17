@@ -187,13 +187,19 @@ void Interpreter::TexConvertWorkerLoop() {
 }
 
 void Interpreter::StartAsyncTexConvert(int i, int tile, bool importReplacement) {
+    // Set up deferred upload mode BEFORE kicking the worker.
+    // The worker writes to mTexConvertBuffer and defers the GL upload.
+    // Main thread does state_change_flush() during this time — safe because
+    // Flush() only accesses mBufVbo (VBO data), not mTexUploadBuffer.
+    mDeferTextureUpload = true;
+
     // Capture the conversion as a lambda (runs on worker thread)
-    // All mRdp state is read-only during flush, so concurrent access is safe
-    mTexConvertJob = [this, i, tile, importReplacement]() {
-        // Worker writes to mTexConvertBuffer instead of mTexUploadBuffer
+    mTexConvertJob = [this, tile, importReplacement]() {
+        // Worker writes to mTexConvertBuffer by temporarily swapping the buffer pointer.
+        // This is safe because the main thread is in state_change_flush() which only
+        // accesses GL state (glBufferSubData/glDrawArrays), not mTexUploadBuffer.
         uint8_t* savedBuf = mTexUploadBuffer;
         mTexUploadBuffer = mTexConvertBuffer;
-        mDeferTextureUpload = true;
 
         uint8_t fmt = mRdp->texture_tile[tile].fmt;
         uint8_t siz = mRdp->texture_tile[tile].siz;
@@ -227,9 +233,7 @@ void Interpreter::StartAsyncTexConvert(int i, int tile, bool importReplacement) 
             }
         }
 
-        // Restore (worker done)
         mTexUploadBuffer = savedBuf;
-        mDeferTextureUpload = false;
     };
 
     // Kick off the worker thread
@@ -242,6 +246,7 @@ void Interpreter::FinishAsyncTexConvert(int i) {
     while (!mTexConvertDone.load(std::memory_order_acquire)) {
         std::this_thread::yield();
     }
+    mDeferTextureUpload = false;
     // GPU upload on main thread using the buffer the worker wrote to
     mRapi->UploadTexture(mDeferredUploadBuf, mDeferredUploadWidth, mDeferredUploadHeight);
 }
@@ -2484,10 +2489,10 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                         // Step 1: Cache lookup on main thread (creates GL texture if miss)
                         uint8_t fmt_i = mRdp->texture_tile[tile].fmt;
                         uint8_t siz_i = mRdp->texture_tile[tile].siz;
-                        uint32_t tmemIdex_i = mRdp->texture_tile[tile].tmem_index;
+                        uint32_t tmemIndex_i = mRdp->texture_tile[tile].tmem_index;
                         uint8_t palIdx_i = mRdp->texture_tile[tile].palette;
-                        uint32_t origSz_i = mRdp->loaded_texture[tmemIdex_i].orig_size_bytes;
-                        const uint8_t* origAddr_i = mRdp->loaded_texture[tmemIdex_i].addr;
+                        uint32_t origSz_i = mRdp->loaded_texture[tmemIndex_i].orig_size_bytes;
+                        const uint8_t* origAddr_i = mRdp->loaded_texture[tmemIndex_i].addr;
 
                         TextureCacheKey key_i;
                         if (fmt_i == G_IM_FMT_CI) {

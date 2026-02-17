@@ -1788,7 +1788,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         if (mProfilingEnabled) {
             mFrameStats.stateChangeFlushes++;
         }
-        Flush();
+        if (mBufVboLen > 0) {
+            Flush();
+        }
     };
 
     struct LoadedVertex* v1 = &mRsp->loaded_vertices[vtx1_idx];

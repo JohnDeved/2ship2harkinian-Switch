@@ -7,6 +7,7 @@
 #include <atomic>
 #include <fstream>
 #include <ctime>
+#include <cmath>
 #include <libultraship/libultraship.h>
 
 extern "C" {
@@ -512,6 +513,78 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "Unaccounted: " << unaccountedMs << " ms (" << unaccountedPct << "%)" << std::endl;
     out << std::endl;
 
+    // Flush efficiency analysis
+    out << "--- Flush Efficiency ---" << std::endl;
+    float emptyFlushes = glBatchFlushes - glDrawCalls;
+    float bufferFullFlushes = glBatchFlushes - glStateFlushes;
+    float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
+    float effectiveBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
+    out << "Total Flushes: " << glBatchFlushes << std::endl;
+    out << "  State-change driven: " << glStateFlushes << std::endl;
+    out << "  Buffer-full: " << bufferFullFlushes << std::endl;
+    out << "  Empty (no geometry): " << emptyFlushes << " (" << emptyPct << "%)" << std::endl;
+    out << "Actual Draw Calls: " << glDrawCalls << std::endl;
+    out << "Effective Batch Size: " << effectiveBatch << " tris/draw" << std::endl;
+#ifdef __SWITCH__
+    out << "MAX_TRI_BUFFER: 1024  Buffer Utilization: " << (effectiveBatch / 1024.0f * 100.0f) << "%" << std::endl;
+#else
+    out << "MAX_TRI_BUFFER: 256  Buffer Utilization: " << (effectiveBatch / 256.0f * 100.0f) << "%" << std::endl;
+#endif
+    if (glDrawCalls > 0.5f) {
+        out << "State changes per draw: " << (glStateFlushes / glDrawCalls) << std::endl;
+    }
+    out << std::endl;
+
+    // Frame stability analysis from ring buffer
+    out << "--- Frame Stability ---" << std::endl;
+    {
+        float minFrame = 1e9f, maxFrame = 0.0f;
+        float sum = 0.0f, sumSq = 0.0f;
+        int validFrames = 0;
+        for (int f = 0; f < PROFILE_RING_SIZE; f++) {
+            float val = sPhaseRing[PROFILE_PHASE_TOTAL_FRAME][f];
+            if (val > 0.01f) {
+                if (val < minFrame) minFrame = val;
+                if (val > maxFrame) maxFrame = val;
+                sum += val;
+                sumSq += val * val;
+                validFrames++;
+            }
+        }
+        if (validFrames > 1) {
+            float mean = sum / validFrames;
+            float variance = (sumSq / validFrames) - (mean * mean);
+            float stddev = (variance > 0.0f) ? sqrtf(variance) : 0.0f;
+            out << "Frames sampled: " << validFrames << std::endl;
+            out << "Min: " << minFrame << " ms  Max: " << maxFrame << " ms  Range: " << (maxFrame - minFrame) << " ms" << std::endl;
+            out << "Mean: " << mean << " ms  StdDev: " << stddev << " ms  CoV: " << (mean > 0.01f ? stddev / mean * 100.0f : 0.0f) << "%" << std::endl;
+            // Count frames with spikes (>2 stddev from mean)
+            int spikes = 0;
+            float spikeThreshold = mean + 2.0f * stddev;
+            for (int f = 0; f < PROFILE_RING_SIZE; f++) {
+                float val = sPhaseRing[PROFILE_PHASE_TOTAL_FRAME][f];
+                if (val > spikeThreshold) spikes++;
+            }
+            if (spikes > 0) {
+                out << "Spikes (>2σ): " << spikes << "/" << validFrames << " frames above " << spikeThreshold << " ms" << std::endl;
+            }
+            // DL Process stability
+            float dlMin = 1e9f, dlMax = 0.0f, dlSum = 0.0f;
+            for (int f = 0; f < PROFILE_RING_SIZE; f++) {
+                float val = sPhaseRing[PROFILE_PHASE_DL_PROCESS][f];
+                if (val > 0.01f) {
+                    if (val < dlMin) dlMin = val;
+                    if (val > dlMax) dlMax = val;
+                    dlSum += val;
+                }
+            }
+            if (validFrames > 0) {
+                out << "DL Process: min=" << dlMin << " max=" << dlMax << " range=" << (dlMax - dlMin) << " ms" << std::endl;
+            }
+        }
+    }
+    out << std::endl;
+
     float core0Ms =
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
@@ -529,7 +602,7 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "Utilization Ratio: " << (imbalance * 100.0f) << "%" << std::endl;
     out << std::endl;
 
-    // Automated analysis
+    // Automated analysis with ranked sub-phases and specific recommendations
     out << "--- Analysis ---" << std::endl;
     if (worstPhase >= 0 && totalMs > 0.01f) {
         float worstPct = worstMs / totalMs * 100.0f;
@@ -538,25 +611,60 @@ static void FrameProfiler_ExportSnapshot(void) {
         if (worstPhase == PROFILE_PHASE_DL_PROCESS) {
             out << "The display list interpreter (libultraship Fast3D) dominates frame time." << std::endl;
             out << "This is CPU-bound N64 DL-to-GL translation running single-threaded on Core 0." << std::endl;
-            out << "Game logic optimizations (BgCheck, actors, etc.) will have minimal impact." << std::endl;
-            out << "Priority: (1) Optimize Fast3D interpreter, (2) Render thread offload, (3) Reduce DL complexity."
-                << std::endl;
-            // Identify top GL sub-phase
-            struct { const char* name; float ms; } glPhases[] = {
-                {"tri (VBO fill)", glTimeTri}, {"draw (GL submit)", glTimeDraw},
-                {"vtx (vertex transform)", glTimeVtx}, {"tex (texture setup)", glTimeTex},
-                {"mtx (matrix ops)", glTimeMtx}, {"dispatch (cmd walk)", glTimeDispatch},
-                {"depth (pixel readback)", glTimeDepth}, {"setup (frame init)", glTimeSetup},
-                {"shader (compile/switch)", glTimeShader}
+            out << std::endl;
+
+            // Ranked GL sub-phases (top 3)
+            struct GlPhaseInfo { const char* name; float ms; const char* hint; };
+            GlPhaseInfo glPhases[] = {
+                {"tri (VBO fill)", glTimeTri, "Pre-compute combiner inputs, NEON vectorize inner loop, reduce per-vertex work"},
+                {"draw (GL submit)", glTimeDraw, "Reduce draw calls by batching, minimize state-change flushes, lazy state"},
+                {"vtx (vertex transform)", glTimeVtx, "NEON-optimize matrix*vertex, reduce lighting calculations"},
+                {"tex (texture setup)", glTimeTex, "NEON texture conversion, increase texture cache hit rate"},
+                {"mtx (matrix ops)", glTimeMtx, "NEON 4x4 matrix multiply, reduce matrix stack depth"},
+                {"dispatch (cmd walk)", glTimeDispatch, "Reduce GBI command count, optimize opcode dispatch table"},
+                {"depth (pixel readback)", glTimeDepth, "Quantize coordinates, cache readback results"},
+                {"setup (frame init)", glTimeSetup, "Minimize per-frame initialization overhead"},
+                {"shader (compile/switch)", glTimeShader, "Pre-compile shaders, cache shader programs"}
             };
-            float topMs = 0;
-            const char* topName = "";
-            for (auto& p : glPhases) {
-                if (p.ms > topMs) { topMs = p.ms; topName = p.name; }
+            // Sort by time (simple selection sort, small array)
+            int numPhases = sizeof(glPhases) / sizeof(glPhases[0]);
+            for (int i = 0; i < numPhases - 1; i++) {
+                for (int j = i + 1; j < numPhases; j++) {
+                    if (glPhases[j].ms > glPhases[i].ms) {
+                        GlPhaseInfo tmp = glPhases[i];
+                        glPhases[i] = glPhases[j];
+                        glPhases[j] = tmp;
+                    }
+                }
             }
-            if (topMs > 0.01f) {
-                out << "Top GL sub-phase: " << topName << " (" << topMs << " ms, "
-                    << (glTimeTotal > 0.01f ? topMs / glTimeTotal * 100.0f : 0.0f) << "% of DL)" << std::endl;
+            out << std::endl;
+            out << "GL Sub-Phase Ranking (by time):" << std::endl;
+            for (int i = 0; i < 3 && i < numPhases; i++) {
+                if (glPhases[i].ms < 0.01f) break;
+                float pct = (glTimeTotal > 0.01f) ? (glPhases[i].ms / glTimeTotal * 100.0f) : 0.0f;
+                out << "  #" << (i + 1) << " " << glPhases[i].name << ": " << glPhases[i].ms << " ms (" << pct << "% of DL)" << std::endl;
+                out << "     → " << glPhases[i].hint << std::endl;
+            }
+
+            // Specific recommendations based on data thresholds
+            out << std::endl;
+            out << "Specific Recommendations:" << std::endl;
+            if (emptyPct > 30.0f) {
+                out << "  ⚠ " << emptyPct << "% of flushes are empty (no geometry). Consider lazy state application" << std::endl;
+                out << "    to defer GL state changes until geometry is actually submitted." << std::endl;
+            }
+            if (effectiveBatch < 20.0f && glDrawCalls > 100.0f) {
+                out << "  ⚠ Low batch size (" << effectiveBatch << " tris/draw). State changes fragment batches." << std::endl;
+                out << "    " << glStateFlushes << " state flushes across " << glDrawCalls << " draws = " << (glStateFlushes / glDrawCalls) << " state changes/draw." << std::endl;
+            }
+            if (imbalance < 0.1f && core0Ms > 30.0f) {
+                out << "  ⚠ Core imbalance: Core 0 = " << core0Ms << " ms, Core 1 = " << core1Ms << " ms (" << (imbalance * 100.0f) << "%)." << std::endl;
+                out << "    Move DL processing or frame interp to a worker thread for ~2x throughput." << std::endl;
+            }
+            if (glTimeDraw > 10.0f && glDrawCalls > 500.0f) {
+                float costPerDraw = glTimeDraw * 1000.0f / glDrawCalls;
+                out << "  ⚠ High GL draw overhead: " << glDrawCalls << " calls × " << costPerDraw << " μs/call = " << glTimeDraw << " ms." << std::endl;
+                out << "    Reducing draw calls by 50% would save ~" << (glTimeDraw * 0.5f) << " ms/frame." << std::endl;
             }
         } else if (worstPhase == PROFILE_PHASE_ACTOR_UPDATE) {
             out << "Actor updates dominate. Parallelize BgCheck queries across worker threads." << std::endl;

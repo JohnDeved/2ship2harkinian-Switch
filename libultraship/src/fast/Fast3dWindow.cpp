@@ -421,6 +421,7 @@ void Fast3dWindow::RenderThreadLoop() {
 
     // Cache the Gui pointer once — it doesn't change during the render thread's lifetime.
     // This avoids shared_ptr refcount ops (atomic inc/dec) per sub-frame.
+    // Gui is guaranteed non-null here: it's created in Window::Init() before any rendering.
     auto gui = Ship::Context::GetInstance()->GetWindow()->GetGui();
 
     std::unique_lock<std::mutex> lock(mRenderMutex);

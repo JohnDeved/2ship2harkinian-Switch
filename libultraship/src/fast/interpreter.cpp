@@ -5562,7 +5562,7 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             }
 #endif
 
-            if ((int8_t)opcode == F3DEX2_G_LOAD_UCODE) {
+            if (opcode == static_cast<uint8_t>(F3DEX2_G_LOAD_UCODE)) {
                 gfx_load_ucode_handler_f3dex2(&stepCmd);
             } else {
                 GfxOpcodeHandlerFunc handler = sUnifiedHandlers[opcode];

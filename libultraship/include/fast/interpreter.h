@@ -382,6 +382,15 @@ struct Fast3DStats {
     uint32_t bufferFullFlushes;
     uint32_t pixelDepthQueries;
 
+    // Flush cause breakdown: which state changes triggered batch flushes
+    uint32_t flushCauseTexture;      // texture changed (required new bind)
+    uint32_t flushCauseSampler;      // sampler params changed (filter/clamp)
+    uint32_t flushCauseShader;       // shader program changed
+    uint32_t flushCauseAlpha;        // alpha blend state changed
+    uint32_t flushCauseDepthViewport; // depth/decal/viewport/scissor changed
+    uint32_t flushCauseCombiner;     // new color combiner created
+    uint32_t textureReloadSkips;     // redundant texture loads skipped (same texture already bound)
+
     uint64_t timeTotal;
     uint64_t timeGbiDispatch; // computed: timeTotal minus all other accounted sub-timings
     uint64_t timeTriProcessing;
@@ -392,6 +401,8 @@ struct Fast3DStats {
     uint64_t timeMatrixOps;    // matrix multiply, push/pop, normal dir calculations
     uint64_t timePixelDepth;   // pixel depth prepare + readback
     uint64_t timeFrameSetup;   // Run() setup/teardown, framebuffer ops, clear, MSAA resolve
+    uint64_t timeTriStateCheck; // inside tri: state check + flush overhead
+    uint64_t timeTriVboFill;    // inside tri: VBO fill (vertex loop writing floats)
 
     float avgBatchSize;
     float usPerTriangle;

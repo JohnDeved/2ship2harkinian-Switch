@@ -305,6 +305,8 @@ static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
     "GL Tex Cache Miss",  "GL Vert Submitted", "GL Tri Submitted",   "GL Time Total ms", "GL Time Dispatch ms",
     "GL Time Tri ms",     "GL Time Tex ms",    "GL Time Shader ms",  "GL Time Draw ms",  "GL Time Vtx ms",
     "GL Time Mtx ms",     "GL Time Depth ms",  "GL Time Setup ms",   "GL Depth Queries", "GL Avg Batch Size",
+    "Flush:Texture",      "Flush:Sampler",     "Flush:Shader",       "Flush:Alpha",      "Flush:Depth/VP",
+    "Flush:Combiner",     "Tex Reload Skips",  "Tri State Check ms", "Tri VBO Fill ms",
 };
 
 // ── Helper functions ───────────────────────────────────────────────────
@@ -597,6 +599,42 @@ static void FrameProfiler_ExportSnapshot(void) {
     if (glDrawCalls > 0.5f) {
         out << "State changes per draw:         " << std::fixed << std::setprecision(2) << (stateActualFlushes / glDrawCalls) << std::endl;
     }
+    out << std::endl;
+
+    // Flush cause breakdown
+    float flushTexture = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE);
+    float flushSampler = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER);
+    float flushShader = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER);
+    float flushAlpha = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_ALPHA);
+    float flushDepthVp = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_DEPTH_VIEWPORT);
+    float flushCombiner = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER);
+    float texReloadSkips = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS);
+    out << "--- Flush Cause Breakdown ---" << std::endl;
+    out << "Shader switch:                  " << std::fixed << std::setprecision(0) << flushShader << std::endl;
+    out << "Texture change:                 " << std::fixed << std::setprecision(0) << flushTexture << std::endl;
+    out << "Sampler params:                 " << std::fixed << std::setprecision(0) << flushSampler << std::endl;
+    out << "Alpha blend:                    " << std::fixed << std::setprecision(0) << flushAlpha << std::endl;
+    out << "Depth/VP/Scissor:               " << std::fixed << std::setprecision(0) << flushDepthVp << std::endl;
+    out << "New combiner:                   " << std::fixed << std::setprecision(0) << flushCombiner << std::endl;
+    out << "Tex reload skips (saved):       " << std::fixed << std::setprecision(0) << texReloadSkips << std::endl;
+    out << std::endl;
+
+    // Triangle processing sub-breakdown
+    float triStateMs = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TRI_STATE_MS);
+    float triVboMs = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TRI_VBO_MS);
+    float triOtherMs = glTimeTri - triStateMs - triVboMs;
+    if (triOtherMs < 0.0f) triOtherMs = 0.0f;
+    out << "--- Triangle Processing Breakdown ---" << std::endl;
+    out << "Total Triangle Processing:      " << std::fixed << std::setprecision(2) << glTimeTri << " ms" << std::endl;
+    out << "  State Check + Flush:          " << std::fixed << std::setprecision(2) << triStateMs << " ms";
+    if (glTimeTri > 0.01f) out << " (" << std::setprecision(1) << (triStateMs / glTimeTri * 100.0f) << "%)";
+    out << std::endl;
+    out << "  VBO Fill (3 verts/tri):       " << std::fixed << std::setprecision(2) << triVboMs << " ms";
+    if (glTimeTri > 0.01f) out << " (" << std::setprecision(1) << (triVboMs / glTimeTri * 100.0f) << "%)";
+    out << std::endl;
+    out << "  Cull + Clip + Other:          " << std::fixed << std::setprecision(2) << triOtherMs << " ms";
+    if (glTimeTri > 0.01f) out << " (" << std::setprecision(1) << (triOtherMs / glTimeTri * 100.0f) << "%)";
+    out << std::endl;
     out << std::endl;
 
     // Frame stability analysis from ring buffer
@@ -939,6 +977,35 @@ void FrameProfilerWindow::DrawElement() {
         ImGui::Text("Pixel Depth Queries: %.0f", glDepthQueries);
     }
 
+    // Flush cause breakdown (collapsible)
+    float flushTexture = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE);
+    float flushSampler = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER);
+    float flushShader = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER);
+    float flushAlpha = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_ALPHA);
+    float flushDepthVp = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_DEPTH_VIEWPORT);
+    float flushCombiner = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER);
+    float texReloadSkips = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS);
+    if (ImGui::TreeNode("Flush Cause Breakdown")) {
+        float totalFlushCauses = flushTexture + flushSampler + flushShader + flushAlpha + flushDepthVp + flushCombiner;
+        auto flushBar = [&](const char* label, float count, ImVec4 color) {
+            if (count < 0.5f) return;
+            float pct = (totalFlushCauses > 0.5f) ? (count / totalFlushCauses * 100.0f) : 0.0f;
+            ImGui::TextColored(color, "  %-18s %5.0f (%4.1f%%)", label, count, pct);
+            ImGui::SameLine();
+            ImGui::ProgressBar(count / (totalFlushCauses > 0.5f ? totalFlushCauses : 1.0f), ImVec2(120, 0), "");
+        };
+        flushBar("Shader switch", flushShader, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        flushBar("Texture change", flushTexture, ImVec4(1.0f, 0.7f, 0.3f, 1.0f));
+        flushBar("Sampler params", flushSampler, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
+        flushBar("Alpha blend", flushAlpha, ImVec4(0.4f, 1.0f, 0.6f, 1.0f));
+        flushBar("Depth/VP/Scissor", flushDepthVp, ImVec4(0.8f, 0.6f, 1.0f, 1.0f));
+        flushBar("New combiner", flushCombiner, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        if (texReloadSkips > 0.5f) {
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "  Tex reload skips:  %.0f (saved flushes)", texReloadSkips);
+        }
+        ImGui::TreePop();
+    }
+
     // Detailed timing breakdown with visual bar chart
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "--- Fast3D Timing Breakdown (%.2f ms total) ---", glTimeTotal);
     float timingBarMax = glTimeTotal > 0.01f ? glTimeTotal : 1.0f;
@@ -963,6 +1030,25 @@ void FrameProfilerWindow::DrawElement() {
         ImGui::TextColored(t.color, "  %-22s %6.2f ms (%4.1f%%)", t.name, t.ms, pct);
         ImGui::SameLine();
         ImGui::ProgressBar(frac, ImVec2(150, 0), "");
+    }
+
+    // Triangle processing sub-breakdown
+    float triStateMs = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TRI_STATE_MS);
+    float triVboMs = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TRI_VBO_MS);
+    float triOtherMs = glTimeTri - triStateMs - triVboMs;
+    if (triOtherMs < 0.0f) triOtherMs = 0.0f;
+    if (glTimeTri > 0.1f && ImGui::TreeNode("Triangle Processing Breakdown")) {
+        float triMax = glTimeTri;
+        auto triBar = [&](const char* label, float ms, ImVec4 color) {
+            float pct = (glTimeTri > 0.01f) ? (ms / glTimeTri * 100.0f) : 0.0f;
+            ImGui::TextColored(color, "    %-20s %6.2f ms (%4.1f%%)", label, ms, pct);
+            ImGui::SameLine();
+            ImGui::ProgressBar(ms / triMax, ImVec2(120, 0), "");
+        };
+        triBar("State Check+Flush", triStateMs, ImVec4(1.0f, 0.5f, 0.5f, 1.0f));
+        triBar("VBO Fill (3 verts)", triVboMs, ImVec4(0.5f, 0.8f, 1.0f, 1.0f));
+        triBar("Cull+Clip+Other", triOtherMs, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+        ImGui::TreePop();
     }
 
     // Cost-per-unit estimates
@@ -1067,6 +1153,74 @@ void FrameProfilerWindow::DrawElement() {
             ImGui::TextWrapped("Frame interpolation is the bottleneck. Consider parallel segment "
                                "processing across worker threads (Phase 5 in optimization plan).");
         }
+    }
+
+    ImGui::Separator();
+
+    // Frame history graph — shows last 60 frames as a line plot
+    if (ImGui::TreeNode("Frame History (last 60 frames)")) {
+        int ringIdx = sRingIndex.load(std::memory_order_relaxed);
+        
+        // Total frame time graph
+        {
+            float frameHistory[PROFILE_RING_SIZE];
+            float histMin = 1e9f, histMax = 0.0f;
+            for (int f = 0; f < PROFILE_RING_SIZE; f++) {
+                int idx = (ringIdx + 1 + f) % PROFILE_RING_SIZE;
+                frameHistory[f] = sPhaseRing[PROFILE_PHASE_TOTAL_FRAME][idx];
+                if (frameHistory[f] > 0.01f) {
+                    if (frameHistory[f] < histMin) histMin = frameHistory[f];
+                    if (frameHistory[f] > histMax) histMax = frameHistory[f];
+                }
+            }
+            char overlay[64];
+            snprintf(overlay, sizeof(overlay), "Total Frame (%.1f-%.1f ms)", histMin, histMax);
+            ImGui::PlotLines("##frame_total", frameHistory, PROFILE_RING_SIZE, 0, overlay,
+                             0.0f, histMax * 1.2f, ImVec2(ImGui::GetContentRegionAvail().x, 60));
+        }
+
+        // DL Process graph
+        {
+            float dlHistory[PROFILE_RING_SIZE];
+            float histMin = 1e9f, histMax = 0.0f;
+            for (int f = 0; f < PROFILE_RING_SIZE; f++) {
+                int idx = (ringIdx + 1 + f) % PROFILE_RING_SIZE;
+                dlHistory[f] = sPhaseRing[PROFILE_PHASE_DL_PROCESS][idx];
+                if (dlHistory[f] > 0.01f) {
+                    if (dlHistory[f] < histMin) histMin = dlHistory[f];
+                    if (dlHistory[f] > histMax) histMax = dlHistory[f];
+                }
+            }
+            char overlay[64];
+            snprintf(overlay, sizeof(overlay), "DL Process (%.1f-%.1f ms)", histMin, histMax);
+            ImGui::PlotLines("##frame_dl", dlHistory, PROFILE_RING_SIZE, 0, overlay,
+                             0.0f, histMax * 1.2f, ImVec2(ImGui::GetContentRegionAvail().x, 60));
+        }
+
+        ImGui::TreePop();
+    }
+
+    // Per-phase stability (min/max/jitter)
+    if (ImGui::TreeNode("Phase Stability (min/max/jitter)")) {
+        for (int phase = 0; phase < PROFILE_PHASE_MAX; phase++) {
+            if (phase == PROFILE_PHASE_TOTAL_FRAME) continue;
+            float avg = FrameProfiler_GetPhaseAvgMs((ProfilePhase)phase);
+            if (avg < 0.01f) continue; // skip phases with no time
+
+            float pMin = 1e9f, pMax = 0.0f;
+            for (int f = 0; f < PROFILE_RING_SIZE; f++) {
+                float val = sPhaseRing[phase][f];
+                if (val > 0.001f) {
+                    if (val < pMin) pMin = val;
+                    if (val > pMax) pMax = val;
+                }
+            }
+            float jitter = pMax - pMin;
+            ImVec4 jitterColor = (jitter > avg * 0.5f) ? ImVec4(1.0f, 0.5f, 0.2f, 1.0f) : ImVec4(0.8f, 0.8f, 0.8f, 1.0f);
+            ImGui::TextColored(jitterColor, "%-18s avg %5.2f  min %5.2f  max %5.2f  jitter %5.2f ms",
+                               sPhaseNames[phase], avg, pMin, pMax, jitter);
+        }
+        ImGui::TreePop();
     }
 
     ImGui::Separator();

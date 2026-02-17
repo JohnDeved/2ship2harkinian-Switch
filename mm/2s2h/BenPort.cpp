@@ -995,6 +995,19 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SETUP_MS, (float)stats.timeFrameSetup / 1000000.0f);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)stats.pixelDepthQueries);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
+
+            // Flush cause breakdown
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE, (float)stats.flushCauseTexture);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER, (float)stats.flushCauseSampler);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER, (float)stats.flushCauseShader);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_ALPHA, (float)stats.flushCauseAlpha);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_DEPTH_VIEWPORT, (float)stats.flushCauseDepthViewport);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER, (float)stats.flushCauseCombiner);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS, (float)stats.textureReloadSkips);
+
+            // Triangle processing sub-timers
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TRI_STATE_MS, (float)stats.timeTriStateCheck / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TRI_VBO_MS, (float)stats.timeTriVboFill / 1000000.0f);
         }
 
         intp->mInterpolationIndex++;

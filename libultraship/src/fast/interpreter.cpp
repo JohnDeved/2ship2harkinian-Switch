@@ -429,6 +429,7 @@ ColorCombiner* Interpreter::LookupOrCreateColorCombiner(const ColorCombinerKey& 
     }
     if (mProfilingEnabled) {
         mFrameStats.stateChangeFlushes++;
+        mFrameStats.flushCauseCombiner++;
     }
     Flush();
     mPrevCombiner = mColorCombinerPool.insert(std::make_pair(key, ColorCombiner())).first;
@@ -2077,6 +2078,13 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         }
     }
 
+    // --- State check section: depth, viewport, texture, shader, alpha ---
+    // Timer for the entire state-check + flush overhead within triangle processing
+    uint64_t stateCheckStart = 0;
+    if (mProfilingEnabled) {
+        stateCheckStart = Fast3DTimerNowNs();
+    }
+
     bool depth_test = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
     bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
     uint8_t depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
@@ -2094,6 +2102,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     if (depth_changed || decal_changed || viewport_changed || scissor_changed) {
         state_change_flush();
+        if (mProfilingEnabled) {
+            mFrameStats.flushCauseDepthViewport++;
+        }
         if (depth_changed) {
             mRapi->SetDepthTestAndMask(depth_test, depth_mask);
             mRenderingState.depth_test_and_mask = depth_test_and_mask;
@@ -2223,6 +2234,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                     TextureCacheMap::iterator it = mTextureCache.map.find(key);
                     if (it != mTextureCache.map.end() && mRenderingState.mTextures[i] == &*it) {
                         skipImport = true;
+                        if (mProfilingEnabled) {
+                            mFrameStats.textureReloadSkips++;
+                        }
                         // Still update LRU
                         mTextureCache.lru.splice(mTextureCache.lru.end(), mTextureCache.lru,
                                                  it->second.lru_location);
@@ -2230,6 +2244,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 }
                 if (!skipImport) {
                     state_change_flush();
+                    if (mProfilingEnabled) {
+                        mFrameStats.flushCauseTexture++;
+                    }
                     ImportTexture(i, tile, false);
                     if (mRdp->loaded_texture[i].masked) {
                         ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
@@ -2291,6 +2308,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             if (linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
                 cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
                 state_change_flush();
+                if (mProfilingEnabled) {
+                    mFrameStats.flushCauseSampler++;
+                }
 
                 // Set the same sampler params on the blended texture. Needed for opengl.
                 if (mRdp->loaded_texture[i].blended) {
@@ -2312,12 +2332,18 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     }
     if (prg != mRenderingState.mShaderProgram) {
         state_change_flush();
+        if (mProfilingEnabled) {
+            mFrameStats.flushCauseShader++;
+        }
         mRapi->UnloadShader(mRenderingState.mShaderProgram);
         mRapi->LoadShader(prg);
         mRenderingState.mShaderProgram = prg;
     }
     if (use_alpha != mRenderingState.alpha_blend) {
         state_change_flush();
+        if (mProfilingEnabled) {
+            mFrameStats.flushCauseAlpha++;
+        }
         mRapi->SetUseAlpha(use_alpha);
         mRenderingState.alpha_blend = use_alpha;
     }
@@ -2439,6 +2465,14 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         grayA = mRdp->grayscale_color.a * INV_255;
     }
 
+    // End state check timing, begin VBO fill timing
+    uint64_t vboFillStart = 0;
+    if (mProfilingEnabled) {
+        uint64_t now = Fast3DTimerNowNs();
+        mFrameStats.timeTriStateCheck += now - stateCheckStart;
+        vboFillStart = now;
+    }
+
     // Write the float pointer once to avoid repeated member access
     float* __restrict vbo = mBufVbo + mBufVboLen;
 
@@ -2544,6 +2578,11 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     }
 
     mBufVboLen = (size_t)(vbo - mBufVbo);
+
+    // End VBO fill timing
+    if (mProfilingEnabled) {
+        mFrameStats.timeTriVboFill += Fast3DTimerNowNs() - vboFillStart;
+    }
 
     if (++mBufVboNumTris == MAX_TRI_BUFFER) {
         if (mProfilingEnabled) {

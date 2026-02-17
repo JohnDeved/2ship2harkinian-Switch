@@ -5330,6 +5330,9 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     }
 
     ucode_handler_index = UcodeHandlers::ucode_f3dex2;
+
+    // Build the unified dispatch table for the initial ucode
+    RebuildUnifiedDispatchTable();
 }
 
 void Interpreter::Destroy() {
@@ -5504,9 +5507,6 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
     auto dbg = Ship::Context::GetInstance()->GetGfxDebugger();
     g_exec_stack.start((F3DGfx*)commands);
 
-    // Ensure the unified dispatch table is current for this DL iteration
-    RebuildUnifiedDispatchTable();
-
     while (!g_exec_stack.cmd_stack.empty()) {
         auto cmd = g_exec_stack.cmd_stack.top();
 
@@ -5547,6 +5547,8 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
                         ++stepCmd;
                     }
                 } else {
+                    SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, ucode: {}", (uint8_t)opcode,
+                                    (uint32_t)ucode_handler_index);
                     ++stepCmd;
                 }
             }
@@ -5596,6 +5598,7 @@ void Interpreter::EndFrame() {
 
 void gfx_set_target_ucode(UcodeHandlers ucode) {
     ucode_handler_index = ucode;
+    RebuildUnifiedDispatchTable();
 }
 
 int Interpreter::GetTargetFps() {

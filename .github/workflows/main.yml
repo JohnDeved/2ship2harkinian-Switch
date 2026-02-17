@@ -8,8 +8,8 @@ jobs:
     steps:
     - name: Git Checkout
       uses: actions/checkout@v6
-      with:
-        submodules: true
+    - name: Init submodules
+      run: git submodule update --init --force
     - name: Configure ccache
       uses: hendrikmuhs/ccache-action@v1.2.20
       with:
@@ -106,8 +106,8 @@ jobs:
       CCACHE_NOHASHDIR: 1
     steps:
     - uses: actions/checkout@v6
-      with:
-        submodules: recursive
+    - name: Init submodules
+      run: git submodule update --init --force --recursive
 
     - name: Install dependencies
       run: |
@@ -124,8 +124,9 @@ jobs:
 
     - uses: actions/checkout@v6
       if: ${{ vars.LINUX_RUNNER }}
-      with:
-        submodules: recursive
+    - name: Init submodules (self-hosted)
+      if: ${{ vars.LINUX_RUNNER }}
+      run: git submodule update --init --force --recursive
 
     - name: ccache (minimal key, max hits)
       uses: hendrikmuhs/ccache-action@v1.2.20

@@ -3,9 +3,11 @@
 #include <imgui.h>
 #include <cstring>
 #include <cstdint>
+#include <cstdio>
 #include <algorithm>
 #include <atomic>
 #include <fstream>
+#include <iomanip>
 #include <ctime>
 #include <cmath>
 #include <libultraship/libultraship.h>
@@ -307,7 +309,7 @@ static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
 
 // ── Helper functions ───────────────────────────────────────────────────
 
-static const float PROFILE_TARGET_FRAME_MS = 16.6f;
+static const float PROFILE_TARGET_FRAME_MS = 1000.0f / 60.0f;
 
 // Returns true for leaf phases (not parent/aggregate phases) used for bottleneck detection
 static bool IsLeafPhase(int phase) {
@@ -384,9 +386,17 @@ static void FrameProfiler_ExportSnapshot(void) {
 #endif
     out << std::endl;
 
-    out << "--- Summary (60-frame average) ---" << std::endl;
-    out << "Total Frame: " << totalMs << " ms (" << fps << " FPS)" << std::endl;
-    out << "Target: 16.6 ms (60 FPS)" << std::endl;
+    out << "--- Summary (" << PROFILE_RING_SIZE << "-frame average) ---" << std::endl;
+    out << "Total Frame Time:               " << std::fixed << std::setprecision(2) << totalMs << " ms" << std::endl;
+    out << "FPS:                            " << std::fixed << std::setprecision(1) << fps << std::endl;
+    out << "Target (60 FPS):                " << std::fixed << std::setprecision(2) << PROFILE_TARGET_FRAME_MS << " ms" << std::endl;
+    if (totalMs > PROFILE_TARGET_FRAME_MS) {
+        float overhead = ((totalMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
+        out << "Performance:                    " << std::fixed << std::setprecision(1) << overhead << "% over budget" << std::endl;
+    } else {
+        float headroom = ((PROFILE_TARGET_FRAME_MS - totalMs) / PROFILE_TARGET_FRAME_MS) * 100.0f;
+        out << "Performance:                    " << std::fixed << std::setprecision(1) << headroom << "% headroom remaining" << std::endl;
+    }
     out << std::endl;
 
     out << "--- Per-Phase Breakdown ---" << std::endl;
@@ -395,7 +405,10 @@ static void FrameProfiler_ExportSnapshot(void) {
     for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
         float ms = FrameProfiler_GetPhaseAvgMs((ProfilePhase)i);
         float pct = (totalMs > 0.01f) ? (ms / totalMs * 100.0f) : 0.0f;
-        out << sPhaseCoreLabels[i] << "  " << sPhaseNames[i] << ": " << ms << " ms (" << pct << "%)" << std::endl;
+        char line[256];
+        snprintf(line, sizeof(line), "%-7s %-22s %6.2f ms (%5.1f%%)", 
+                 sPhaseCoreLabels[i], sPhaseNames[i], ms, pct);
+        out << line << std::endl;
         // Track worst leaf phase
         if (IsLeafPhase(i)) {
             if (ms > worstMs) {
@@ -439,53 +452,95 @@ static void FrameProfiler_ExportSnapshot(void) {
     float glDepthQueries = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES);
     float glAvgBatch = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_AVG_BATCH_SIZE);
 
-    out << "DL Iterations: " << dlIter << std::endl;
-    out << "Total Commands (all buffers): " << dlCmds << std::endl;
-    out << "Triangles: " << tris << std::endl;
-    out << "Vertices: " << verts << std::endl;
-    out << "Texture Loads (SETTIMG): " << texLoads << std::endl;
-    out << "Matrix Loads (MTX): " << mtxLoads << std::endl;
-    out << "Pipe Syncs: " << pipeSyncs << std::endl;
-    out << "DL Subcalls: " << subcalls << std::endl;
-    out << "SetCombine (shader changes): " << setCombine << std::endl;
-    out << "Est. Draw Calls: ~" << pipeSyncs << std::endl;
-    out << "GL Draw Calls (actual): " << glDrawCalls << std::endl;
-    out << "GL Batch Flushes: " << glBatchFlushes << "  (state-driven: " << glStateFlushes << ")" << std::endl;
-    out << "GL Shader Switches: " << glShaderSwitches << "  (compiles: " << glShaderCompiles << ")" << std::endl;
-    out << "GL Texture Binds: " << glTextureBinds << "  (cache misses: " << glTextureMisses << ")" << std::endl;
-    out << "GL Triangles Submitted: " << glTris << "  Vertices Submitted: " << glVerts << std::endl;
-    out << "GL Avg Batch Size: " << glAvgBatch << " tris/draw" << std::endl;
+    // GBI/Display List counters (game-side)
+    out << "DL Iterations:                  " << std::fixed << std::setprecision(0) << dlIter << std::endl;
+    out << "Total Commands (all buffers):   " << std::fixed << std::setprecision(0) << dlCmds << std::endl;
+    out << "Triangles:                      " << std::fixed << std::setprecision(0) << tris << std::endl;
+    out << "Vertices:                       " << std::fixed << std::setprecision(0) << verts << std::endl;
+    out << "Texture Loads (G_SETTIMG):      " << std::fixed << std::setprecision(0) << texLoads << std::endl;
+    out << "Matrix Loads (G_MTX):           " << std::fixed << std::setprecision(0) << mtxLoads << std::endl;
+    out << "Pipe Syncs (G_RDPPIPESYNC):     " << std::fixed << std::setprecision(0) << pipeSyncs << std::endl;
+    out << "DL Subcalls (G_DL):             " << std::fixed << std::setprecision(0) << subcalls << std::endl;
+    out << "SetCombine (G_SETCOMBINE):      " << std::fixed << std::setprecision(0) << setCombine << std::endl;
+    out << std::endl;
+    
+    // Derived metrics for context
+    float vertsPerTri = (tris > 0.5f) ? (verts / tris) : 0.0f;
+    out << "Derived Metrics:" << std::endl;
+    out << "  Vertices per Triangle:        " << std::fixed << std::setprecision(2) << vertsPerTri << " (~3.0 for indexed lists, ~1.0 for strips/fans, >3.0 indicates duplication)" << std::endl;
+    out << "  Commands per Triangle:        " << std::fixed << std::setprecision(2) << (tris > 0.5f ? dlCmds / tris : 0.0f) << std::endl;
+    out << std::endl;
+    
+    // Fast3D/GL backend counters
+    out << "Fast3D Backend (OpenGL):" << std::endl;
+    out << "Est. Draw Calls (from PipeSyncs): ~" << std::fixed << std::setprecision(0) << pipeSyncs << " (upper bound, actual may differ)" << std::endl;
+    out << "GL Draw Calls (actual):         " << std::fixed << std::setprecision(0) << glDrawCalls << std::endl;
+    out << "GL Batch Flushes:               " << std::fixed << std::setprecision(0) << glBatchFlushes 
+        << " (state-driven: " << std::fixed << std::setprecision(0) << glStateFlushes << ")" << std::endl;
+    out << "GL Shader Switches:             " << std::fixed << std::setprecision(0) << glShaderSwitches 
+        << " (compiles: " << std::fixed << std::setprecision(0) << glShaderCompiles << ")" << std::endl;
+    out << "GL Texture Binds:               " << std::fixed << std::setprecision(0) << glTextureBinds 
+        << " (cache misses: " << std::fixed << std::setprecision(0) << glTextureMisses << ")" << std::endl;
+    out << "GL Triangles Submitted:         " << std::fixed << std::setprecision(0) << glTris << std::endl;
+    out << "GL Vertices Submitted:          " << std::fixed << std::setprecision(0) << glVerts << std::endl;
+    out << "GL Avg Batch Size:              " << std::fixed << std::setprecision(1) << glAvgBatch << " tris/draw" << std::endl;
     if (glDepthQueries > 0.0f) {
-        out << "Pixel Depth Queries: " << glDepthQueries << std::endl;
+        out << "Pixel Depth Queries:            " << std::fixed << std::setprecision(0) << glDepthQueries << std::endl;
     }
-    out << "GL Timing (ms): total=" << glTimeTotal << " dispatch=" << glTimeDispatch << " tri=" << glTimeTri
-        << " tex=" << glTimeTex << " shader=" << glTimeShader << " draw=" << glTimeDraw << " vtx=" << glTimeVtx
-        << " mtx=" << glTimeMtx << " depth=" << glTimeDepth << " setup=" << glTimeSetup << std::endl;
+    out << std::endl;
+    
+    // Efficiency metrics
+    out << "Backend Efficiency Metrics:" << std::endl;
+    float drawsPerShader = (glShaderSwitches > 0.5f) ? (glDrawCalls / glShaderSwitches) : 0.0f;
+    float texBindsPerDraw = (glDrawCalls > 0.5f) ? (glTextureBinds / glDrawCalls) : 0.0f;
+    float cacheMissRate = (glTextureBinds > 0.5f) ? (glTextureMisses / glTextureBinds * 100.0f) : 0.0f;
+    out << "  Draw calls per shader:        " << std::fixed << std::setprecision(1) << drawsPerShader << " (higher is better for batching)" << std::endl;
+    out << "  Texture binds per draw:       " << std::fixed << std::setprecision(2) << texBindsPerDraw << " (lower is better)" << std::endl;
+    out << "  Texture cache miss rate:      " << std::fixed << std::setprecision(1) << cacheMissRate << "%" << std::endl;
+    out << std::endl;
+    
+    // GL timing breakdown (multi-line for readability)
+    out << "Fast3D Timing Breakdown:" << std::endl;
+    out << "  Total:                        " << std::fixed << std::setprecision(2) << glTimeTotal << " ms" << std::endl;
+    out << "  Triangle Processing:          " << std::fixed << std::setprecision(2) << glTimeTri << " ms" << std::endl;
+    out << "  Draw Submit (GL calls):       " << std::fixed << std::setprecision(2) << glTimeDraw << " ms" << std::endl;
+    out << "  Vertex Transform:             " << std::fixed << std::setprecision(2) << glTimeVtx << " ms" << std::endl;
+    out << "  Texture Setup:                " << std::fixed << std::setprecision(2) << glTimeTex << " ms" << std::endl;
+    out << "  Matrix Operations:            " << std::fixed << std::setprecision(2) << glTimeMtx << " ms" << std::endl;
+    out << "  Dispatch (command walk):      " << std::fixed << std::setprecision(2) << glTimeDispatch << " ms" << std::endl;
+    out << "  Pixel Depth Readback:         " << std::fixed << std::setprecision(2) << glTimeDepth << " ms" << std::endl;
+    out << "  Frame Setup:                  " << std::fixed << std::setprecision(2) << glTimeSetup << " ms" << std::endl;
+    out << "  Shader Compile/Switch:        " << std::fixed << std::setprecision(2) << glTimeShader << " ms" << std::endl;
 
     // GL timing percentage breakdown
+    out << std::endl;
+    out << "Fast3D Time Distribution (% of DL Process):" << std::endl;
     if (glTimeTotal > 0.01f) {
-        out << "GL Time% of DL: tri=" << (glTimeTri / glTimeTotal * 100.0f) << "%"
-            << " draw=" << (glTimeDraw / glTimeTotal * 100.0f) << "%"
-            << " vtx=" << (glTimeVtx / glTimeTotal * 100.0f) << "%"
-            << " tex=" << (glTimeTex / glTimeTotal * 100.0f) << "%"
-            << " mtx=" << (glTimeMtx / glTimeTotal * 100.0f) << "%"
-            << " dispatch=" << (glTimeDispatch / glTimeTotal * 100.0f) << "%"
-            << " depth=" << (glTimeDepth / glTimeTotal * 100.0f) << "%"
-            << " setup=" << (glTimeSetup / glTimeTotal * 100.0f) << "%"
-            << " shader=" << (glTimeShader / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "  Triangle Processing:          " << std::fixed << std::setprecision(1) << (glTimeTri / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "  Draw Submit (GL calls):       " << std::fixed << std::setprecision(1) << (glTimeDraw / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "  Vertex Transform:             " << std::fixed << std::setprecision(1) << (glTimeVtx / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "  Texture Setup:                " << std::fixed << std::setprecision(1) << (glTimeTex / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "  Matrix Operations:            " << std::fixed << std::setprecision(1) << (glTimeMtx / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "  Dispatch (command walk):      " << std::fixed << std::setprecision(1) << (glTimeDispatch / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "  Pixel Depth Readback:         " << std::fixed << std::setprecision(1) << (glTimeDepth / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "  Frame Setup:                  " << std::fixed << std::setprecision(1) << (glTimeSetup / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "  Shader Compile/Switch:        " << std::fixed << std::setprecision(1) << (glTimeShader / glTimeTotal * 100.0f) << "%" << std::endl;
     }
+    out << std::endl;
 
+    // Per-unit cost analysis
     float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
+    out << "Per-Unit Cost Analysis:" << std::endl;
     if (dlMs > 0.1f && glTris > 0.0f) {
-        out << "Cost per GL triangle: " << (dlMs * 1000.0f / glTris) << " us" << std::endl;
+        out << "  Cost per GL triangle:         " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / glTris) << " us" << std::endl;
         if (dlCmds > 0) {
-            out << "Cost per DL command: " << (dlMs * 1000.0f / dlCmds) << " us" << std::endl;
+            out << "  Cost per DL command:          " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / dlCmds) << " us" << std::endl;
         }
         if (glDrawCalls > 0) {
-            out << "Cost per GL draw call: " << (dlMs * 1000.0f / glDrawCalls) << " us" << std::endl;
+            out << "  Cost per GL draw call:        " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / glDrawCalls) << " us" << std::endl;
         }
         if (glShaderSwitches > 0) {
-            out << "Cost per shader switch: " << (dlMs * 1000.0f / glShaderSwitches) << " us" << std::endl;
+            out << "  Cost per shader switch:       " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / glShaderSwitches) << " us" << std::endl;
         }
     }
     out << std::endl;
@@ -493,16 +548,14 @@ static void FrameProfiler_ExportSnapshot(void) {
     // Per-buffer breakdown
     static const char* sBufExportNames[] = { "OPA (opaque)", "XLU (translucent)", "Overlay", "Work", "Debug" };
     out << "--- Per-Buffer Breakdown ---" << std::endl;
-    out << "Buffer              Cmds   Tris  Verts  Tex   Mtx  Sync SubDL Comb" << std::endl;
+    out << "Buffer               Cmds   Tris  Verts   Tex   Mtx  Sync SubDL Comb" << std::endl;
     for (int b = 0; b < PROFILE_DL_BUFFER_COUNT; b++) {
         DLBufferStats bs = FrameProfiler_GetBufferStats(b);
-        out << std::left;
-        // Pad buffer name
-        std::string name = sBufExportNames[b];
-        while (name.size() < 20)
-            name += ' ';
-        out << name << bs.commands << "  " << bs.triangles << "  " << bs.vertices << "  " << bs.texLoads << "  "
-            << bs.mtxLoads << "  " << bs.pipeSyncs << "  " << bs.subcalls << "  " << bs.setCombine << std::endl;
+        char line[256];
+        snprintf(line, sizeof(line), "%-20s %5d  %5d  %5d  %4d  %4d  %4d  %4d  %4d",
+                 sBufExportNames[b], bs.commands, bs.triangles, bs.vertices,
+                 bs.texLoads, bs.mtxLoads, bs.pipeSyncs, bs.subcalls, bs.setCombine);
+        out << line << std::endl;
     }
     out << std::endl;
 
@@ -510,33 +563,37 @@ static void FrameProfiler_ExportSnapshot(void) {
     float accountedMs = GetAccountedTimeMs();
     float unaccountedMs = totalMs - accountedMs;
     float unaccountedPct = (totalMs > 0.01f) ? (unaccountedMs / totalMs * 100.0f) : 0.0f;
-    out << "Unaccounted: " << unaccountedMs << " ms (" << unaccountedPct << "%)" << std::endl;
+    out << "Unaccounted Time: " << std::fixed << std::setprecision(2) << unaccountedMs 
+        << " ms (" << std::fixed << std::setprecision(1) << unaccountedPct << "%)" << std::endl;
     out << std::endl;
 
     // Flush efficiency analysis
     out << "--- Flush Efficiency ---" << std::endl;
     float emptyFlushes = glBatchFlushes - glDrawCalls;
-    float bufferFullFlushes = glBatchFlushes - glStateFlushes;
+    float nonStateFlushes = glBatchFlushes - glStateFlushes;
     float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
     float effectiveBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
-    out << "Total Flushes: " << glBatchFlushes << std::endl;
-    out << "  State-change driven: " << glStateFlushes << std::endl;
-    out << "  Buffer-full: " << bufferFullFlushes << std::endl;
-    out << "  Empty (no geometry): " << emptyFlushes << " (" << emptyPct << "%)" << std::endl;
-    out << "Actual Draw Calls: " << glDrawCalls << std::endl;
-    out << "Effective Batch Size: " << effectiveBatch << " tris/draw" << std::endl;
+    out << "Total Flushes:                  " << std::fixed << std::setprecision(0) << glBatchFlushes << std::endl;
+    out << "  State-change driven:          " << std::fixed << std::setprecision(0) << glStateFlushes << std::endl;
+    out << "  Non-state (buffer/frame-end): " << std::fixed << std::setprecision(0) << nonStateFlushes << std::endl;
+    out << "  Empty (no geometry):          " << std::fixed << std::setprecision(0) << emptyFlushes 
+        << " (" << std::fixed << std::setprecision(1) << emptyPct << "%)" << std::endl;
+    out << "Actual Draw Calls:              " << std::fixed << std::setprecision(0) << glDrawCalls << std::endl;
+    out << "Effective Batch Size:           " << std::fixed << std::setprecision(1) << effectiveBatch << " tris/draw" << std::endl;
 #ifdef __SWITCH__
-    out << "MAX_TRI_BUFFER: 1024  Buffer Utilization: " << (effectiveBatch / 1024.0f * 100.0f) << "%" << std::endl;
+    out << "MAX_TRI_BUFFER:                 1024" << std::endl;
+    out << "Buffer Utilization:             " << std::fixed << std::setprecision(1) << (effectiveBatch / 1024.0f * 100.0f) << "% (how full each batch is on average)" << std::endl;
 #else
-    out << "MAX_TRI_BUFFER: 256  Buffer Utilization: " << (effectiveBatch / 256.0f * 100.0f) << "%" << std::endl;
+    out << "MAX_TRI_BUFFER:                 256" << std::endl;
+    out << "Buffer Utilization:             " << std::fixed << std::setprecision(1) << (effectiveBatch / 256.0f * 100.0f) << "% (how full each batch is on average)" << std::endl;
 #endif
     if (glDrawCalls > 0.5f) {
-        out << "State changes per draw: " << (glStateFlushes / glDrawCalls) << std::endl;
+        out << "State changes per draw:         " << std::fixed << std::setprecision(2) << (glStateFlushes / glDrawCalls) << std::endl;
     }
     out << std::endl;
 
     // Frame stability analysis from ring buffer
-    out << "--- Frame Stability ---" << std::endl;
+    out << "--- Frame Stability (over " << PROFILE_RING_SIZE << " frames) ---" << std::endl;
     {
         float minFrame = 1e9f, maxFrame = 0.0f;
         float sum = 0.0f, sumSq = 0.0f;
@@ -555,9 +612,14 @@ static void FrameProfiler_ExportSnapshot(void) {
             float mean = sum / validFrames;
             float variance = (sumSq / validFrames) - (mean * mean);
             float stddev = (variance > 0.0f) ? sqrtf(variance) : 0.0f;
-            out << "Frames sampled: " << validFrames << std::endl;
-            out << "Min: " << minFrame << " ms  Max: " << maxFrame << " ms  Range: " << (maxFrame - minFrame) << " ms" << std::endl;
-            out << "Mean: " << mean << " ms  StdDev: " << stddev << " ms  CoV: " << (mean > 0.01f ? stddev / mean * 100.0f : 0.0f) << "%" << std::endl;
+            float cov = (mean > 0.01f ? stddev / mean * 100.0f : 0.0f);
+            out << "Frames sampled:                 " << validFrames << std::endl;
+            out << "Min:                            " << std::fixed << std::setprecision(2) << minFrame << " ms" << std::endl;
+            out << "Max:                            " << std::fixed << std::setprecision(2) << maxFrame << " ms" << std::endl;
+            out << "Range:                          " << std::fixed << std::setprecision(2) << (maxFrame - minFrame) << " ms" << std::endl;
+            out << "Mean:                           " << std::fixed << std::setprecision(2) << mean << " ms" << std::endl;
+            out << "Standard Deviation:             " << std::fixed << std::setprecision(2) << stddev << " ms" << std::endl;
+            out << "Coefficient of Variation (CoV): " << std::fixed << std::setprecision(1) << cov << "% (lower = more stable)" << std::endl;
             // Count frames with spikes (>2 stddev from mean)
             int spikes = 0;
             float spikeThreshold = mean + 2.0f * stddev;
@@ -566,7 +628,8 @@ static void FrameProfiler_ExportSnapshot(void) {
                 if (val > spikeThreshold) spikes++;
             }
             if (spikes > 0) {
-                out << "Spikes (>2σ): " << spikes << "/" << validFrames << " frames above " << spikeThreshold << " ms" << std::endl;
+                out << "Frame Spikes (>2σ):             " << spikes << "/" << validFrames 
+                    << " frames above " << std::fixed << std::setprecision(2) << spikeThreshold << " ms" << std::endl;
             }
             // DL Process stability
             float dlMin = 1e9f, dlMax = 0.0f, dlSum = 0.0f;
@@ -579,7 +642,11 @@ static void FrameProfiler_ExportSnapshot(void) {
                 }
             }
             if (validFrames > 0) {
-                out << "DL Process: min=" << dlMin << " max=" << dlMax << " range=" << (dlMax - dlMin) << " ms" << std::endl;
+                out << std::endl;
+                out << "DL Process Stability:" << std::endl;
+                out << "  Min:                          " << std::fixed << std::setprecision(2) << dlMin << " ms" << std::endl;
+                out << "  Max:                          " << std::fixed << std::setprecision(2) << dlMax << " ms" << std::endl;
+                out << "  Range:                        " << std::fixed << std::setprecision(2) << (dlMax - dlMin) << " ms" << std::endl;
             }
         }
     }
@@ -596,10 +663,13 @@ static void FrameProfiler_ExportSnapshot(void) {
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_EFFECTS);
     float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
 
-    out << "--- Core Utilization ---" << std::endl;
-    out << "Core 0 Active: " << core0Ms << " ms" << std::endl;
-    out << "Core 1 Active: " << core1Ms << " ms" << std::endl;
-    out << "Utilization Ratio: " << (imbalance * 100.0f) << "%" << std::endl;
+    out << "--- Core Utilization (Multi-threading Status) ---" << std::endl;
+    out << "Core 0 Active Time:             " << std::fixed << std::setprecision(2) << core0Ms << " ms (main thread)" << std::endl;
+    out << "Core 1 Active Time:             " << std::fixed << std::setprecision(2) << core1Ms << " ms (worker threads)" << std::endl;
+    out << "Core 1/Core 0 Ratio:            " << std::fixed << std::setprecision(1) << (imbalance * 100.0f) << "% (100% = balanced)" << std::endl;
+    if (imbalance < 0.5f) {
+        out << "Note: Core 1 is significantly underutilized. Consider moving more work to worker threads." << std::endl;
+    }
     out << std::endl;
 
     // Automated analysis with ranked sub-phases and specific recommendations
@@ -663,7 +733,7 @@ static void FrameProfiler_ExportSnapshot(void) {
             }
             if (glTimeDraw > 10.0f && glDrawCalls > 500.0f) {
                 float costPerDraw = glTimeDraw * 1000.0f / glDrawCalls;
-                out << "  ⚠ High GL draw overhead: " << glDrawCalls << " calls × " << costPerDraw << " μs/call = " << glTimeDraw << " ms." << std::endl;
+                out << "  ⚠ High GL draw overhead: " << glDrawCalls << " calls × " << costPerDraw << " us/call = " << glTimeDraw << " ms." << std::endl;
                 out << "    Reducing draw calls by 50% would save ~" << (glTimeDraw * 0.5f) << " ms/frame." << std::endl;
             }
         } else if (worstPhase == PROFILE_PHASE_ACTOR_UPDATE) {
@@ -711,7 +781,25 @@ void FrameProfilerWindow::DrawElement() {
     float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
     float fps = (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
 
-    ImGui::Text("Frame: %.1f ms  (%.0f FPS)  Target: %.1f ms (60 FPS)", totalMs, fps, PROFILE_TARGET_FRAME_MS);
+    // Enhanced summary with color coding
+    if (totalMs > 20.0f) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
+    } else if (totalMs > PROFILE_TARGET_FRAME_MS) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
+    } else {
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Target: %.2f ms (60 FPS)", PROFILE_TARGET_FRAME_MS);
+    
+    // Show performance headroom or overhead
+    if (totalMs > PROFILE_TARGET_FRAME_MS) {
+        float overhead = ((totalMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
+        ImGui::Text("Performance: %.1f%% over budget", overhead);
+    } else {
+        float headroom = ((PROFILE_TARGET_FRAME_MS - totalMs) / PROFILE_TARGET_FRAME_MS) * 100.0f;
+        ImGui::Text("Performance: %.1f%% headroom", headroom);
+    }
     ImGui::Separator();
 
     // Bar chart with percentages
@@ -779,15 +867,62 @@ void FrameProfilerWindow::DrawElement() {
 
     ImGui::Text("DL Iterations: %.0f   Total Commands: %.0f", dlIter, dlCmds);
     ImGui::Text("Triangles: %.0f   Vertices: %.0f", tris, verts);
+    
+    // Add derived metric with tooltip
+    float vertsPerTri = (tris > 0.5f) ? (verts / tris) : 0.0f;
+    ImGui::Text("Verts/Tri: %.2f", vertsPerTri);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Vertices per triangle\n"
+                          "~3.0 = indexed triangle lists (typical)\n"
+                          "~1.0 = triangle strips/fans (highly efficient)\n"
+                          ">3.0 = vertex duplication or non-indexed geometry");
+    }
+    
     ImGui::Text("Tex Loads: %.0f   Matrix Loads: %.0f   SetCombine: %.0f", texLoads, mtxLoads, setCombine);
     ImGui::Text("Pipe Syncs: %.0f   DL Subcalls: %.0f", pipeSyncs, subcalls);
 
+    ImGui::Separator();
+    
     // Estimated draw calls (each PipeSync potentially flushes a draw call)
     float estDrawCalls = pipeSyncs;
     ImGui::Text("Est. Draw Calls: ~%.0f", estDrawCalls);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Upper bound estimate based on PipeSync commands\nActual draw calls may be lower due to batching");
+    }
+    
     ImGui::Text("GL Draw Calls: %.0f  Batch Flushes: %.0f (state: %.0f)", glDrawCalls, glBatchFlushes, glStateFlushes);
+    
+    // Flush efficiency warning
+    float emptyFlushes = glBatchFlushes - glDrawCalls;
+    float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
+    if (emptyPct > 30.0f) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "Warning: High empty flushes");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%.0f%% of flushes are empty (no geometry)\nConsider lazy state application to reduce overhead", emptyPct);
+        }
+    }
+    
     ImGui::Text("GL Shader Switches: %.0f (compiles: %.0f)", glShaderSwitches, glShaderCompiles);
+    
+    // Add efficiency metric
+    float drawsPerShader = (glShaderSwitches > 0.5f) ? (glDrawCalls / glShaderSwitches) : 0.0f;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%.1f draws/shader)", drawsPerShader);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Draw calls per shader switch\nHigher is better (indicates better batching)");
+    }
+    
     ImGui::Text("GL Texture Binds: %.0f (cache misses: %.0f)", glTextureBinds, glTextureMisses);
+    
+    // Cache miss rate
+    float cacheMissRate = (glTextureBinds > 0.5f) ? (glTextureMisses / glTextureBinds * 100.0f) : 0.0f;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%.1f%% miss rate)", cacheMissRate);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Texture cache miss rate\nLower is better (indicates good texture locality)");
+    }
+    
     ImGui::Text("GL Submitted: %.0f tris, %.0f verts  Avg batch: %.1f tris/draw", glTris, glVerts, glAvgBatch);
     if (glDepthQueries > 0.0f) {
         ImGui::Text("Pixel Depth Queries: %.0f", glDepthQueries);
@@ -867,9 +1002,23 @@ void FrameProfilerWindow::DrawElement() {
     float core1Ms =
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_EFFECTS);
 
-    ImGui::Text("Core 0 Active: %5.1f ms  |  Core 1 Active: %5.1f ms", core0Ms, core1Ms);
+    ImGui::Text("Core 0 Active: %5.2f ms  |  Core 1 Active: %5.2f ms", core0Ms, core1Ms);
     float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
-    ImGui::Text("Core utilization ratio: %.0f%% (1.0 = perfectly balanced)", imbalance * 100.0f);
+    
+    // Color-code the utilization ratio
+    ImVec4 ratioColor = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);  // default blue
+    if (imbalance < 0.3f) {
+        ratioColor = ImVec4(1.0f, 0.5f, 0.2f, 1.0f);  // orange for severe imbalance
+    } else if (imbalance < 0.6f) {
+        ratioColor = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);  // yellow for moderate imbalance
+    } else if (imbalance > 0.8f && imbalance < 1.2f) {
+        ratioColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);  // green for well balanced
+    }
+    
+    ImGui::TextColored(ratioColor, "Core utilization ratio: %.1f%% (100%% = balanced)", imbalance * 100.0f);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Ratio of Core 1 work to Core 0 work\nIdeal: 80-120%% (well balanced)\n<50%%: Consider moving work to worker threads");
+    }
 
     ImGui::Separator();
 

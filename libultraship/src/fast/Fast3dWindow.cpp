@@ -404,10 +404,14 @@ std::weak_ptr<Interpreter> Fast3dWindow::GetInterpreterWeak() const {
 #include <switch.h>
 
 void Fast3dWindow::RenderThreadLoop() {
-    // Pin render thread to Core 1
+    // Pin render thread to Core 1.
+    // svcSetThreadCoreMask(handle, ideal_core, affinity_mask):
+    //   - CUR_THREAD_HANDLE: this thread
+    //   - 1: preferred core index (Core 1)
+    //   - (1U << 1): bitmask allowing only Core 1
     Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, 1, (1U << 1));
     if (R_FAILED(rc)) {
-        // Fallback: allow any core except 0
+        // Fallback: allow any core except Core 0 (main thread)
         static const u64 NON_CORE0_MASK = (1U << 1) | (1U << 2) | (1U << 3);
         svcSetThreadCoreMask(CUR_THREAD_HANDLE, -1, NON_CORE0_MASK);
     }

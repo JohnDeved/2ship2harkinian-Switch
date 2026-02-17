@@ -574,7 +574,16 @@ void BenMenu::AddSettings() {
     AddWidget(path, "Renderer API (Needs reload)", WIDGET_VIDEO_BACKEND);
     AddWidget(path, "Enable Vsync", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_VSYNC_ENABLED)
-        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_NO_VSYNC).active; })
+        .PreFunc([](WidgetInfo& info) {
+#ifdef __SWITCH__
+            // VSync is always forced on Switch — show checkbox as checked and disabled.
+            CVarSetInteger(CVAR_VSYNC_ENABLED, 1);
+            info.options->disabled = true;
+            info.options->disabledTooltip = "VSync is always enabled on Switch";
+#else
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_NO_VSYNC).active;
+#endif
+        })
         .Options(CheckboxOptions()
                      .Tooltip("Removes tearing, but clamps your max FPS to your displays refresh rate.")
                      .DefaultValue(true));

@@ -722,6 +722,20 @@ void GfxWindowBackendSDL2::SyncFramerateWithTime() const {
 }
 
 void GfxWindowBackendSDL2::SwapBuffersBegin() {
+#ifdef __SWITCH__
+    // Force vsync on Switch and skip SyncFramerateWithTime.
+    // Vsync provides frame pacing; the nanosleep-based limiter adds unnecessary latency.
+    // Re-apply SDL_GL_SetSwapInterval from the GL thread on first call, since the context
+    // may have been transferred from the main thread to the render thread after init.
+    {
+        static bool vsyncForced = false;
+        if (!vsyncForced) {
+            SDL_GL_SetSwapInterval(1);
+            mVsyncEnabled = true;
+            vsyncForced = true;
+        }
+    }
+#else
     bool nextVsyncEnabled = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_VSYNC_ENABLED, 1);
 
     if (mVsyncEnabled != nextVsyncEnabled) {
@@ -731,6 +745,7 @@ void GfxWindowBackendSDL2::SwapBuffersBegin() {
     }
 
     SyncFramerateWithTime();
+#endif
     SDL_GL_SwapWindow(mWnd);
 }
 

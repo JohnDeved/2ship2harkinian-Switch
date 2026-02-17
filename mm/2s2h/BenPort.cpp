@@ -1130,9 +1130,31 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             wnd->HandleEvents();
             const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
             wnd->SetProfilingEnabled(profilerEnabled);
-            if (intp) { intp->mInterpolationIndex = 0; }
+            // Adaptive sub-frame dropping: track elapsed time per game frame.
+            // Budget = 1 game frame = 1/original_fps seconds (e.g. 50ms at 20fps).
+            // If rendering falls behind, skip intermediate sub-frames to keep game
+            // logic running at constant speed. Always render first and last sub-frames.
+            const auto frameBudget = std::chrono::nanoseconds(1000000000LL / original_fps);
+            const auto frameStart = std::chrono::steady_clock::now();
 
             for (size_t i = 0; i < sub_frames.size(); i++) {
+                // Skip intermediate sub-frames if over budget (keep first + last)
+                if (i > 0 && i < sub_frames.size() - 1) {
+                    auto elapsed = std::chrono::steady_clock::now() - frameStart;
+                    if (elapsed >= frameBudget) {
+                        continue;
+                    }
+                }
+                // For the last sub-frame (identity at fraction=1.0), ensure we use
+                // the correct empty matrix replacement even if we skipped intermediates.
+                if (i == sub_frames.size() - 1 && sub_frames[i].isIdentity) {
+                    current_m.clear();
+                }
+                // Set interpolation index to the actual sub-frame index (not sequential).
+                // DL commands (G_MW_SEGMENT_INTERP, tile size interp) check this index
+                // to apply per-sub-frame state. Must match even when sub-frames are skipped.
+                if (intp) { intp->mInterpolationIndex = (int)i; }
+
                 // Start async interpolation for NEXT sub-frame (if any)
                 AsyncInterpJob nextJob;
                 bool hasNext = (i + 1 < sub_frames.size());
@@ -1188,7 +1210,6 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                     }
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
                 }
-                if (intp) { intp->mInterpolationIndex++; }
                 if (profilerEnabled) {
                     FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
                 }

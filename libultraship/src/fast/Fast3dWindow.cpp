@@ -209,6 +209,26 @@ bool Fast3dWindow::DrawAndRunGraphicsCommands(Gfx* commands, const std::unordere
     return true;
 }
 
+#if defined(__SWITCH__)
+bool Fast3dWindow::DrawAndRunGraphicsCommandsReplay(const std::unordered_map<Mtx*, MtxF>& mtxReplacements) {
+    std::shared_ptr<Window> wnd = Ship::Context::GetInstance()->GetWindow();
+
+    if (!wnd->IsFrameReady()) {
+        return false;
+    }
+
+    auto gui = wnd->GetGui();
+    gui->StartDraw();
+    mInterpreter->StartFrame();
+    // Replay recorded command sequence (skip DL traversal + opcode dispatch)
+    mInterpreter->RunReplay(mtxReplacements);
+    gui->EndDraw();
+    mInterpreter->EndFrame();
+
+    return true;
+}
+#endif
+
 const Fast3DStats& Fast3dWindow::GetFrameStats() const {
     return mInterpreter->GetFrameStats();
 }

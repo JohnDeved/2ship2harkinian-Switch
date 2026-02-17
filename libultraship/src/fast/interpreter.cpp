@@ -5179,6 +5179,30 @@ static constexpr std::array ucode_handlers = {
     &s2dexHandlers,  // ucode_s2dex
 };
 
+static std::array<GfxOpcodeHandlerFunc, std::numeric_limits<uint8_t>::max() + 1> sDispatchHandlers = {};
+
+static void RebuildDispatchTable(UcodeHandlers ucode) {
+    sDispatchHandlers.fill(nullptr);
+
+    for (uint16_t i = 0; i <= std::numeric_limits<uint8_t>::max(); ++i) {
+        const int8_t opcode = static_cast<int8_t>(i);
+
+        if (GfxOpcodeHandlerFunc handler = rdpHandlers.get(opcode)) {
+            sDispatchHandlers[i] = handler;
+        }
+
+        if (ucode < ucode_handlers.size()) {
+            if (GfxOpcodeHandlerFunc handler = ucode_handlers[ucode]->get(opcode)) {
+                sDispatchHandlers[i] = handler;
+            }
+        }
+
+        if (GfxOpcodeHandlerFunc handler = otrHandlers.get(opcode)) {
+            sDispatchHandlers[i] = handler;
+        }
+    }
+}
+
 const char* GfxGetOpcodeName(int8_t opcode) {
     if (otrHandlers.contains(opcode)) {
         return otrHandlers.at(opcode).first;
@@ -5209,6 +5233,7 @@ static void gfx_set_ucode_handler(UcodeHandlers ucode) {
     assert(ucode < ucode_max);
     Interpreter* gfx = sInstance;
     ucode_handler_index = ucode;
+    RebuildDispatchTable(ucode);
 
     // Reset some RSP state values upon ucode load to deal with hardware quirks discovered by emulators
     switch (ucode) {
@@ -5223,61 +5248,6 @@ static void gfx_set_ucode_handler(UcodeHandlers ucode) {
         default:
             break;
     }
-}
-
-static void gfx_step() {
-    auto& cmd = g_exec_stack.currCmd();
-    auto cmd0 = cmd;
-    int8_t opcode = (int8_t)(cmd->words.w0 >> 24);
-
-#ifdef USE_GBI_TRACE
-    if (cmd->words.trace.valid &&
-        Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger("gEnableGFXTrace", 0)) {
-#define TRACE                                  \
-    "\n====================================\n" \
-    " - CMD: {:02X}\n"                         \
-    " - Path: {}:{}\n"                         \
-    " - W0: {:08X}\n"                          \
-    " - W1: {:08X}\n"                          \
-    "===================================="
-        SPDLOG_INFO(TRACE, (uint8_t)opcode, cmd->words.trace.file, cmd->words.trace.idx, cmd->words.w0, cmd->words.w1);
-    }
-#endif
-
-    if (opcode == F3DEX2_G_LOAD_UCODE) {
-        gfx_load_ucode_handler_f3dex2(&cmd);
-        return;
-        // Instead of having a handler for each ucode for switching ucode, just check for it early and return.
-    }
-
-    // Single-lookup dispatch: get() returns handler or nullptr in one array access.
-    // OTR handlers take priority (custom overrides), then try the active ucode
-    // table (most common: G_VTX, G_TRI1, G_MTX, etc.), then RDP.
-    GfxOpcodeHandlerFunc handler = otrHandlers.get(opcode);
-    if (!handler) {
-        if (ucode_handler_index < ucode_handlers.size()) {
-            handler = ucode_handlers[ucode_handler_index]->get(opcode);
-        }
-        if (!handler) {
-            handler = rdpHandlers.get(opcode);
-        }
-        if (!handler) {
-            if (ucode_handler_index < ucode_handlers.size()) {
-                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}", (uint8_t)opcode,
-                                (uint32_t)ucode_handler_index);
-            } else {
-                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}", (uint8_t)opcode, (uint32_t)ucode_handler_index);
-            }
-        }
-    }
-
-    if (handler) {
-        if (handler(&cmd)) {
-            return;
-        }
-    }
-
-    ++cmd;
 }
 
 void Interpreter::SpReset() {
@@ -5342,6 +5312,7 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     }
 
     ucode_handler_index = UcodeHandlers::ucode_f3dex2;
+    RebuildDispatchTable(ucode_handler_index);
 }
 
 void Interpreter::Destroy() {
@@ -5533,7 +5504,45 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             }
             g_exec_stack.gfx_path.pop_back();
         }
-        gfx_step();
+        auto& stepCmd = g_exec_stack.currCmd();
+        int8_t opcode = (int8_t)(stepCmd->words.w0 >> 24);
+
+#ifdef USE_GBI_TRACE
+        if (stepCmd->words.trace.valid &&
+            Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger("gEnableGFXTrace", 0)) {
+#define TRACE                                  \
+    "\n====================================\n" \
+    " - CMD: {:02X}\n"                         \
+    " - Path: {}:{}\n"                         \
+    " - W0: {:08X}\n"                          \
+    " - W1: {:08X}\n"                          \
+    "===================================="
+            SPDLOG_INFO(TRACE, (uint8_t)opcode, stepCmd->words.trace.file, stepCmd->words.trace.idx, stepCmd->words.w0,
+                        stepCmd->words.w1);
+        }
+#endif
+
+        if (opcode == F3DEX2_G_LOAD_UCODE) {
+            gfx_load_ucode_handler_f3dex2(&stepCmd);
+            continue;
+            // Instead of having a handler for each ucode for switching ucode, just check for it early and continue.
+        }
+
+        GfxOpcodeHandlerFunc handler = sDispatchHandlers[static_cast<uint8_t>(opcode)];
+        if (!handler) {
+            if (ucode_handler_index < ucode_handlers.size()) {
+                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}", (uint8_t)opcode,
+                                (uint32_t)ucode_handler_index);
+            } else {
+                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}", (uint8_t)opcode, (uint32_t)ucode_handler_index);
+            }
+        }
+
+        if (handler && handler(&stepCmd)) {
+            continue;
+        }
+
+        ++stepCmd;
     }
 
     Flush();
@@ -5579,6 +5588,7 @@ void Interpreter::EndFrame() {
 
 void gfx_set_target_ucode(UcodeHandlers ucode) {
     ucode_handler_index = ucode;
+    RebuildDispatchTable(ucode);
 }
 
 int Interpreter::GetTargetFps() {

@@ -439,6 +439,11 @@ static struct {
     bool processing = false;
     bool isContextOwnedByRenderThread = false;
     bool clearTextureCacheRequested = false;
+    bool pixelDepthPrepareRequested = false;
+    bool pixelDepthReadRequested = false;
+    float pixelDepthX = 0.0f;
+    float pixelDepthY = 0.0f;
+    uint16_t pixelDepthResult = 0;
     Gfx* commands = nullptr;
     std::vector<std::unordered_map<Mtx*, MtxF>> mtxReplacements;
 } renderThread;
@@ -506,6 +511,10 @@ static void EnsureRenderThreadStarted() {
             Gfx* commands = nullptr;
             std::vector<std::unordered_map<Mtx*, MtxF>> mtxReplacements;
             bool clearTextureCacheRequested = false;
+            bool pixelDepthPrepareRequested = false;
+            bool pixelDepthReadRequested = false;
+            float pixelDepthX = 0.0f;
+            float pixelDepthY = 0.0f;
 
             {
                 std::unique_lock<std::mutex> lock(renderThread.mutex);
@@ -520,11 +529,31 @@ static void EnsureRenderThreadStarted() {
                 commands = renderThread.commands;
                 mtxReplacements = std::move(renderThread.mtxReplacements);
                 clearTextureCacheRequested = renderThread.clearTextureCacheRequested;
+                pixelDepthPrepareRequested = renderThread.pixelDepthPrepareRequested;
+                pixelDepthReadRequested = renderThread.pixelDepthReadRequested;
+                pixelDepthX = renderThread.pixelDepthX;
+                pixelDepthY = renderThread.pixelDepthY;
                 renderThread.clearTextureCacheRequested = false;
+                renderThread.pixelDepthPrepareRequested = false;
+                renderThread.pixelDepthReadRequested = false;
             }
 
             if (clearTextureCacheRequested) {
                 gfx_texture_cache_clear();
+            }
+
+            if (pixelDepthPrepareRequested || pixelDepthReadRequested) {
+                auto renderWnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
+                if (renderWnd != nullptr) {
+                    if (pixelDepthPrepareRequested) {
+                        renderWnd->GetPixelDepthPrepare(pixelDepthX, pixelDepthY);
+                    }
+                    if (pixelDepthReadRequested) {
+                        uint16_t result = renderWnd->GetPixelDepth(pixelDepthX, pixelDepthY);
+                        std::lock_guard<std::mutex> lock(renderThread.mutex);
+                        renderThread.pixelDepthResult = result;
+                    }
+                }
             }
 
             if (commands != nullptr) {
@@ -600,6 +629,49 @@ static void RequestTextureCacheClearOnRenderThread() {
     renderThread.processing = true;
     renderThread.cv_to_thread.notify_one();
     WaitForRenderThreadIdle(lock);
+}
+
+static void RequestPixelDepthPrepareOnRenderThread(float x, float y) {
+    if (!IsRenderThreadRunning()) {
+        auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
+        if (wnd != nullptr) {
+            wnd->GetPixelDepthPrepare(x, y);
+        }
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock(renderThread.mutex);
+    WaitForRenderThreadIdle(lock);
+    renderThread.pixelDepthX = x;
+    renderThread.pixelDepthY = y;
+    renderThread.pixelDepthPrepareRequested = true;
+    renderThread.commands = nullptr;
+    renderThread.mtxReplacements.clear();
+    renderThread.processing = true;
+    renderThread.cv_to_thread.notify_one();
+    WaitForRenderThreadIdle(lock);
+}
+
+static uint16_t RequestPixelDepthReadOnRenderThread(float x, float y) {
+    if (!IsRenderThreadRunning()) {
+        auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
+        if (wnd != nullptr) {
+            return wnd->GetPixelDepth(x, y);
+        }
+        return 0;
+    }
+
+    std::unique_lock<std::mutex> lock(renderThread.mutex);
+    WaitForRenderThreadIdle(lock);
+    renderThread.pixelDepthX = x;
+    renderThread.pixelDepthY = y;
+    renderThread.pixelDepthReadRequested = true;
+    renderThread.commands = nullptr;
+    renderThread.mtxReplacements.clear();
+    renderThread.processing = true;
+    renderThread.cv_to_thread.notify_one();
+    WaitForRenderThreadIdle(lock);
+    return renderThread.pixelDepthResult;
 }
 #endif
 
@@ -1354,24 +1426,30 @@ extern "C" void OTRGetPixelDepthPrepare(float x, float y) {
     // Invert the Y value to match the origin values used in the renderer
     float adjustedY = SCREEN_HEIGHT - y;
 
+#if defined(__SWITCH__)
+    RequestPixelDepthPrepareOnRenderThread(x, adjustedY);
+#else
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
     if (wnd == nullptr) {
         return;
     }
-
     wnd->GetPixelDepthPrepare(x, adjustedY);
+#endif
 }
 
 extern "C" uint16_t OTRGetPixelDepth(float x, float y) {
     // Invert the Y value to match the origin values used in the renderer
     float adjustedY = SCREEN_HEIGHT - y;
 
+#if defined(__SWITCH__)
+    return RequestPixelDepthReadOnRenderThread(x, adjustedY);
+#else
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
     if (wnd == nullptr) {
         return 0;
     }
-
     return wnd->GetPixelDepth(x, adjustedY);
+#endif
 }
 
 extern "C" bool ResourceMgr_IsAltAssetsEnabled() {

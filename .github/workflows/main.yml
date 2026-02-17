@@ -106,6 +106,8 @@ jobs:
       CCACHE_NOHASHDIR: 1
     steps:
     - uses: actions/checkout@v6
+    - name: Fix dubious ownership (container)
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
     - name: Init submodules
       run: git submodule update --init --force --recursive
 
@@ -117,16 +119,6 @@ jobs:
         sudo dkp-pacman -R --noconfirm switch-tinyxml2
         wget https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.sh -O /tmp/cmake.sh
         sudo sh /tmp/cmake.sh --prefix=/usr/local/ --exclude-subdir
-
-    - name: Fix dubious ownership error
-      if: ${{ vars.LINUX_RUNNER }}
-      run: git config --global --add safe.directory '*'
-
-    - uses: actions/checkout@v6
-      if: ${{ vars.LINUX_RUNNER }}
-    - name: Init submodules (self-hosted)
-      if: ${{ vars.LINUX_RUNNER }}
-      run: git submodule update --init --force --recursive
 
     - name: ccache (minimal key, max hits)
       uses: hendrikmuhs/ccache-action@v1.2.20

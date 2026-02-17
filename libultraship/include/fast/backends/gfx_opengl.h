@@ -116,17 +116,6 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     ShaderProgram* mCurrentShaderProgram;
 
     GLuint mOpenglVbo = 0;
-#if defined(__SWITCH__) || defined(USE_OPENGLES)
-    size_t mVboAllocatedSize = 0; // Track allocated VBO size for orphan+subdata pattern
-    // Ring buffer: write VBO data sequentially to avoid orphaning on every draw.
-    // In heavy scenes (~1100 draws/frame), eliminates ~1100 orphan calls.
-    // In light scenes (<200 draws), uses simple orphan+SubData from offset 0
-    // since glDrawArrays(first=0) is faster than first=N on some drivers.
-    static constexpr size_t VBO_RING_SIZE = 8 * 1024 * 1024; // 8MB ring buffer
-    size_t mVboRingOffset = 0; // Current write offset in the ring buffer
-    uint32_t mDrawCallsThisFrame = 0; // Track draws per frame for adaptive strategy
-    bool mUseRingBuffer = false; // Adaptive: true for heavy scenes (>200 draws/frame)
-#endif
 #if defined(__APPLE__) || defined(USE_OPENGLES)
     GLuint mOpenglVao;
 #endif

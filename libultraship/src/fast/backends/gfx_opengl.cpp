@@ -701,51 +701,8 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
 
     // printf("flushing %d tris\n", buf_vbo_num_tris);
     const size_t uploadBytes = sizeof(float) * buf_vbo_len;
-#if defined(__SWITCH__) || defined(USE_OPENGLES)
-    mDrawCallsThisFrame++;
-
-    // Ensure VBO is allocated at ring buffer size
-    if (mVboAllocatedSize < VBO_RING_SIZE) {
-        glBufferData(GL_ARRAY_BUFFER, VBO_RING_SIZE, NULL, GL_STREAM_DRAW);
-        mVboAllocatedSize = VBO_RING_SIZE;
-        mVboRingOffset = 0;
-    }
-
-    if (uploadBytes > VBO_RING_SIZE) {
-        // Oversized upload: fall back to direct upload (shouldn't happen in practice)
-        glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
-        mVboAllocatedSize = uploadBytes; // Track actual size to avoid redundant realloc
-        glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
-    } else if (mUseRingBuffer) {
-        // Heavy scene path: ring buffer to avoid per-draw orphans.
-        // Align ring offset to current vertex stride so glDrawArrays(first=N)
-        // reads from the correct byte offset. Different shaders have different
-        // vertex sizes, so the offset from a previous draw may not be aligned.
-        const size_t floatsPerVertex = buf_vbo_len / (buf_vbo_num_tris * 3);
-        const size_t vertexStride = floatsPerVertex * sizeof(float);
-        size_t alignedOffset = ((mVboRingOffset + vertexStride - 1) / vertexStride) * vertexStride;
-        if (alignedOffset + uploadBytes > VBO_RING_SIZE) {
-            // Ring wraps: orphan to get a fresh buffer
-            glBufferData(GL_ARRAY_BUFFER, VBO_RING_SIZE, NULL, GL_STREAM_DRAW);
-            alignedOffset = 0;
-        }
-        glBufferSubData(GL_ARRAY_BUFFER, alignedOffset, uploadBytes, buf_vbo);
-        const GLint firstVertex = (GLint)(alignedOffset / vertexStride);
-        glDrawArrays(GL_TRIANGLES, firstVertex, 3 * buf_vbo_num_tris);
-        mVboRingOffset = alignedOffset + uploadBytes;
-    } else {
-        // Light scene path: simple orphan+SubData from offset 0.
-        // glDrawArrays(first=0) is faster on some drivers (no attribute
-        // pointer recalculation), and in light scenes the orphan cost
-        // is minimal (~100-200 draws vs ~1100 in heavy scenes).
-        glBufferData(GL_ARRAY_BUFFER, mVboAllocatedSize, NULL, GL_STREAM_DRAW);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, uploadBytes, buf_vbo);
-        glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
-    }
-#else
     glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
-#endif
 }
 
 void GfxRenderingAPIOGL::Init() {
@@ -789,13 +746,6 @@ void GfxRenderingAPIOGL::OnResize() {
 
 void GfxRenderingAPIOGL::StartFrame() {
     mFrameCount++;
-#if defined(__SWITCH__) || defined(USE_OPENGLES)
-    // Adaptive VBO strategy: use ring buffer for heavy scenes (>200 draws/frame),
-    // simple orphan+SubData for light scenes. Decision based on previous frame.
-    mUseRingBuffer = (mDrawCallsThisFrame > 200);
-    mDrawCallsThisFrame = 0;
-    mVboRingOffset = 0;
-#endif
 }
 
 void GfxRenderingAPIOGL::EndFrame() {

@@ -428,6 +428,9 @@ static struct {
 } audio;
 
 #if defined(__SWITCH__)
+static constexpr int kRenderThreadCore = 1;
+static constexpr uint64_t kRenderThreadCoreMask = (1ULL << kRenderThreadCore);
+
 static struct {
     std::thread thread;
     std::condition_variable cv_to_thread, cv_from_thread;
@@ -444,9 +447,17 @@ static struct {
 void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>>& mtx_replacements);
 
 #if defined(__SWITCH__)
+static bool IsRenderThreadRunning() {
+    std::lock_guard<std::mutex> lock(renderThread.mutex);
+    return renderThread.running;
+}
+
 static void EnsureRenderThreadStarted() {
-    if (renderThread.running || renderThread.thread.joinable()) {
-        return;
+    {
+        std::lock_guard<std::mutex> lock(renderThread.mutex);
+        if (renderThread.running || renderThread.thread.joinable()) {
+            return;
+        }
     }
 
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
@@ -459,11 +470,14 @@ static void EnsureRenderThreadStarted() {
         return;
     }
 
-    renderThread.running = true;
+    {
+        std::lock_guard<std::mutex> lock(renderThread.mutex);
+        renderThread.running = true;
+    }
     renderThread.thread = std::thread([]() {
         // Pin render thread to core 1 so GL + DL work does not run on game thread core.
         // preferredCore=1 and mask=(1<<1) pins strictly to core 1.
-        Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, 1, (1U << 1));
+        Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, kRenderThreadCore, kRenderThreadCoreMask);
         if (R_FAILED(rc)) {
             SPDLOG_ERROR("B1 render thread: failed to pin to core 1 (rc=0x{:X})", (uint32_t)rc);
             std::lock_guard<std::mutex> lock(renderThread.mutex);
@@ -527,7 +541,7 @@ static void EnsureRenderThreadStarted() {
 }
 
 static void StopRenderThread() {
-    if (!renderThread.running) {
+    if (!IsRenderThreadRunning()) {
         return;
     }
 
@@ -544,6 +558,7 @@ static void StopRenderThread() {
 }
 
 static void WaitForRenderThreadIdle(std::unique_lock<std::mutex>& lock) {
+    // Precondition: caller already owns renderThread.mutex through `lock`.
     renderThread.cv_from_thread.wait(lock, [] { return !renderThread.running || !renderThread.processing; });
 }
 
@@ -553,7 +568,7 @@ static void WaitForRenderThreadIdle(std::unique_lock<std::mutex>& lock) {
 // it falls back to synchronous execution on the caller thread.
 static void SubmitRenderFrame(Gfx* commands, std::vector<std::unordered_map<Mtx*, MtxF>>&& mtxReplacements) {
     EnsureRenderThreadStarted();
-    if (!renderThread.running) {
+    if (!IsRenderThreadRunning()) {
         RunCommands(commands, mtxReplacements);
         return;
     }
@@ -571,7 +586,7 @@ static void SubmitRenderFrame(Gfx* commands, std::vector<std::unordered_map<Mtx*
 }
 
 static void RequestTextureCacheClearOnRenderThread() {
-    if (!renderThread.running) {
+    if (!IsRenderThreadRunning()) {
         gfx_texture_cache_clear();
         return;
     }
@@ -1125,7 +1140,7 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
     // events are already handled on the game thread before SubmitRenderFrame().
     // So we only handle events here for the non-threaded fallback path.
 #if defined(__SWITCH__)
-    if (!renderThread.running) {
+    if (!IsRenderThreadRunning()) {
         wnd->HandleEvents();
     }
 #else

@@ -122,7 +122,7 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
 
     // Per-iteration VBO batching: orphan once per DL iteration, then use
     // glBufferSubData + glDrawArrays(first=N) for each draw within the
-    // iteration. Reduces ~950 glBufferData allocations to 1 per iteration.
+    // iteration. Reduces ~320 glBufferData allocations per iteration to 1.
     static constexpr size_t VBO_ITER_SIZE = 2 * 1024 * 1024; // 2MB per iteration
     size_t mVboIterOffset = 0;  // Running byte offset within current iteration's VBO
     bool mVboIterActive = false; // True after orphaning for this iteration

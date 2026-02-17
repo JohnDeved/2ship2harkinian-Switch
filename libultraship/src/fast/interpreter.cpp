@@ -2596,7 +2596,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     struct GfxClipParameters clip_parameters = mCachedClipParams;
 
     // Pre-compute texture parameters that are constant across all 3 vertices
-    const bool linearFilter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
+    const bool linearFilter = mCachedModeFlags.linear_filter;
     const float linearOffset = (linearFilter && !is_rect) ? 0.5f : 0.0f;
     float invTexWidth[2], invTexHeight[2];
     float clampSVal[2], clampTVal[2];

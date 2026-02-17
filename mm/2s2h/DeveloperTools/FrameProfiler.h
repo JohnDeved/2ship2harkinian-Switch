@@ -78,10 +78,6 @@ typedef enum {
     PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER,
     PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS,
 
-    // Triangle processing sub-timers (breakdown of the tri processing phase)
-    PROFILE_COUNTER_GL_TIME_TRI_STATE_MS,  // state check + flush overhead inside tri
-    PROFILE_COUNTER_GL_TIME_TRI_VBO_MS,    // VBO fill (vertex loop) inside tri
-
     PROFILE_COUNTER_MAX
 } ProfileCounter;
 

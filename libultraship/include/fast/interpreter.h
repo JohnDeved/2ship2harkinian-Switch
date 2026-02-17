@@ -401,8 +401,6 @@ struct Fast3DStats {
     uint64_t timeMatrixOps;    // matrix multiply, push/pop, normal dir calculations
     uint64_t timePixelDepth;   // pixel depth prepare + readback
     uint64_t timeFrameSetup;   // Run() setup/teardown, framebuffer ops, clear, MSAA resolve
-    uint64_t timeTriStateCheck; // inside tri: state check + flush overhead
-    uint64_t timeTriVboFill;    // inside tri: VBO fill (vertex loop writing floats)
 
     float avgBatchSize;
     float usPerTriangle;

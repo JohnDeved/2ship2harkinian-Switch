@@ -2131,11 +2131,6 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     }
 
     // --- State check section: depth, viewport, texture, shader, alpha ---
-    // Timer for the entire state-check + flush overhead within triangle processing
-    uint64_t stateCheckStart = 0;
-    if (mProfilingEnabled) {
-        stateCheckStart = Fast3DTimerNowNs();
-    }
 
     bool depth_test = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
     bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
@@ -2517,14 +2512,6 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         grayA = mRdp->grayscale_color.a * INV_255;
     }
 
-    // End state check timing, begin VBO fill timing
-    uint64_t vboFillStart = 0;
-    if (mProfilingEnabled) {
-        uint64_t now = Fast3DTimerNowNs();
-        mFrameStats.timeTriStateCheck += now - stateCheckStart;
-        vboFillStart = now;
-    }
-
     // Write the float pointer once to avoid repeated member access
     float* __restrict vbo = mBufVbo + mBufVboLen;
 
@@ -2643,11 +2630,6 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     }
 
     mBufVboLen = (size_t)(vbo - mBufVbo);
-
-    // End VBO fill timing
-    if (mProfilingEnabled) {
-        mFrameStats.timeTriVboFill += Fast3DTimerNowNs() - vboFillStart;
-    }
 
     if (++mBufVboNumTris == MAX_TRI_BUFFER) {
         if (mProfilingEnabled) {

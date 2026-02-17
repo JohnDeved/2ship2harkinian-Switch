@@ -119,9 +119,11 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     size_t mVboAllocatedSize = 0; // Track allocated VBO size for orphan+subdata pattern
     // Ring buffer state: write VBO data sequentially to avoid orphaning on every draw.
-    // 4MB accommodates ~1100 draws/frame × avg 6.5 tris × ~50 floats/tri ≈ 1.4MB,
-    // with headroom for heavier scenes and alignment. Well within Switch's 4GB RAM.
-    static constexpr size_t VBO_RING_SIZE = 4 * 1024 * 1024; // 4MB ring buffer
+    // Per DL iteration: ~8K tris × ~80 bytes avg = ~0.64MB. Game runs 3 DL iterations
+    // per update: ~1.9MB total. GPU may still be reading the previous frame, so we need
+    // at least 2 frames × 1.9MB = 3.8MB. 8MB gives 4+ frames of headroom to eliminate
+    // all mid-frame orphan stalls on Switch.
+    static constexpr size_t VBO_RING_SIZE = 8 * 1024 * 1024; // 8MB ring buffer
     size_t mVboRingOffset = 0; // Current write offset in the ring buffer
 #endif
 #if defined(__APPLE__) || defined(USE_OPENGLES)

@@ -619,24 +619,6 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "Tex reload skips (saved):       " << std::fixed << std::setprecision(0) << texReloadSkips << std::endl;
     out << std::endl;
 
-    // Triangle processing sub-breakdown
-    float triStateMs = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TRI_STATE_MS);
-    float triVboMs = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TRI_VBO_MS);
-    float triOtherMs = glTimeTri - triStateMs - triVboMs;
-    if (triOtherMs < 0.0f) triOtherMs = 0.0f;
-    out << "--- Triangle Processing Breakdown ---" << std::endl;
-    out << "Total Triangle Processing:      " << std::fixed << std::setprecision(2) << glTimeTri << " ms" << std::endl;
-    out << "  State Check + Flush:          " << std::fixed << std::setprecision(2) << triStateMs << " ms";
-    if (glTimeTri > 0.01f) out << " (" << std::setprecision(1) << (triStateMs / glTimeTri * 100.0f) << "%)";
-    out << std::endl;
-    out << "  VBO Fill (3 verts/tri):       " << std::fixed << std::setprecision(2) << triVboMs << " ms";
-    if (glTimeTri > 0.01f) out << " (" << std::setprecision(1) << (triVboMs / glTimeTri * 100.0f) << "%)";
-    out << std::endl;
-    out << "  Cull + Clip + Other:          " << std::fixed << std::setprecision(2) << triOtherMs << " ms";
-    if (glTimeTri > 0.01f) out << " (" << std::setprecision(1) << (triOtherMs / glTimeTri * 100.0f) << "%)";
-    out << std::endl;
-    out << std::endl;
-
     // Frame stability analysis from ring buffer
     out << "--- Frame Stability (over " << PROFILE_RING_SIZE << " frames) ---" << std::endl;
     {
@@ -1030,25 +1012,6 @@ void FrameProfilerWindow::DrawElement() {
         ImGui::TextColored(t.color, "  %-22s %6.2f ms (%4.1f%%)", t.name, t.ms, pct);
         ImGui::SameLine();
         ImGui::ProgressBar(frac, ImVec2(150, 0), "");
-    }
-
-    // Triangle processing sub-breakdown
-    float triStateMs = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TRI_STATE_MS);
-    float triVboMs = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_TRI_VBO_MS);
-    float triOtherMs = glTimeTri - triStateMs - triVboMs;
-    if (triOtherMs < 0.0f) triOtherMs = 0.0f;
-    if (glTimeTri > 0.1f && ImGui::TreeNode("Triangle Processing Breakdown")) {
-        float triMax = glTimeTri;
-        auto triBar = [&](const char* label, float ms, ImVec4 color) {
-            float pct = (glTimeTri > 0.01f) ? (ms / glTimeTri * 100.0f) : 0.0f;
-            ImGui::TextColored(color, "    %-20s %6.2f ms (%4.1f%%)", label, ms, pct);
-            ImGui::SameLine();
-            ImGui::ProgressBar(ms / triMax, ImVec2(120, 0), "");
-        };
-        triBar("State Check+Flush", triStateMs, ImVec4(1.0f, 0.5f, 0.5f, 1.0f));
-        triBar("VBO Fill (3 verts)", triVboMs, ImVec4(0.5f, 0.8f, 1.0f, 1.0f));
-        triBar("Cull+Clip+Other", triOtherMs, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
-        ImGui::TreePop();
     }
 
     // Cost-per-unit estimates

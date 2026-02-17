@@ -428,9 +428,12 @@ struct Fast3DStats {
         usPerTriangle = trianglesSubmitted > 0 ? (float)timeTotal / (float)trianglesSubmitted / 1000.0f : 0.0f;
         usPerDrawCall = drawCalls > 0 ? (float)timeTotal / (float)drawCalls / 1000.0f : 0.0f;
 
+        // Note: timeDrawSubmit is NOT in accounted because it is nested inside
+        // timeTriProcessing (Flush->DrawTriangles called from GfxSpTri1).
+        // Including it would double-count, inflating dispatch artificially.
         const uint64_t accounted = timeTriProcessing + timeTextureSetup + timeShaderSetup +
-                                   timeDrawSubmit + timeVertexLoad + timeMatrixOps +
-                                   timePixelDepth + timeFrameSetup;
+                                    timeVertexLoad + timeMatrixOps +
+                                    timePixelDepth + timeFrameSetup;
         timeGbiDispatch = timeTotal > accounted ? (timeTotal - accounted) : 0;
     }
 };

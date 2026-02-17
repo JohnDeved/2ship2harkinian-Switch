@@ -559,8 +559,10 @@ static void FrameProfiler_ExportSnapshot(void) {
     // GL timing breakdown (multi-line for readability)
     out << "Fast3D Timing Breakdown:" << std::endl;
     out << "  Total:                        " << std::fixed << std::setprecision(2) << glTimeTotal << " ms" << std::endl;
-    out << "  Triangle Processing:          " << std::fixed << std::setprecision(2) << glTimeTri << " ms" << std::endl;
-    out << "  Draw Submit (GL calls):       " << std::fixed << std::setprecision(2) << glTimeDraw << " ms" << std::endl;
+    float glTimeTriExcl = glTimeTri > glTimeDraw ? glTimeTri - glTimeDraw : 0.0f;
+    out << "  Triangle Processing:          " << std::fixed << std::setprecision(2) << glTimeTri << " ms (incl. draw submit)" << std::endl;
+    out << "    Per-vertex work:            " << std::fixed << std::setprecision(2) << glTimeTriExcl << " ms" << std::endl;
+    out << "    Draw Submit (GL calls):     " << std::fixed << std::setprecision(2) << glTimeDraw << " ms" << std::endl;
     out << "  Vertex Transform:             " << std::fixed << std::setprecision(2) << glTimeVtx << " ms" << std::endl;
     out << "  Texture Setup:                " << std::fixed << std::setprecision(2) << glTimeTex << " ms" << std::endl;
     out << "  Matrix Operations:            " << std::fixed << std::setprecision(2) << glTimeMtx << " ms" << std::endl;
@@ -573,8 +575,9 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << std::endl;
     out << "Fast3D Time Distribution (% of DL Process):" << std::endl;
     if (glTimeTotal > 0.01f) {
-        out << "  Triangle Processing:          " << std::fixed << std::setprecision(1) << (glTimeTri / glTimeTotal * 100.0f) << "%" << std::endl;
-        out << "  Draw Submit (GL calls):       " << std::fixed << std::setprecision(1) << (glTimeDraw / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "  Triangle Processing:          " << std::fixed << std::setprecision(1) << (glTimeTri / glTimeTotal * 100.0f) << "% (incl. draw submit)" << std::endl;
+        out << "    Per-vertex work:            " << std::fixed << std::setprecision(1) << (glTimeTriExcl / glTimeTotal * 100.0f) << "%" << std::endl;
+        out << "    Draw Submit (GL calls):     " << std::fixed << std::setprecision(1) << (glTimeDraw / glTimeTotal * 100.0f) << "%" << std::endl;
         out << "  Vertex Transform:             " << std::fixed << std::setprecision(1) << (glTimeVtx / glTimeTotal * 100.0f) << "%" << std::endl;
         out << "  Texture Setup:                " << std::fixed << std::setprecision(1) << (glTimeTex / glTimeTotal * 100.0f) << "%" << std::endl;
         out << "  Matrix Operations:            " << std::fixed << std::setprecision(1) << (glTimeMtx / glTimeTotal * 100.0f) << "%" << std::endl;
@@ -808,7 +811,7 @@ static void FrameProfiler_ExportSnapshot(void) {
             // Ranked GL sub-phases (top 3)
             struct GlPhaseInfo { const char* name; float ms; const char* hint; };
             GlPhaseInfo glPhases[] = {
-                {"tri (VBO fill)", glTimeTri, "Pre-compute combiner inputs, NEON vectorize inner loop, reduce per-vertex work"},
+                {"tri (per-vertex work)", glTimeTriExcl, "Pre-compute combiner inputs, NEON vectorize inner loop, reduce per-vertex work"},
                 {"draw (GL submit)", glTimeDraw, "Reduce draw calls by batching, minimize state-change flushes, lazy state"},
                 {"vtx (vertex transform)", glTimeVtx, "NEON-optimize matrix*vertex, reduce lighting calculations"},
                 {"tex (texture setup)", glTimeTex, "NEON texture conversion, increase texture cache hit rate"},
@@ -1249,17 +1252,19 @@ void FrameProfilerWindow::DrawElement() {
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "--- Fast3D Timing Breakdown (%.2f ms total) ---", glTimeTotal);
     float timingBarMax = glTimeTotal > 0.01f ? glTimeTotal : 1.0f;
 
+    float glTimeTriExcl = glTimeTri > glTimeDraw ? glTimeTri - glTimeDraw : 0.0f;
     struct TimingEntry { const char* name; float ms; ImVec4 color; float baseline; };
     TimingEntry timings[] = {
         { "Triangle Processing", glTimeTri, ImVec4(1.0f, 0.4f, 0.4f, 1.0f), sPrevSnapshot.glTimeTri },
-        { "Draw Submit (GL)",    glTimeDraw, ImVec4(1.0f, 0.7f, 0.3f, 1.0f), sPrevSnapshot.glTimeDraw },
+        { "  Per-vertex work",   glTimeTriExcl, ImVec4(1.0f, 0.5f, 0.5f, 1.0f), 0.0f },
+        { "  Draw Submit (GL)",  glTimeDraw, ImVec4(1.0f, 0.7f, 0.3f, 1.0f), sPrevSnapshot.glTimeDraw },
         { "Vertex Load",         glTimeVtx, ImVec4(0.4f, 0.8f, 1.0f, 1.0f), sPrevSnapshot.glTimeVtx },
         { "Texture Setup",       glTimeTex, ImVec4(0.4f, 1.0f, 0.6f, 1.0f), sPrevSnapshot.glTimeTex },
         { "Matrix Ops",          glTimeMtx, ImVec4(0.8f, 0.6f, 1.0f, 1.0f), 0.0f },
         { "Frame Setup/Teardown",glTimeSetup, ImVec4(0.6f, 0.6f, 0.6f, 1.0f), 0.0f },
         { "Pixel Depth",         glTimeDepth, ImVec4(1.0f, 1.0f, 0.4f, 1.0f), 0.0f },
         { "Shader Setup",        glTimeShader, ImVec4(0.4f, 1.0f, 1.0f, 1.0f), 0.0f },
-        { "Dispatch (residual)", glTimeDispatch, ImVec4(0.7f, 0.7f, 0.7f, 1.0f), 0.0f },
+        { "Dispatch (cmd walk)", glTimeDispatch, ImVec4(0.7f, 0.7f, 0.7f, 1.0f), 0.0f },
     };
     for (const auto& t : timings) {
         if (t.ms < 0.001f) continue; // skip zero entries

@@ -3760,6 +3760,12 @@ void gfx_copy_framebuffer(int fb_dst_id, int fb_src_id, bool copyOnce, bool* has
 typedef bool (*GfxOpcodeHandlerFunc)(F3DGfx** gfx);
 static void gfx_set_ucode_handler(UcodeHandlers ucode);
 
+// A2: Unified dispatch table — single flat 256-entry array pre-merged from
+// otrHandlers + ucode_handlers[current] + rdpHandlers at ucode-load time.
+// Priority: OTR overrides > ucode-specific > RDP (same as original cascade).
+static GfxOpcodeHandlerFunc sUnifiedHandlers[256] = {};
+static void RebuildUnifiedDispatchTable();
+
 bool gfx_load_ucode_handler_f3dex2(F3DGfx** cmd0) {
     F3DGfx* cmd = *cmd0;
     gfx_set_ucode_handler((UcodeHandlers)(cmd->words.w0 & 0xFFFFFF));
@@ -5178,6 +5184,31 @@ static constexpr std::array ucode_handlers = {
     &s2dexHandlers,  // ucode_s2dex
 };
 
+// A2: Rebuild the unified dispatch table from the three source tables.
+// Called at ucode-load time and at initial Run() setup.
+static void RebuildUnifiedDispatchTable() {
+    // Start with RDP handlers (lowest priority)
+    for (int i = 0; i < 256; ++i) {
+        sUnifiedHandlers[i] = rdpHandlers.get(static_cast<int8_t>(i));
+    }
+    // Layer ucode-specific handlers (medium priority)
+    if (ucode_handler_index < ucode_handlers.size()) {
+        for (int i = 0; i < 256; ++i) {
+            GfxOpcodeHandlerFunc h = ucode_handlers[ucode_handler_index]->get(static_cast<int8_t>(i));
+            if (h) {
+                sUnifiedHandlers[i] = h;
+            }
+        }
+    }
+    // Layer OTR handlers (highest priority — overrides everything)
+    for (int i = 0; i < 256; ++i) {
+        GfxOpcodeHandlerFunc h = otrHandlers.get(static_cast<int8_t>(i));
+        if (h) {
+            sUnifiedHandlers[i] = h;
+        }
+    }
+}
+
 const char* GfxGetOpcodeName(int8_t opcode) {
     if (otrHandlers.contains(opcode)) {
         return otrHandlers.at(opcode).first;
@@ -5209,6 +5240,9 @@ static void gfx_set_ucode_handler(UcodeHandlers ucode) {
     Interpreter* gfx = sInstance;
     ucode_handler_index = ucode;
 
+    // Rebuild the unified dispatch table for the new ucode
+    RebuildUnifiedDispatchTable();
+
     // Reset some RSP state values upon ucode load to deal with hardware quirks discovered by emulators
     switch (ucode) {
         case ucode_f3d:
@@ -5224,14 +5258,7 @@ static void gfx_set_ucode_handler(UcodeHandlers ucode) {
     }
 }
 
-static void gfx_step() {
-    auto& cmd = g_exec_stack.currCmd();
-    auto cmd0 = cmd;
-    int8_t opcode = (int8_t)(cmd->words.w0 >> 24);
-
 #ifdef USE_GBI_TRACE
-    if (cmd->words.trace.valid &&
-        Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger("gEnableGFXTrace", 0)) {
 #define TRACE                                  \
     "\n====================================\n" \
     " - CMD: {:02X}\n"                         \
@@ -5239,45 +5266,7 @@ static void gfx_step() {
     " - W0: {:08X}\n"                          \
     " - W1: {:08X}\n"                          \
     "===================================="
-        SPDLOG_INFO(TRACE, (uint8_t)opcode, cmd->words.trace.file, cmd->words.trace.idx, cmd->words.w0, cmd->words.w1);
-    }
 #endif
-
-    if (opcode == F3DEX2_G_LOAD_UCODE) {
-        gfx_load_ucode_handler_f3dex2(&cmd);
-        return;
-        // Instead of having a handler for each ucode for switching ucode, just check for it early and return.
-    }
-
-    // Single-lookup dispatch: get() returns handler or nullptr in one array access.
-    // OTR handlers take priority (custom overrides), then try the active ucode
-    // table (most common: G_VTX, G_TRI1, G_MTX, etc.), then RDP.
-    GfxOpcodeHandlerFunc handler = otrHandlers.get(opcode);
-    if (!handler) {
-        if (ucode_handler_index < ucode_handlers.size()) {
-            handler = ucode_handlers[ucode_handler_index]->get(opcode);
-        }
-        if (!handler) {
-            handler = rdpHandlers.get(opcode);
-        }
-        if (!handler) {
-            if (ucode_handler_index < ucode_handlers.size()) {
-                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}", (uint8_t)opcode,
-                                (uint32_t)ucode_handler_index);
-            } else {
-                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}", (uint8_t)opcode, (uint32_t)ucode_handler_index);
-            }
-        }
-    }
-
-    if (handler) {
-        if (handler(&cmd)) {
-            return;
-        }
-    }
-
-    ++cmd;
-}
 
 void Interpreter::SpReset() {
     mRsp->modelview_matrix_stack_size = 1;
@@ -5515,6 +5504,9 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
     auto dbg = Ship::Context::GetInstance()->GetGfxDebugger();
     g_exec_stack.start((F3DGfx*)commands);
 
+    // Ensure the unified dispatch table is current for this DL iteration
+    RebuildUnifiedDispatchTable();
+
     while (!g_exec_stack.cmd_stack.empty()) {
         auto cmd = g_exec_stack.cmd_stack.top();
 
@@ -5532,7 +5524,33 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             }
             g_exec_stack.gfx_path.pop_back();
         }
-        gfx_step();
+
+        // A3: Inlined dispatch — avoids per-command function call overhead of gfx_step().
+        {
+            auto& stepCmd = g_exec_stack.currCmd();
+            int8_t opcode = (int8_t)(stepCmd->words.w0 >> 24);
+
+#ifdef USE_GBI_TRACE
+            if (stepCmd->words.trace.valid &&
+                Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger("gEnableGFXTrace", 0)) {
+                SPDLOG_INFO(TRACE, (uint8_t)opcode, stepCmd->words.trace.file, stepCmd->words.trace.idx,
+                            stepCmd->words.w0, stepCmd->words.w1);
+            }
+#endif
+
+            if (opcode == F3DEX2_G_LOAD_UCODE) {
+                gfx_load_ucode_handler_f3dex2(&stepCmd);
+            } else {
+                GfxOpcodeHandlerFunc handler = sUnifiedHandlers[static_cast<uint8_t>(opcode)];
+                if (handler) {
+                    if (!handler(&stepCmd)) {
+                        ++stepCmd;
+                    }
+                } else {
+                    ++stepCmd;
+                }
+            }
+        }
     }
 
     Flush();

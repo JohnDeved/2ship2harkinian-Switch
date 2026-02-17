@@ -2265,34 +2265,23 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 // Check if the "new" texture is actually the same one already bound.
                 // This avoids flushing the VBO batch when the N64 game redundantly
                 // reloads the same texture (very common — 0% cache miss rate in profiling).
-                // Only applies to non-masked/non-blended textures since those require
-                // additional texture uploads (mask textures, replacement textures) that
-                // would need their own same-texture checks to be safely skipped.
+                // Uses a cheap address+format comparison instead of a hash map lookup.
                 bool skipImport = false;
-                if (!mRdp->loaded_texture[i].masked && !mRdp->loaded_texture[i].blended) {
+                if (!mRdp->loaded_texture[i].masked && !mRdp->loaded_texture[i].blended &&
+                    mRenderingState.mTextures[i] != nullptr) {
+                    uint32_t tmemIdx = mRdp->texture_tile[tile].tmem_index;
+                    const uint8_t* origAddr = mRdp->loaded_texture[tmemIdx].addr;
                     uint8_t fmt = mRdp->texture_tile[tile].fmt;
                     uint8_t siz = mRdp->texture_tile[tile].siz;
-                    uint32_t tmemIdx = mRdp->texture_tile[tile].tmem_index;
-                    uint8_t paletteIndex = mRdp->texture_tile[tile].palette;
-                    uint32_t origSizeBytes = mRdp->loaded_texture[tmemIdx].orig_size_bytes;
-                    const RawTexMetadata* metadata = &mRdp->loaded_texture[tmemIdx].raw_tex_metadata;
-                    const uint8_t* origAddr = mRdp->loaded_texture[tmemIdx].addr;
-                    TextureCacheKey key;
-                    if (fmt == G_IM_FMT_CI) {
-                        key = { origAddr, { mRdp->palettes[0], mRdp->palettes[1] }, fmt, siz, paletteIndex, origSizeBytes };
-                    } else {
-                        key = { origAddr, {}, fmt, siz, paletteIndex, origSizeBytes };
-                    }
-                    // If the texture is already cached AND is the same one currently bound, skip flush
-                    TextureCacheMap::iterator it = mTextureCache.map.find(key);
-                    if (it != mTextureCache.map.end() && mRenderingState.mTextures[i] == &*it) {
+                    // Fast check: compare raw texture address, format, and size against
+                    // the currently bound texture's cache key. This avoids the expensive
+                    // hash map lookup while still being correct.
+                    const TextureCacheKey& boundKey = mRenderingState.mTextures[i]->first;
+                    if (boundKey.texture_addr == origAddr && boundKey.fmt == fmt && boundKey.siz == siz) {
                         skipImport = true;
                         if (mProfilingEnabled) {
                             mFrameStats.textureReloadSkips++;
                         }
-                        // Still update LRU
-                        mTextureCache.lru.splice(mTextureCache.lru.end(), mTextureCache.lru,
-                                                 it->second.lru_location);
                     }
                 }
                 if (!skipImport) {

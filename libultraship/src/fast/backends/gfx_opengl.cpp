@@ -702,9 +702,11 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     // printf("flushing %d tris\n", buf_vbo_num_tris);
     const size_t uploadBytes = sizeof(float) * buf_vbo_len;
     const bool profiling = (mStats != nullptr);
-    static uint64_t sDummy = 0; // sink for timers when profiling is off
-    uint64_t& vboTarget = profiling ? mStats->timeVboUpload : sDummy;
-    uint64_t& drawTarget = profiling ? mStats->timeGlDraw : sDummy;
+    // When profiling is off, Fast3DScopedTimer(enabled=false) is a no-op:
+    // the destructor skips the write, so dummyTarget is never modified.
+    uint64_t dummyTarget = 0;
+    uint64_t& vboTarget = profiling ? mStats->timeVboUpload : dummyTarget;
+    uint64_t& drawTarget = profiling ? mStats->timeGlDraw : dummyTarget;
 
 #if defined(__SWITCH__)
     // Per-iteration VBO batching: orphan the VBO once per DL iteration,

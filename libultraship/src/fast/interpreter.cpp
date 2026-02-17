@@ -5183,21 +5183,25 @@ static std::array<GfxOpcodeHandlerFunc, std::numeric_limits<uint8_t>::max() + 1>
 
 static void RebuildDispatchTable(UcodeHandlers ucode) {
     sDispatchHandlers.fill(nullptr);
+    const size_t ucodeIndex = static_cast<size_t>(ucode);
+    const bool hasValidUcode = ucodeIndex < ucode_handlers.size();
 
-    for (uint16_t i = 0; i <= std::numeric_limits<uint8_t>::max(); ++i) {
-        const int8_t opcode = static_cast<int8_t>(i);
+    for (size_t i = 0; i < sDispatchHandlers.size(); ++i) {
+        // Handler tables use int8_t opcodes (legacy API), but indexes are uint8_t [0..255].
+        const uint8_t opcode = static_cast<uint8_t>(i);
+        const int8_t signedOpcode = static_cast<int8_t>(opcode);
 
-        if (GfxOpcodeHandlerFunc handler = rdpHandlers.get(opcode)) {
+        if (GfxOpcodeHandlerFunc handler = rdpHandlers.get(signedOpcode)) {
             sDispatchHandlers[i] = handler;
         }
 
-        if (ucode < ucode_handlers.size()) {
-            if (GfxOpcodeHandlerFunc handler = ucode_handlers[ucode]->get(opcode)) {
+        if (hasValidUcode) {
+            if (GfxOpcodeHandlerFunc handler = ucode_handlers[ucodeIndex]->get(signedOpcode)) {
                 sDispatchHandlers[i] = handler;
             }
         }
 
-        if (GfxOpcodeHandlerFunc handler = otrHandlers.get(opcode)) {
+        if (GfxOpcodeHandlerFunc handler = otrHandlers.get(signedOpcode)) {
             sDispatchHandlers[i] = handler;
         }
     }
@@ -5505,7 +5509,7 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             g_exec_stack.gfx_path.pop_back();
         }
         auto& stepCmd = g_exec_stack.currCmd();
-        int8_t opcode = (int8_t)(stepCmd->words.w0 >> 24);
+        const uint8_t opcode = static_cast<uint8_t>(stepCmd->words.w0 >> 24);
 
 #ifdef USE_GBI_TRACE
         if (stepCmd->words.trace.valid &&
@@ -5517,28 +5521,29 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
     " - W0: {:08X}\n"                          \
     " - W1: {:08X}\n"                          \
     "===================================="
-            SPDLOG_INFO(TRACE, (uint8_t)opcode, stepCmd->words.trace.file, stepCmd->words.trace.idx, stepCmd->words.w0,
+            SPDLOG_INFO(TRACE, opcode, stepCmd->words.trace.file, stepCmd->words.trace.idx, stepCmd->words.w0,
                         stepCmd->words.w1);
         }
 #endif
 
-        if (opcode == F3DEX2_G_LOAD_UCODE) {
+        if (opcode == static_cast<uint8_t>(F3DEX2_G_LOAD_UCODE)) {
             gfx_load_ucode_handler_f3dex2(&stepCmd);
             continue;
             // Instead of having a handler for each ucode for switching ucode, just check for it early and continue.
         }
 
-        GfxOpcodeHandlerFunc handler = sDispatchHandlers[static_cast<uint8_t>(opcode)];
+        GfxOpcodeHandlerFunc handler = sDispatchHandlers[opcode];
         if (!handler) {
             if (ucode_handler_index < ucode_handlers.size()) {
-                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}", (uint8_t)opcode,
-                                (uint32_t)ucode_handler_index);
+                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}", opcode, (uint32_t)ucode_handler_index);
             } else {
-                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}", (uint8_t)opcode, (uint32_t)ucode_handler_index);
+                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}", opcode, (uint32_t)ucode_handler_index);
             }
+            ++stepCmd;
+            continue;
         }
 
-        if (handler && handler(&stepCmd)) {
+        if (handler(&stepCmd)) {
             continue;
         }
 

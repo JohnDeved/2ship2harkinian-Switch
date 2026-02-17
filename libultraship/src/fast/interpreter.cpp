@@ -2265,7 +2265,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 // Check if the "new" texture is actually the same one already bound.
                 // This avoids flushing the VBO batch when the N64 game redundantly
                 // reloads the same texture (very common — 0% cache miss rate in profiling).
-                // Uses a cheap address+format comparison instead of a hash map lookup.
+                // Uses cheap field comparisons instead of a hash map lookup.
                 bool skipImport = false;
                 if (!mRdp->loaded_texture[i].masked && !mRdp->loaded_texture[i].blended &&
                     mRenderingState.mTextures[i] != nullptr) {
@@ -2273,11 +2273,15 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                     const uint8_t* origAddr = mRdp->loaded_texture[tmemIdx].addr;
                     uint8_t fmt = mRdp->texture_tile[tile].fmt;
                     uint8_t siz = mRdp->texture_tile[tile].siz;
-                    // Fast check: compare raw texture address, format, and size against
-                    // the currently bound texture's cache key. This avoids the expensive
-                    // hash map lookup while still being correct.
+                    uint32_t origSizeBytes = mRdp->loaded_texture[tmemIdx].orig_size_bytes;
+                    // Fast check: compare texture identity fields against the currently
+                    // bound texture's cache key. Includes size_bytes to catch resized
+                    // textures, and palette for CI format textures.
                     const TextureCacheKey& boundKey = mRenderingState.mTextures[i]->first;
-                    if (boundKey.texture_addr == origAddr && boundKey.fmt == fmt && boundKey.siz == siz) {
+                    if (boundKey.texture_addr == origAddr && boundKey.fmt == fmt &&
+                        boundKey.siz == siz && boundKey.size_bytes == origSizeBytes &&
+                        (fmt != G_IM_FMT_CI || (boundKey.palette_addrs[0] == mRdp->palettes[0] &&
+                                                 boundKey.palette_addrs[1] == mRdp->palettes[1]))) {
                         skipImport = true;
                         if (mProfilingEnabled) {
                             mFrameStats.textureReloadSkips++;

@@ -644,6 +644,10 @@ class Interpreter {
         uint32_t tm_bits; // contribution to tm mask for this texture slot
         bool valid;
     } mCachedTileState[2]{};
+
+    // Cached combiner key + result (skip LookupOrCreateColorCombiner on ~85% of triangles)
+    ColorCombinerKey mCachedCombinerKey{};
+    ColorCombiner* mCachedCombiner = nullptr;
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

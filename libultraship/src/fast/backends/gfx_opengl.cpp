@@ -701,8 +701,43 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
 
     // printf("flushing %d tris\n", buf_vbo_num_tris);
     const size_t uploadBytes = sizeof(float) * buf_vbo_len;
+
+#if defined(__SWITCH__)
+    // Per-iteration VBO batching: orphan the VBO once per DL iteration,
+    // then use glBufferSubData for each draw. This reduces ~320 glBufferData
+    // allocations per iteration to just 1 orphan.
+    if (!mVboIterActive) {
+        // Orphan: allocate a fresh VBO for this iteration
+        glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
+        mVboIterOffset = 0;
+        mVboIterActive = true;
+    }
+
+    // Check if data fits in the current iteration buffer
+    if (mVboIterOffset + uploadBytes > VBO_ITER_SIZE) {
+        // Overflow: re-orphan (should rarely happen)
+        glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
+        mVboIterOffset = 0;
+    }
+
+    // Align offset to current vertex stride for correct firstVertex calculation
+    size_t strideBytes = mCurrentShaderProgram->numFloats * sizeof(float);
+    if (strideBytes > 0 && (mVboIterOffset % strideBytes) != 0) {
+        mVboIterOffset += strideBytes - (mVboIterOffset % strideBytes);
+    }
+
+    // Upload this batch's data at the current offset
+    glBufferSubData(GL_ARRAY_BUFFER, mVboIterOffset, uploadBytes, buf_vbo);
+
+    // Draw using firstVertex to index into the correct position
+    GLint firstVertex = (GLint)(mVboIterOffset / strideBytes);
+    glDrawArrays(GL_TRIANGLES, firstVertex, 3 * buf_vbo_num_tris);
+
+    mVboIterOffset += uploadBytes;
+#else
     glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+#endif
 }
 
 void GfxRenderingAPIOGL::Init() {
@@ -746,6 +781,11 @@ void GfxRenderingAPIOGL::OnResize() {
 
 void GfxRenderingAPIOGL::StartFrame() {
     mFrameCount++;
+#if defined(__SWITCH__)
+    // Reset per-iteration VBO batching state.
+    // The next DrawTriangles call will orphan the VBO.
+    mVboIterActive = false;
+#endif
 }
 
 void GfxRenderingAPIOGL::EndFrame() {

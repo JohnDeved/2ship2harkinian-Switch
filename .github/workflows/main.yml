@@ -46,14 +46,15 @@ jobs:
           cd deps/SDL2-2.30.3
           ./configure --enable-hidapi-libusb
           make -j 10
+          sudo make install
+          sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
           touch .install-complete
         else
           echo "SDL2 already built (from cache)"
+          cd deps/SDL2-2.30.3
+          sudo make install
+          sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
         fi
-        # Always install to system paths (needed for fresh runners)
-        cd deps/SDL2-2.30.3
-        sudo make install
-        sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
     - name: Install latest tinyxml2
       run: |
         sudo apt-get remove libtinyxml2-dev
@@ -70,13 +71,13 @@ jobs:
           cd build
           cmake ..
           make
+          sudo make install
           touch ../.install-complete
         else
           echo "tinyxml2 already built (from cache)"
+          cd deps/tinyxml2-10.0.0/build
+          sudo make install
         fi
-        # Always install to system paths (needed for fresh runners)
-        cd deps/tinyxml2-10.0.0/build
-        sudo make install
     - name: Generate 2ship.o2r
       run: |
         export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"

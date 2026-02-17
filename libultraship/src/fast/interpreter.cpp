@@ -1845,9 +1845,21 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
 #endif
                 }
                 if (intensity > 0.0f) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                    // NEON: vectorized light color accumulation
+                    float32x4_t rgb_f = { (float)r, (float)g, (float)b, 0.0f };
+                    float32x4_t lcol = { (float)mRsp->current_lights[i].l.col[0],
+                                         (float)mRsp->current_lights[i].l.col[1],
+                                         (float)mRsp->current_lights[i].l.col[2], 0.0f };
+                    rgb_f = vmlaq_n_f32(rgb_f, lcol, intensity);
+                    r = (int)vgetq_lane_f32(rgb_f, 0);
+                    g = (int)vgetq_lane_f32(rgb_f, 1);
+                    b = (int)vgetq_lane_f32(rgb_f, 2);
+#else
                     r += intensity * mRsp->current_lights[i].l.col[0];
                     g += intensity * mRsp->current_lights[i].l.col[1];
                     b += intensity * mRsp->current_lights[i].l.col[2];
+#endif
                 }
             }
 
@@ -1889,8 +1901,19 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                 doty /= 127.0f;
 #endif
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                // NEON: branchless clamp dotx/doty to [-1, 1]
+                {
+                    float32x2_t dots = { dotx, doty };
+                    dots = vmax_f32(dots, vdup_n_f32(-1.0f));
+                    dots = vmin_f32(dots, vdup_n_f32(1.0f));
+                    dotx = vget_lane_f32(dots, 0);
+                    doty = vget_lane_f32(dots, 1);
+                }
+#else
                 dotx = Ship::Math::clamp(dotx, -1.0f, 1.0f);
                 doty = Ship::Math::clamp(doty, -1.0f, 1.0f);
+#endif
 
                 if (mRsp->geometry_mode & G_TEXTURE_GEN_LINEAR) {
                     // Not sure exactly what formula we should use to get accurate values
@@ -1901,12 +1924,31 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                     dotx = acosf(-dotx) /* M_PI */ * 0.159155f;
                     doty = acosf(-doty) /* M_PI */ * 0.159155f;
                 } else {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                    // NEON: (dot + 1.0) * 0.25 for both dotx/doty in parallel
+                    float32x2_t dots = { dotx, doty };
+                    dots = vmul_n_f32(vadd_f32(dots, vdup_n_f32(1.0f)), 0.25f);
+                    dotx = vget_lane_f32(dots, 0);
+                    doty = vget_lane_f32(dots, 1);
+#else
                     dotx = (dotx + 1.0f) / 4.0f;
                     doty = (doty + 1.0f) / 4.0f;
+#endif
                 }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                // NEON: compute U and V scaling in parallel
+                {
+                    float32x2_t dots = { dotx, doty };
+                    float32x2_t scale = { (float)mRsp->texture_scaling_factor.s, (float)mRsp->texture_scaling_factor.t };
+                    int32x2_t result = vcvt_s32_f32(vmul_f32(dots, scale));
+                    U = vget_lane_s32(result, 0);
+                    V = vget_lane_s32(result, 1);
+                }
+#else
                 U = (int32_t)(dotx * mRsp->texture_scaling_factor.s);
                 V = (int32_t)(doty * mRsp->texture_scaling_factor.t);
+#endif
             }
         } else {
             d->color.r = v->cn[0];
@@ -1956,10 +1998,18 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         }
 #endif
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: store vertex position {x, y, z, w} as single 4-float write
+        {
+            float32x4_t pos = { x, y, z, w };
+            vst1q_f32(&d->x, pos);
+        }
+#else
         d->x = x;
         d->y = y;
         d->z = z;
         d->w = w;
+#endif
 
         if (mRsp->geometry_mode & G_FOG) {
             if (fabsf(w) < 0.001f) {
@@ -2500,6 +2550,18 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         for (int t = 0; t < 2; t++) {
             if (!usedTextures[t]) continue;
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: compute both u,v texture coordinates in parallel
+            float32x2_t uv_raw = { (float)vtx->u, (float)vtx->v };
+            float32x2_t inv32 = vdup_n_f32(1.0f / 32.0f);
+            float32x2_t shiftMul = { shiftsMul[t], shifttMul[t] };
+            float32x2_t uv = vmul_f32(vmul_f32(uv_raw, inv32), shiftMul);
+            float32x2_t offset = { ulsOffset[t] - linearOffset, ultOffset[t] - linearOffset };
+            float32x2_t invDim = { invTexWidth[t], invTexHeight[t] };
+            uv = vmul_f32(vsub_f32(uv, offset), invDim);
+            vst1_f32(vbo, uv);
+            vbo += 2;
+#else
             float u = vtx->u * (1.0f / 32.0f) * shiftsMul[t];
             float v = vtx->v * (1.0f / 32.0f) * shifttMul[t];
 
@@ -2508,6 +2570,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
             *vbo++ = u;
             *vbo++ = v;
+#endif
 
             if (clampS[t]) *vbo++ = clampSVal[t];
             if (clampT[t]) *vbo++ = clampTVal[t];
@@ -2547,22 +2610,29 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 if (k == 0) {
                     if (pc.isShade) {
 #if defined(__ARM_NEON) && defined(__aarch64__)
-                        // NEON: convert vertex color bytes to float in one operation
-                        // Load {r, g, b, 0} as ints, convert to float, multiply by INV_255
+                        // NEON: convert vertex color bytes to float and store 3 RGB values
                         float32x4_t col = { (float)vtx->color.r, (float)vtx->color.g, (float)vtx->color.b, 0.0f };
                         col = vmulq_n_f32(col, INV_255);
-                        *vbo++ = vgetq_lane_f32(col, 0);
-                        *vbo++ = vgetq_lane_f32(col, 1);
-                        *vbo++ = vgetq_lane_f32(col, 2);
+                        // Store 2 + 1 floats (can't use full vst1q since we only need 3)
+                        vst1_f32(vbo, vget_low_f32(col));
+                        vbo[2] = vgetq_lane_f32(col, 2);
+                        vbo += 3;
 #else
                         *vbo++ = vtx->color.r * INV_255;
                         *vbo++ = vtx->color.g * INV_255;
                         *vbo++ = vtx->color.b * INV_255;
 #endif
                     } else {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                        // NEON: store precomputed RGB from contiguous struct
+                        vst1_f32(vbo, vld1_f32(&pc.r));
+                        vbo[2] = pc.b;
+                        vbo += 3;
+#else
                         *vbo++ = pc.r;
                         *vbo++ = pc.g;
                         *vbo++ = pc.b;
+#endif
                     }
                 } else {
                     if (use_fog && pc.isShade) {

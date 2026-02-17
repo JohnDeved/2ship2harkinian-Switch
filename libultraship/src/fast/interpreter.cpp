@@ -5178,6 +5178,7 @@ static void gfx_set_ucode_handler(UcodeHandlers ucode) {
     }
 }
 
+#if defined(__SWITCH__)
 // Traversal handler function pointers — these only navigate the DL tree
 // and must NOT be recorded for replay (they'd corrupt the exec stack).
 static bool IsTraversalHandler(GfxOpcodeHandlerFunc handler) {
@@ -5194,6 +5195,7 @@ static bool IsTraversalHandler(GfxOpcodeHandlerFunc handler) {
 // File-scope flag set by Run() to enable recording without per-command weak_ptr lock
 static bool s_dlRecordingActive = false;
 static constexpr size_t kEstimatedDlCommandCount = 6000;
+#endif
 
 static void gfx_step() {
     auto& cmd = g_exec_stack.currCmd();

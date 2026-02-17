@@ -1126,20 +1126,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
                 FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
 
-                if (i == 0) {
-                    // First iteration: record command sequence for replay
-                    if (intp) {
-                        intp->mDlRecording = true;
-                        intp->mDlReplayReady = false;
-                    }
-                    wnd->DrawAndRunGraphicsCommands(commands, current_m);
-                } else if (intp && intp->mDlReplayReady) {
-                    // Subsequent iterations: replay recorded commands (skip DL traversal)
-                    wnd->DrawAndRunGraphicsCommandsReplay(current_m);
-                } else {
-                    // Fallback: full interpretation (G_BRANCH_Z detected or no recording)
-                    wnd->DrawAndRunGraphicsCommands(commands, current_m);
-                }
+                wnd->DrawAndRunGraphicsCommands(commands, current_m);
 
                 if (profilerEnabled) {
                     const auto& stats = wnd->GetFrameStats();

@@ -652,22 +652,6 @@ class Interpreter {
     ColorCombinerKey mCachedCombinerKey{};
     ColorCombiner* mCachedCombiner = nullptr;
 
-#if defined(__SWITCH__)
-    // DL Replay: record the flat command sequence on the first sub-frame,
-    // replay it on subsequent sub-frames (skip DL traversal + opcode dispatch).
-    // Each entry stores a command pointer + handler for direct invocation.
-    typedef bool (*ReplayHandlerFunc)(F3DGfx**);
-    struct RecordedCmd {
-        F3DGfx* cmdPtr;           // pointer to command in DL memory
-        ReplayHandlerFunc handler; // resolved handler function
-    };
-    std::vector<RecordedCmd> mDlReplayBuffer;
-    bool mDlRecording = false;    // true during first iteration: record commands
-    bool mDlReplayReady = false;  // true after first iteration: replay available
-    bool mDlHasBranchZ = false;   // true if G_BRANCH_Z was encountered (disables replay)
-
-    void RunReplay(const std::unordered_map<Mtx*, MtxF>& mtx_replacements);
-#endif
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

@@ -5178,25 +5178,6 @@ static void gfx_set_ucode_handler(UcodeHandlers ucode) {
     }
 }
 
-#if defined(__SWITCH__)
-// Traversal handler function pointers — these only navigate the DL tree
-// and must NOT be recorded for replay (they'd corrupt the exec stack).
-static bool IsTraversalHandler(GfxOpcodeHandlerFunc handler) {
-    return handler == gfx_dl_handler_common ||
-           handler == gfx_end_dl_handler_common ||
-           handler == gfx_branch_z_otr_handler_f3dex2 ||
-           handler == gfx_dl_otr_filepath_handler_custom ||
-           handler == gfx_dl_otr_hash_handler_custom ||
-           handler == gfx_dl_index_handler ||
-           handler == gfx_cull_dl_handler_f3dex2 ||
-           handler == gfx_noop_handler_f3dex2;
-}
-
-// File-scope flag set by Run() to enable recording without per-command weak_ptr lock
-static bool s_dlRecordingActive = false;
-static constexpr size_t kEstimatedDlCommandCount = 6000;
-#endif
-
 static void gfx_step() {
     auto& cmd = g_exec_stack.currCmd();
     auto cmd0 = cmd;
@@ -5241,22 +5222,6 @@ static void gfx_step() {
     }
 
     if (handler) {
-#if defined(__SWITCH__)
-        // DL Replay recording: capture non-traversal commands for replay.
-        // s_dlRecordingActive is set by Run() to avoid weak_ptr lock per command.
-        if (s_dlRecordingActive) {
-            auto sp = mInstance.lock();
-            if (sp) {
-                Interpreter* gfx = sp.get();
-                if (handler == gfx_branch_z_otr_handler_f3dex2) {
-                    // G_BRANCH_Z depends on vertex Z which changes per sub-frame → disable replay
-                    gfx->mDlHasBranchZ = true;
-                } else if (!IsTraversalHandler(handler)) {
-                    gfx->mDlReplayBuffer.push_back({cmd0, handler});
-                }
-            }
-        }
-#endif
         if (handler(&cmd)) {
             return;
         }
@@ -5498,16 +5463,6 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
     auto dbg = Ship::Context::GetInstance()->GetGfxDebugger();
     g_exec_stack.start((F3DGfx*)commands);
 
-#if defined(__SWITCH__)
-    // Start recording if this is the first iteration and debug is not active
-    if (mDlRecording) {
-        mDlReplayBuffer.clear();
-        mDlReplayBuffer.reserve(kEstimatedDlCommandCount);
-        mDlHasBranchZ = false;
-        s_dlRecordingActive = true;
-    }
-#endif
-
     while (!g_exec_stack.cmd_stack.empty()) {
         auto cmd = g_exec_stack.cmd_stack.top();
 
@@ -5561,99 +5516,7 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
         mFrameStats.timeTotal = Fast3DTimerNowNs() - runStartNs;
         mFrameStats.ComputeDerived();
     }
-
-#if defined(__SWITCH__)
-    // After first iteration's Run(), mark replay as ready if no G_BRANCH_Z was encountered
-    if (mDlRecording) {
-        s_dlRecordingActive = false;
-        mDlRecording = false;
-        mDlReplayReady = !mDlHasBranchZ && !mDlReplayBuffer.empty();
-    }
-#endif
 }
-
-#if defined(__SWITCH__)
-void Interpreter::RunReplay(const std::unordered_map<Mtx*, MtxF>& mtx_replacements) {
-    // Fast path: replay the recorded command sequence from the first iteration.
-    // Skips DL traversal (stack push/pop/branch), opcode dispatch (3 hash lookups),
-    // and weak_ptr lock per handler. Commands execute in flat sequential order.
-
-    if (mProfilingEnabled) {
-        mFrameStats.Reset();
-        mRapi->SetStatsPtr(&mFrameStats);
-    } else {
-        mRapi->SetStatsPtr(nullptr);
-    }
-
-    const uint64_t runStartNs = mProfilingEnabled ? Fast3DTimerNowNs() : 0;
-
-    {
-        Fast3DScopedTimer setupTimer(mFrameStats.timeFrameSetup, mProfilingEnabled);
-
-        SpReset();
-
-        mGetPixelDepthPending.clear();
-        mGetPixelDepthCached.clear();
-
-        mCurMtxReplacements = &mtx_replacements;
-
-        mRapi->UpdateFramebufferParameters(0, mGfxCurrentWindowDimensions.width, mGfxCurrentWindowDimensions.height, 1,
-                                           false, true, true, !mRendersToFb);
-        mRapi->StartFrame();
-        mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
-        mRapi->ClearFramebuffer(false, true);
-        mRdp->viewport_or_scissor_changed = true;
-        mRdp->other_mode_changed = true;
-        mRdp->geometry_mode_changed = true;
-        mCachedTileState[0].valid = false;
-        mCachedTileState[1].valid = false;
-        mRenderingState.viewport = {};
-        mRenderingState.scissor = {};
-        mCachedClipParams = mRapi->GetClipParameters();
-        mCachedCombinerKey.combine_mode = UINT64_MAX;
-        mCachedCombinerKey.options = UINT64_MAX;
-    }
-
-    // Replay: iterate recorded commands and call handlers directly
-    for (const auto& rec : mDlReplayBuffer) {
-        F3DGfx* cmd = rec.cmdPtr;
-        rec.handler(&cmd);
-        // handler may have advanced cmd for multi-word commands; that's fine,
-        // we don't use cmd after this (we advance via the recorded array).
-    }
-
-    Flush();
-    mGfxFrameBuffer = 0;
-    currentDir = std::stack<std::string>();
-
-    {
-        Fast3DScopedTimer teardownTimer(mFrameStats.timeFrameSetup, mProfilingEnabled);
-
-        if (mRendersToFb) {
-            mRapi->StartDrawToFramebuffer(0, 1);
-            mRapi->ClearFramebuffer(true, true);
-            if (mMsaaLevel > 1) {
-                if (!ViewportMatchesRendererResolution()) {
-                    mRapi->ResolveMSAAColorBuffer(mGameFbMsaaResolved, mGameFb);
-                    mGfxFrameBuffer = (uintptr_t)mRapi->GetFramebufferTextureId(mGameFbMsaaResolved);
-                } else {
-                    mRapi->ResolveMSAAColorBuffer(0, mGameFb);
-                }
-            } else {
-                mGfxFrameBuffer = (uintptr_t)mRapi->GetFramebufferTextureId(mGameFb);
-            }
-        } else if (mFbActive) {
-            mFbActive = 0;
-            mRapi->StartDrawToFramebuffer(0, 1);
-        }
-    }
-
-    if (mProfilingEnabled) {
-        mFrameStats.timeTotal = Fast3DTimerNowNs() - runStartNs;
-        mFrameStats.ComputeDerived();
-    }
-}
-#endif
 
 void Interpreter::EndFrame() {
     mRapi->EndFrame();

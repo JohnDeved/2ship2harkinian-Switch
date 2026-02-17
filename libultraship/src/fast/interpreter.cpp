@@ -2181,26 +2181,30 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     // --- State check section: depth, viewport, texture, shader, alpha ---
 
     // Only recompute other_mode_l / geometry_mode derived flags when they've actually changed
-    if (mRdp->other_mode_changed || mRdp->geometry_mode_changed) {
+    if (mRdp->geometry_mode_changed) {
+        bool depth_test = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
+        bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
+        mCachedModeFlags.depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
+        mRdp->geometry_mode_changed = false;
+    }
+    if (mRdp->other_mode_changed) {
+        // depth_mask and zmode_decal come from other_mode_l, recompute with depth_test
         bool depth_test = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
         bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
         mCachedModeFlags.depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
         mCachedModeFlags.zmode_decal = (mRdp->other_mode_l & ZMODE_DEC) == ZMODE_DEC;
-        if (mRdp->other_mode_changed) {
-            mCachedModeFlags.use_alpha = ((mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20) &&
-                              (mRdp->other_mode_l & (3 << 16)) == (G_BL_1MA << 16)) ||
-                             ((mRdp->other_mode_l & (3 << 22)) == (G_BL_CLR_MEM << 22) &&
-                              (mRdp->other_mode_l & (3 << 18)) == (G_BL_1MA << 18));
-            mCachedModeFlags.use_fog = (mRdp->other_mode_l >> 30) == G_BL_CLR_FOG;
-            mCachedModeFlags.texture_edge = (mRdp->other_mode_l & CVG_X_ALPHA) == CVG_X_ALPHA;
-            mCachedModeFlags.use_noise = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_DITHER;
-            mCachedModeFlags.use_2cyc = (mRdp->other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE;
-            mCachedModeFlags.alpha_threshold = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_THRESHOLD;
-            mCachedModeFlags.invisible =
-                (mRdp->other_mode_l & (3 << 24)) == (G_BL_0 << 24) && (mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20);
-        }
+        mCachedModeFlags.use_alpha = ((mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20) &&
+                          (mRdp->other_mode_l & (3 << 16)) == (G_BL_1MA << 16)) ||
+                         ((mRdp->other_mode_l & (3 << 22)) == (G_BL_CLR_MEM << 22) &&
+                          (mRdp->other_mode_l & (3 << 18)) == (G_BL_1MA << 18));
+        mCachedModeFlags.use_fog = (mRdp->other_mode_l >> 30) == G_BL_CLR_FOG;
+        mCachedModeFlags.texture_edge = (mRdp->other_mode_l & CVG_X_ALPHA) == CVG_X_ALPHA;
+        mCachedModeFlags.use_noise = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_DITHER;
+        mCachedModeFlags.use_2cyc = (mRdp->other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE;
+        mCachedModeFlags.alpha_threshold = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_THRESHOLD;
+        mCachedModeFlags.invisible =
+            (mRdp->other_mode_l & (3 << 24)) == (G_BL_0 << 24) && (mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20);
         mRdp->other_mode_changed = false;
-        mRdp->geometry_mode_changed = false;
     }
 
     uint8_t depth_test_and_mask = mCachedModeFlags.depth_test_and_mask;
@@ -2458,7 +2462,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRenderingState.alpha_blend = use_alpha;
     }
     uint8_t numInputs = mCachedNumInputs;
-    bool usedTextures[2] = { mCachedUsedTextures[0], mCachedUsedTextures[1] };
+    const bool* usedTextures = mCachedUsedTextures;
 
     struct GfxClipParameters clip_parameters = mRapi->GetClipParameters();
 

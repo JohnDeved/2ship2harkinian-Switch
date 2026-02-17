@@ -786,9 +786,9 @@ void FrameProfilerWindow::DrawElement() {
     sDrawCountdown = PROFILE_KEEPALIVE_FRAMES;
 
     float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
-    float dlIterImGui = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
-    if (dlIterImGui < 1.0f) dlIterImGui = 1.0f;
-    float renderFrameMs = totalMs / dlIterImGui;
+    float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
+    if (dlIter < 1.0f) dlIter = 1.0f;
+    float renderFrameMs = totalMs / dlIter;
     float fps = (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
 
     // Enhanced summary with color coding
@@ -844,7 +844,6 @@ void FrameProfilerWindow::DrawElement() {
     // DL Rendering Statistics
     ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "--- Display List Stats (per frame avg) ---");
 
-    float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
     float dlCmds = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_COMMANDS);
     float tris = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_TRIANGLES);
     float verts = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_VERTICES);

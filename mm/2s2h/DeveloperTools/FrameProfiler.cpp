@@ -308,7 +308,7 @@ static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
 
 // ── Helper functions ───────────────────────────────────────────────────
 
-static const float PROFILE_TARGET_FRAME_MS = 16.666667f;  // 1000ms / 60fps
+static const float PROFILE_TARGET_FRAME_MS = 1000.0f / 60.0f;  // 60 FPS target
 
 // Returns true for leaf phases (not parent/aggregate phases) used for bottleneck detection
 static bool IsLeafPhase(int phase) {
@@ -871,7 +871,7 @@ void FrameProfilerWindow::DrawElement() {
     float vertsPerTri = (tris > 0.5f) ? (verts / tris) : 0.0f;
     ImGui::Text("Verts/Tri: %.2f", vertsPerTri);
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Vertices per triangle (ideal: ~3.0 for indexed geometry)\nHigher values (>3.0) indicate vertex duplication or lack of indexed geometry");
+        ImGui::SetTooltip("Vertices per triangle (ideal: ~3.0 for indexed triangles)\nHigher values may indicate vertex duplication, non-indexed geometry, or primitives like triangle strips");
     }
     
     ImGui::Text("Tex Loads: %.0f   Matrix Loads: %.0f   SetCombine: %.0f", texLoads, mtxLoads, setCombine);

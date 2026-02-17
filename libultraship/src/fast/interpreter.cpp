@@ -1407,16 +1407,45 @@ void Interpreter::ImportTextureMask(int i, int tile) {
 }
 
 void Interpreter::NormalizeVector(float v[3]) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON: normalize using fast reciprocal square root
+    float32x4_t vec = { v[0], v[1], v[2], 0.0f };
+    float32x4_t sq = vmulq_f32(vec, vec);
+    float len_sq = vgetq_lane_f32(sq, 0) + vgetq_lane_f32(sq, 1) + vgetq_lane_f32(sq, 2);
+    float32x2_t len_sq_v = vdup_n_f32(len_sq);
+    float32x2_t inv_len = vrsqrte_f32(len_sq_v);
+    inv_len = vmul_f32(inv_len, vrsqrts_f32(vmul_f32(len_sq_v, inv_len), inv_len));
+    float32x4_t inv_len_q = vdupq_lane_f32(inv_len, 0);
+    vec = vmulq_f32(vec, inv_len_q);
+    v[0] = vgetq_lane_f32(vec, 0);
+    v[1] = vgetq_lane_f32(vec, 1);
+    v[2] = vgetq_lane_f32(vec, 2);
+#else
     float s = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     v[0] /= s;
     v[1] /= s;
     v[2] /= s;
+#endif
 }
 
 void Interpreter::TransposedMatrixMul(float res[3], const float a[3], const float b[4][4]) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON: compute res[k] = a[0]*b[k][0] + a[1]*b[k][1] + a[2]*b[k][2]
+    // Each result is a dot product of a with row k of b (first 3 elements)
+    // Load each matrix row, multiply by a (broadcast), then horizontal sum
+    float32x4_t a_v = { a[0], a[1], a[2], 0.0f };
+    float32x4_t r0 = vmulq_f32(a_v, vld1q_f32(b[0]));
+    float32x4_t r1 = vmulq_f32(a_v, vld1q_f32(b[1]));
+    float32x4_t r2 = vmulq_f32(a_v, vld1q_f32(b[2]));
+    // Horizontal sum of first 3 lanes for each row
+    res[0] = vgetq_lane_f32(r0, 0) + vgetq_lane_f32(r0, 1) + vgetq_lane_f32(r0, 2);
+    res[1] = vgetq_lane_f32(r1, 0) + vgetq_lane_f32(r1, 1) + vgetq_lane_f32(r1, 2);
+    res[2] = vgetq_lane_f32(r2, 0) + vgetq_lane_f32(r2, 1) + vgetq_lane_f32(r2, 2);
+#else
     res[0] = a[0] * b[0][0] + a[1] * b[0][1] + a[2] * b[0][2];
     res[1] = a[0] * b[1][0] + a[1] * b[1][1] + a[2] * b[1][2];
     res[2] = a[0] * b[2][0] + a[1] * b[2][1] + a[2] * b[2][2];
+#endif
 }
 
 void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[4][4]) {
@@ -1510,6 +1539,24 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
     } else {
 #ifndef GBI_FLOATS
         // Original GBI where fixed point matrices are used
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: vectorized fixed-point matrix conversion
+        // Each row has 2 int32 int_parts and 2 uint32 frac_parts → 4 floats
+        float32x4_t inv_scale = vdupq_n_f32(1.0f / 65536.0f);
+        for (int i = 0; i < 4; i++) {
+            int32_t ip0 = addr[i * 2 + 0];
+            int32_t ip1 = addr[i * 2 + 1];
+            uint32_t fp0 = addr[8 + i * 2 + 0];
+            uint32_t fp1 = addr[8 + i * 2 + 1];
+            // Reconstruct 4 fixed-point values as int32
+            int32x4_t fixed = { (int32_t)((ip0 & 0xffff0000) | (fp0 >> 16)),
+                                (int32_t)((ip0 << 16) | (fp0 & 0xffff)),
+                                (int32_t)((ip1 & 0xffff0000) | (fp1 >> 16)),
+                                (int32_t)((ip1 << 16) | (fp1 & 0xffff)) };
+            float32x4_t result = vmulq_f32(vcvtq_f32_s32(fixed), inv_scale);
+            vst1q_f32(matrix[i], result);
+        }
+#else
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j += 2) {
                 int32_t int_part = addr[i * 2 + j / 2];
@@ -1518,6 +1565,7 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
                 matrix[i][j + 1] = (int32_t)((int_part << 16) | (frac_part & 0xffff)) / 65536.0f;
             }
         }
+#endif
 #else
         // For a modified GBI where fixed point values are replaced with floats
         memcpy(matrix, addr, sizeof(matrix));
@@ -1678,6 +1726,69 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
             for (int i = 0; i < mRsp->current_num_lights - 1; i++) {
                 float intensity = 0;
                 if (hasPositionalLighting && (mRsp->current_lights[i].p.unk3 != 0)) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                    // NEON: vectorized positional lighting
+                    // Distance vector, dist_sq, TransposedMatrixMul, intensity, and attenuation
+                    float32x4_t lpos = { (float)mRsp->current_lights[i].p.pos[0],
+                                         (float)mRsp->current_lights[i].p.pos[1],
+                                         (float)mRsp->current_lights[i].p.pos[2], 0.0f };
+                    float32x4_t wpos = { world_pos[0], world_pos[1], world_pos[2], 0.0f };
+                    float32x4_t dv = vsubq_f32(lpos, wpos);
+                    // dist_sq = dx*dx + dy*dy + dz*dz*2
+                    float32x4_t dv_sq = vmulq_f32(dv, dv);
+                    float dist_sq = vgetq_lane_f32(dv_sq, 0) + vgetq_lane_f32(dv_sq, 1) +
+                                    vgetq_lane_f32(dv_sq, 2) * 2.0f;
+
+                    // dist via NEON rsqrt approximation: dist = dist_sq * rsqrt(dist_sq)
+                    float32x2_t dsq_v = vdup_n_f32(dist_sq);
+                    float32x2_t rsq = vrsqrte_f32(dsq_v);
+                    rsq = vmul_f32(rsq, vrsqrts_f32(vmul_f32(dsq_v, rsq), rsq));
+                    float dist = dist_sq * vget_lane_f32(rsq, 0);
+
+                    // TransposedMatrixMul: light_model[k] = sum_j(dist_vec[j] * mtx[k][j])
+                    float(*mtx_p)[4] = mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1];
+                    float dx = vgetq_lane_f32(dv, 0), dy = vgetq_lane_f32(dv, 1), dz = vgetq_lane_f32(dv, 2);
+                    // NEON: element-wise multiply + horizontal sum for 3 dot products
+                    float32x4_t dv3 = { dx, dy, dz, 0.0f };
+                    float32x4_t p0 = vmulq_f32(dv3, vld1q_f32(mtx_p[0]));
+                    float32x4_t p1 = vmulq_f32(dv3, vld1q_f32(mtx_p[1]));
+                    float32x4_t p2 = vmulq_f32(dv3, vld1q_f32(mtx_p[2]));
+                    float light_model[3] = {
+                        vgetq_lane_f32(p0, 0) + vgetq_lane_f32(p0, 1) + vgetq_lane_f32(p0, 2),
+                        vgetq_lane_f32(p1, 0) + vgetq_lane_f32(p1, 1) + vgetq_lane_f32(p1, 2),
+                        vgetq_lane_f32(p2, 0) + vgetq_lane_f32(p2, 1) + vgetq_lane_f32(p2, 2)
+                    };
+
+                    // light_intensity = clamp(4 * light_model / dist_sq, -1, 1)
+                    float32x4_t lm_v = { light_model[0], light_model[1], light_model[2], 0.0f };
+                    // Use NEON reciprocal for 4.0f / dist_sq
+                    float32x2_t dsq_r = vdup_n_f32(dist_sq);
+                    float32x2_t dsq_inv = vrecpe_f32(dsq_r);
+                    dsq_inv = vmul_f32(dsq_inv, vrecps_f32(dsq_r, dsq_inv));
+                    float inv_dist_sq = vget_lane_f32(dsq_inv, 0);
+                    float32x4_t li_v = vmulq_n_f32(lm_v, 4.0f * inv_dist_sq);
+                    li_v = vmaxq_f32(li_v, vdupq_n_f32(-1.0f));
+                    li_v = vminq_f32(li_v, vdupq_n_f32(1.0f));
+
+                    // total_intensity = dot(light_intensity, vn->n)
+                    float32x4_t nv = { (float)vn->n[0], (float)vn->n[1], (float)vn->n[2], 0.0f };
+                    float32x4_t ti_prod = vmulq_f32(li_v, nv);
+                    float total_intensity = vgetq_lane_f32(ti_prod, 0) + vgetq_lane_f32(ti_prod, 1) +
+                                            vgetq_lane_f32(ti_prod, 2);
+                    if (total_intensity > 1.0f) total_intensity = 1.0f;
+                    if (total_intensity < -1.0f) total_intensity = -1.0f;
+
+                    float distf = floorf(dist);
+                    float attenuation = (distf * mRsp->current_lights[i].p.unk7 * 2.0f +
+                                         distf * distf * mRsp->current_lights[i].p.unkE / 8.0f) /
+                                            (float)0xFFFF +
+                                        1.0f;
+                    // Use NEON reciprocal for 1/attenuation
+                    float32x2_t att_v = vdup_n_f32(attenuation);
+                    float32x2_t att_inv = vrecpe_f32(att_v);
+                    att_inv = vmul_f32(att_inv, vrecps_f32(att_v, att_inv));
+                    intensity = total_intensity * vget_lane_f32(att_inv, 0);
+#else
                     // Calculate distance from the light to the vertex
                     float dist_vec[3] = { mRsp->current_lights[i].p.pos[0] - world_pos[0],
                                           mRsp->current_lights[i].p.pos[1] - world_pos[1],
@@ -1714,6 +1825,7 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                                             (float)0xFFFF +
                                         1.0f;
                     intensity = total_intensity / attenuation;
+#endif
                 } else {
 #if defined(__ARM_NEON) && defined(__aarch64__)
                     // NEON: dot product of vertex normal with light coefficients
@@ -1738,9 +1850,19 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                 }
             }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: branchless clamp to 255
+            int32x4_t rgb_v = { r, g, b, 0 };
+            int32x4_t max255 = vdupq_n_s32(255);
+            rgb_v = vminq_s32(rgb_v, max255);
+            d->color.r = vgetq_lane_s32(rgb_v, 0);
+            d->color.g = vgetq_lane_s32(rgb_v, 1);
+            d->color.b = vgetq_lane_s32(rgb_v, 2);
+#else
             d->color.r = r > 255 ? 255 : r;
             d->color.g = g > 255 ? 255 : g;
             d->color.b = b > 255 ? 255 : b;
+#endif
 
             if (mRsp->geometry_mode & G_TEXTURE_GEN) {
                 float dotx = 0, doty = 0;
@@ -2326,17 +2448,31 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         }
 
         if (use_fog) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: single 4-float store for fog color {R, G, B, A}
+            float32x4_t fog_v = { fogR, fogG, fogB, vtx->color.a * INV_255 };
+            vst1q_f32(vbo, fog_v);
+            vbo += 4;
+#else
             *vbo++ = fogR;
             *vbo++ = fogG;
             *vbo++ = fogB;
             *vbo++ = vtx->color.a * INV_255;
+#endif
         }
 
         if (use_grayscale) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: single 4-float store for grayscale color
+            float32x4_t gray_v = { grayR, grayG, grayB, grayA };
+            vst1q_f32(vbo, gray_v);
+            vbo += 4;
+#else
             *vbo++ = grayR;
             *vbo++ = grayG;
             *vbo++ = grayB;
             *vbo++ = grayA;
+#endif
         }
 
         for (int j = 0; j < numInputs; j++) {
@@ -2344,9 +2480,19 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 const PrecomputedInput& pc = precomputed[k][j];
                 if (k == 0) {
                     if (pc.isShade) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                        // NEON: convert vertex color bytes to float in one operation
+                        // Load {r, g, b, 0} as ints, convert to float, multiply by INV_255
+                        float32x4_t col = { (float)vtx->color.r, (float)vtx->color.g, (float)vtx->color.b, 0.0f };
+                        col = vmulq_n_f32(col, INV_255);
+                        *vbo++ = vgetq_lane_f32(col, 0);
+                        *vbo++ = vgetq_lane_f32(col, 1);
+                        *vbo++ = vgetq_lane_f32(col, 2);
+#else
                         *vbo++ = vtx->color.r * INV_255;
                         *vbo++ = vtx->color.g * INV_255;
                         *vbo++ = vtx->color.b * INV_255;
+#endif
                     } else {
                         *vbo++ = pc.r;
                         *vbo++ = pc.g;

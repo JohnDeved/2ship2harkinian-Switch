@@ -2276,12 +2276,15 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                     uint32_t origSizeBytes = mRdp->loaded_texture[tmemIdx].orig_size_bytes;
                     // Fast check: compare texture identity fields against the currently
                     // bound texture's cache key. Includes size_bytes to catch resized
-                    // textures, and palette for CI format textures.
+                    // textures. For CI format: also checks palette memory pointers AND
+                    // palette_index, since different tiles can use different sub-palettes
+                    // from the same palette memory (e.g. GfxPrint font uses 8 sub-palettes).
                     const TextureCacheKey& boundKey = mRenderingState.mTextures[i]->first;
                     if (boundKey.texture_addr == origAddr && boundKey.fmt == fmt &&
                         boundKey.siz == siz && boundKey.size_bytes == origSizeBytes &&
                         (fmt != G_IM_FMT_CI || (boundKey.palette_addrs[0] == mRdp->palettes[0] &&
-                                                 boundKey.palette_addrs[1] == mRdp->palettes[1]))) {
+                                                 boundKey.palette_addrs[1] == mRdp->palettes[1] &&
+                                                 boundKey.palette_index == mRdp->texture_tile[tile].palette))) {
                         skipImport = true;
                         if (mProfilingEnabled) {
                             mFrameStats.textureReloadSkips++;

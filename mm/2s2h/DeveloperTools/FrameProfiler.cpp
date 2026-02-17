@@ -871,7 +871,10 @@ void FrameProfilerWindow::DrawElement() {
     float vertsPerTri = (tris > 0.5f) ? (verts / tris) : 0.0f;
     ImGui::Text("Verts/Tri: %.2f", vertsPerTri);
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Vertices per triangle (ideal: ~3.0 for indexed triangles)\nHigher values may indicate vertex duplication, non-indexed geometry, or primitives like triangle strips");
+        ImGui::SetTooltip("Vertices per triangle\n"
+                          "~3.0 = indexed triangle lists (typical)\n"
+                          "~1.0 = triangle strips/fans (highly efficient)\n"
+                          ">3.0 = vertex duplication or non-indexed geometry");
     }
     
     ImGui::Text("Tex Loads: %.0f   Matrix Loads: %.0f   SetCombine: %.0f", texLoads, mtxLoads, setCombine);
@@ -893,9 +896,9 @@ void FrameProfilerWindow::DrawElement() {
     float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
     if (emptyPct > 30.0f) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "⚠ High empty flushes");
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "Warning: High empty flushes");
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Warning: %.0f%% of flushes are empty (no geometry)\nConsider lazy state application", emptyPct);
+            ImGui::SetTooltip("%.0f%% of flushes are empty (no geometry)\nConsider lazy state application to reduce overhead", emptyPct);
         }
     }
     

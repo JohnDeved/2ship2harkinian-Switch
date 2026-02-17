@@ -1,5 +1,6 @@
 #include "ship/window/gui/resource/GuiTextureFactory.h"
 #include "ship/window/gui/resource/GuiTexture.h"
+#include <stb_image.h>
 #include "spdlog/spdlog.h"
 
 namespace Ship {

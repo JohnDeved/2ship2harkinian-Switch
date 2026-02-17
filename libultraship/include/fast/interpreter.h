@@ -654,14 +654,6 @@ class Interpreter {
         bool linear_filter; // derived from other_mode_h TEXTFILT bits
     } mCachedModeFlags{};
 
-    // Cached per-texture tile computations (updated when textures_changed)
-    struct {
-        uint32_t tex_width, tex_height, tex_width2, tex_height2;
-        uint8_t cms, cmt; // post-clamp-strip values
-        uint32_t tm_bits; // contribution to tm mask for this texture slot
-        bool valid;
-    } mCachedTileState[2]{};
-
     // Cached combiner key + result (skip LookupOrCreateColorCombiner on ~85% of triangles)
     ColorCombinerKey mCachedCombinerKey{};
     ColorCombiner* mCachedCombiner = nullptr;

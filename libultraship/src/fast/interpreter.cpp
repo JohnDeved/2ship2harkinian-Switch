@@ -150,6 +150,12 @@ void Interpreter::Flush() {
             mFrameStats.drawCalls++;
             mFrameStats.verticesSubmitted += (uint32_t)(mBufVboNumTris * 3);
             mFrameStats.trianglesSubmitted += (uint32_t)mBufVboNumTris;
+
+            // Batch size histogram
+            uint32_t n = (uint32_t)mBufVboNumTris;
+            int bucket = (n <= 2) ? 0 : (n <= 8) ? 1 : (n <= 32) ? 2 : (n <= 128) ? 3 : 4;
+            mFrameStats.batchHistogram[bucket]++;
+            if (n > mFrameStats.maxBatchSize) mFrameStats.maxBatchSize = n;
         }
 
         Fast3DScopedTimer timer(mFrameStats.timeDrawSubmit, mProfilingEnabled);

@@ -78,6 +78,14 @@ typedef enum {
     PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER,
     PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS,
 
+    // Batch size histogram: draws per bucket (1-2, 3-8, 9-32, 33-128, 129+)
+    PROFILE_COUNTER_GL_BATCH_HIST_0,       // 1-2 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_1,       // 3-8 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_2,       // 9-32 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_3,       // 33-128 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_4,       // 129+ tris
+    PROFILE_COUNTER_GL_MAX_BATCH_SIZE,     // max batch size seen this frame
+
     PROFILE_COUNTER_MAX
 } ProfileCounter;
 

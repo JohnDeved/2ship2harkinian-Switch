@@ -402,6 +402,14 @@ struct Fast3DStats {
     uint64_t timePixelDepth;   // pixel depth prepare + readback
     uint64_t timeFrameSetup;   // Run() setup/teardown, framebuffer ops, clear, MSAA resolve
 
+    // Batch size histogram: how many draws fall into each size bucket
+    // Bucket 0: 1-2 tris, 1: 3-8, 2: 9-32, 3: 33-128, 4: 129+
+    static constexpr int BATCH_HISTOGRAM_BUCKETS = 5;
+    uint32_t batchHistogram[BATCH_HISTOGRAM_BUCKETS];
+
+    // Max batch size seen this frame
+    uint32_t maxBatchSize;
+
     float avgBatchSize;
     float usPerTriangle;
     float usPerDrawCall;

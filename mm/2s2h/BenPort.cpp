@@ -764,7 +764,6 @@ extern "C" void InitOTR() {
     OTRMessage_Init();
     OTRAudio_Init();
     TaskWorker_Init();
-    TaskWorkerPool_Init();
     OTRExtScanner();
     PlayerCustomFlipbooks_Patch();
 
@@ -804,7 +803,6 @@ extern "C" void SaveManager_ThreadPoolWait() {
 
 extern "C" void DeinitOTR() {
     SaveManager_ThreadPoolWait();
-    TaskWorkerPool_Destroy();
     TaskWorker_Destroy();
     OTRAudio_Exit();
 #ifdef ENABLE_CROWD_CONTROL
@@ -1060,6 +1058,23 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     // time_base = fps * original_fps (one second)
     int next_original_frame = fps;
 
+    if (wnd == nullptr) {
+        // Fast3D window unavailable (e.g. transient backend init/teardown state).
+        // Reset interpolation time so we do not accumulate a large catch-up burst
+        // when rendering resumes.
+        time = 0;
+        last_fps = fps;
+        last_update_rate = R_UPDATE_RATE;
+
+        bool curAltAssets = CVarGetInteger("gEnhancements.Mods.AlternateAssets", 0);
+        if (prevAltAssets != curAltAssets) {
+            prevAltAssets = curAltAssets;
+            Ship::Context::GetInstance()->GetResourceManager()->SetAltAssetsEnabled(curAltAssets);
+            gfx_texture_cache_clear();
+        }
+        return;
+    }
+
 #if defined(__SWITCH__)
     // Multi-core pipelining: overlap matrix interpolation for sub-frame N+1
     // on the worker thread (Core 3) while Core 0 renders DL iteration N.
@@ -1096,7 +1111,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
 
         // If multiple sub-frames and not debugging: pipeline interp with rendering
         if (sub_frames.size() > 1 && !GfxDebuggerIsDebugging()) {
-            auto intp = wnd ? wnd->GetInterpreterWeak().lock().get() : nullptr;
+            auto intp = wnd->GetInterpreterWeak().lock().get();
 
             FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
 
@@ -1108,7 +1123,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
 
             FrameProfiler_EndPhase(PROFILE_PHASE_FRAME_INTERP);
 
-            if (wnd != nullptr) { wnd->SetTargetFps(fps); }
+            wnd->SetTargetFps(fps);
             wnd->HandleEvents();
             const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
             wnd->SetProfilingEnabled(profilerEnabled);
@@ -1127,6 +1142,10 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 // (while Core 3 computes next interpolation)
                 FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
                 FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
+                // Track replay diagnostics only when profiler is active to avoid
+                // branch/store overhead in the normal rendering hot path.
+                bool usedReplayThisIter = false;
+                bool fallbackThisIter = false;
 
                 wnd->DrawAndRunGraphicsCommands(commands, current_m);
 
@@ -1169,7 +1188,9 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
                 }
                 if (intp) { intp->mInterpolationIndex++; }
-                FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
+                if (profilerEnabled) {
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
+                }
 
                 FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
                 FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);

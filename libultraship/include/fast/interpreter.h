@@ -653,7 +653,6 @@ class Interpreter {
     // Cached combiner key + result (skip LookupOrCreateColorCombiner on ~85% of triangles)
     ColorCombinerKey mCachedCombinerKey{};
     ColorCombiner* mCachedCombiner = nullptr;
-
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

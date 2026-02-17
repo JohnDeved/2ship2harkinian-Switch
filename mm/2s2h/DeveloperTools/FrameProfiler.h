@@ -36,6 +36,10 @@ typedef enum {
 
 typedef enum {
     PROFILE_COUNTER_DL_ITERATIONS, // number of DrawAndRunGraphicsCommands calls per frame
+    PROFILE_COUNTER_DL_REPLAY_ITERATIONS, // number of RunReplay calls per frame
+    PROFILE_COUNTER_DL_REPLAY_FALLBACKS,  // non-first iterations that fell back to full interpretation
+    PROFILE_COUNTER_DL_REPLAY_BRANCHZ_FRAMES, // first iterations where replay was blocked by G_BRANCH_Z
+    PROFILE_COUNTER_DL_REPLAY_COOLDOWN_SKIPS, // first iterations skipped due branch-z cooldown
     PROFILE_COUNTER_DL_COMMANDS,   // total GBI commands across all buffers
     PROFILE_COUNTER_DL_TRIANGLES,  // G_TRI1 + 2*G_TRI2 triangle count
     PROFILE_COUNTER_DL_VERTICES,   // total vertices loaded (from G_VTX)

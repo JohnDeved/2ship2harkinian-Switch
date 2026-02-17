@@ -3758,11 +3758,12 @@ void gfx_copy_framebuffer(int fb_dst_id, int fb_src_id, bool copyOnce, bool* has
 // double pointer because we sometimes need to increment and decrement the underlying pointer Returns false if the
 // current opcode should be incremented after the handler ends.
 typedef bool (*GfxOpcodeHandlerFunc)(F3DGfx** gfx);
+static void gfx_set_ucode_handler(UcodeHandlers ucode);
 
-bool gfx_load_ucode_handler_f3dex2(F3DGfx** cmd) {
-    Interpreter* gfx = mInstance.lock().get();
-    gfx->mRsp->fog_mul = 0;
-    gfx->mRsp->fog_offset = 0;
+bool gfx_load_ucode_handler_f3dex2(F3DGfx** cmd0) {
+    F3DGfx* cmd = *cmd0;
+    gfx_set_ucode_handler((UcodeHandlers)(cmd->words.w0 & 0xFFFFFF));
+    ++(*cmd0);
     return false;
 }
 
@@ -4973,9 +4974,54 @@ class UcodeHandler {
         return mHandlers[static_cast<uint8_t>(opcode)];
     }
 
+    // Single-lookup: returns handler function pointer or nullptr if opcode not in this table.
+    inline GfxOpcodeHandlerFunc get(int8_t opcode) const {
+        return mHandlers[static_cast<uint8_t>(opcode)].second;
+    }
+
   private:
     std::pair<const char*, GfxOpcodeHandlerFunc> mHandlers[std::numeric_limits<uint8_t>::max() + 1];
 };
+
+#if defined(__SWITCH__)
+// Flat lookup table: maps handler function pointer → true if it is a traversal handler.
+// Replaces an 8-comparison chain in IsTraversalHandler() with a single O(1) lookup.
+// Built once at startup; the set of traversal handlers is fixed for the lifetime of the process.
+static constexpr size_t kTraversalTableBuckets = 64; // power-of-2 for fast modulo
+static GfxOpcodeHandlerFunc sTraversalTable[kTraversalTableBuckets] = {};
+
+static void InitTraversalTable() {
+    std::memset(sTraversalTable, 0, sizeof(sTraversalTable));
+    const GfxOpcodeHandlerFunc traversalHandlers[] = {
+        gfx_dl_handler_common,
+        gfx_end_dl_handler_common,
+        gfx_branch_z_otr_handler_f3dex2,
+        gfx_dl_otr_filepath_handler_custom,
+        gfx_dl_otr_hash_handler_custom,
+        gfx_dl_index_handler,
+        gfx_cull_dl_handler_f3dex2,
+        gfx_noop_handler_f3dex2,
+    };
+    for (auto h : traversalHandlers) {
+        // Open addressing with linear probing
+        size_t idx = (reinterpret_cast<uintptr_t>(h) >> 2) & (kTraversalTableBuckets - 1);
+        while (sTraversalTable[idx] != nullptr) {
+            idx = (idx + 1) & (kTraversalTableBuckets - 1);
+        }
+        sTraversalTable[idx] = h;
+    }
+}
+
+static inline bool IsTraversalHandler(GfxOpcodeHandlerFunc handler) {
+    size_t idx = (reinterpret_cast<uintptr_t>(handler) >> 2) & (kTraversalTableBuckets - 1);
+    while (true) {
+        GfxOpcodeHandlerFunc entry = sTraversalTable[idx];
+        if (entry == handler) return true;
+        if (entry == nullptr) return false;
+        idx = (idx + 1) & (kTraversalTableBuckets - 1);
+    }
+}
+#endif
 
 static constexpr UcodeHandler rdpHandlers = {
     { RDP_G_SETTARGETINTERPINDEX,
@@ -5198,27 +5244,30 @@ static void gfx_step() {
 #endif
 
     if (opcode == F3DEX2_G_LOAD_UCODE) {
-        gfx_set_ucode_handler((UcodeHandlers)(cmd->words.w0 & 0xFFFFFF));
-        ++cmd;
+        gfx_load_ucode_handler_f3dex2(&cmd);
         return;
         // Instead of having a handler for each ucode for switching ucode, just check for it early and return.
     }
 
-    GfxOpcodeHandlerFunc handler = nullptr;
-
-    if (otrHandlers.contains(opcode)) {
-        handler = otrHandlers.at(opcode).second;
-    } else if (rdpHandlers.contains(opcode)) {
-        handler = rdpHandlers.at(opcode).second;
-    } else if (ucode_handler_index < ucode_handlers.size()) {
-        if (ucode_handlers[ucode_handler_index]->contains(opcode)) {
-            handler = ucode_handlers[ucode_handler_index]->at(opcode).second;
-        } else {
-            SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}", (uint8_t)opcode,
-                            (uint32_t)ucode_handler_index);
+    // Single-lookup dispatch: get() returns handler or nullptr in one array access.
+    // OTR handlers take priority (custom overrides), then try the active ucode
+    // table (most common: G_VTX, G_TRI1, G_MTX, etc.), then RDP.
+    GfxOpcodeHandlerFunc handler = otrHandlers.get(opcode);
+    if (!handler) {
+        if (ucode_handler_index < ucode_handlers.size()) {
+            handler = ucode_handlers[ucode_handler_index]->get(opcode);
         }
-    } else {
-        SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}", (uint8_t)opcode, (uint32_t)ucode_handler_index);
+        if (!handler) {
+            handler = rdpHandlers.get(opcode);
+        }
+        if (!handler) {
+            if (ucode_handler_index < ucode_handlers.size()) {
+                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}", (uint8_t)opcode,
+                                (uint32_t)ucode_handler_index);
+            } else {
+                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}", (uint8_t)opcode, (uint32_t)ucode_handler_index);
+            }
+        }
     }
 
     if (handler) {
@@ -5262,6 +5311,9 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     // values passed in may be stale.
     int32_t actualPosX, actualPosY;
     mWapi->GetDimensions(&width, &height, &actualPosX, &actualPosY);
+
+    // Build the traversal handler lookup table for DL replay recording.
+    InitTraversalTable();
 #endif
 
     mRapi->UpdateFramebufferParameters(0, width, height, 1, false, true, true, true);
@@ -5517,7 +5569,6 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
         mFrameStats.ComputeDerived();
     }
 }
-
 void Interpreter::EndFrame() {
     mRapi->EndFrame();
     mWapi->SwapBuffersBegin();

@@ -62,6 +62,10 @@ static float sCounterRing[PROFILE_COUNTER_MAX][PROFILE_RING_SIZE];
 #define PROFILE_DL_FIELD_COUNT 8
 
 static float sBufferStatsRing[PROFILE_DL_BUFFER_COUNT][PROFILE_DL_FIELD_COUNT][PROFILE_RING_SIZE];
+static float sPhaseRunningSum[PROFILE_PHASE_MAX];
+static float sCounterRunningSum[PROFILE_COUNTER_MAX];
+static float sBufferStatsRunningSum[PROFILE_DL_BUFFER_COUNT][PROFILE_DL_FIELD_COUNT];
+static int sRunningSumRecalcCountdown = 0; // recompute true sums periodically to prevent float drift
 static std::atomic<int> sRingIndex{ 0 };
 static std::atomic<int> sEnabled{ 0 };
 static int sDrawCountdown = 0; // main-thread only
@@ -79,7 +83,10 @@ extern "C" void FrameProfiler_EndPhase(ProfilePhase phase) {
     if (!sEnabled.load(std::memory_order_relaxed))
         return;
     uint64_t elapsed = ProfileGetNs() - sPhaseStart[phase];
-    sPhaseRing[phase][sRingIndex.load(std::memory_order_relaxed)] = (float)elapsed / 1e6f; // ns → ms
+    const float elapsedMs = (float)elapsed / 1e6f;
+    const int ri = sRingIndex.load(std::memory_order_relaxed);
+    sPhaseRing[phase][ri] += elapsedMs; // ns → ms
+    sPhaseRunningSum[phase] += elapsedMs;
 }
 
 extern "C" void FrameProfiler_EndFrame(void) {
@@ -88,17 +95,43 @@ extern "C" void FrameProfiler_EndFrame(void) {
     int next = (sRingIndex.load(std::memory_order_relaxed) + 1) % PROFILE_RING_SIZE;
     // Clear the next slot so phases not measured this frame show 0
     for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
+        sPhaseRunningSum[i] -= sPhaseRing[i][next];
         sPhaseRing[i][next] = 0.0f;
     }
     for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
+        sCounterRunningSum[i] -= sCounterRing[i][next];
         sCounterRing[i][next] = 0.0f;
     }
     for (int b = 0; b < PROFILE_DL_BUFFER_COUNT; b++) {
         for (int f = 0; f < PROFILE_DL_FIELD_COUNT; f++) {
+            sBufferStatsRunningSum[b][f] -= sBufferStatsRing[b][f][next];
             sBufferStatsRing[b][f][next] = 0.0f;
         }
     }
     sRingIndex.store(next, std::memory_order_relaxed);
+
+    // Periodically recompute running sums from scratch to prevent float drift.
+    // This runs once every PROFILE_RING_SIZE frames (~2 seconds at 60fps).
+    if (--sRunningSumRecalcCountdown <= 0) {
+        sRunningSumRecalcCountdown = PROFILE_RING_SIZE;
+        for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
+            float sum = 0.0f;
+            for (int j = 0; j < PROFILE_RING_SIZE; j++) sum += sPhaseRing[i][j];
+            sPhaseRunningSum[i] = sum;
+        }
+        for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
+            float sum = 0.0f;
+            for (int j = 0; j < PROFILE_RING_SIZE; j++) sum += sCounterRing[i][j];
+            sCounterRunningSum[i] = sum;
+        }
+        for (int b = 0; b < PROFILE_DL_BUFFER_COUNT; b++) {
+            for (int f = 0; f < PROFILE_DL_FIELD_COUNT; f++) {
+                float sum = 0.0f;
+                for (int j = 0; j < PROFILE_RING_SIZE; j++) sum += sBufferStatsRing[b][f][j];
+                sBufferStatsRunningSum[b][f] = sum;
+            }
+        }
+    }
 
     // Auto-disable when window hasn't drawn recently
     if (sDrawCountdown > 0) {
@@ -109,11 +142,7 @@ extern "C" void FrameProfiler_EndFrame(void) {
 }
 
 extern "C" float FrameProfiler_GetPhaseAvgMs(ProfilePhase phase) {
-    float sum = 0.0f;
-    for (int i = 0; i < PROFILE_RING_SIZE; i++) {
-        sum += sPhaseRing[phase][i];
-    }
-    return sum / PROFILE_RING_SIZE;
+    return sPhaseRunningSum[phase] / PROFILE_RING_SIZE;
 }
 
 extern "C" void FrameProfiler_AddCounter(ProfileCounter counter, float value) {
@@ -121,15 +150,13 @@ extern "C" void FrameProfiler_AddCounter(ProfileCounter counter, float value) {
         return;
     // Note: Counters are assumed to be incremented from the main thread only.
     // If a counter is used from worker threads, it must be made atomic.
-    sCounterRing[counter][sRingIndex.load(std::memory_order_relaxed)] += value;
+    const int ri = sRingIndex.load(std::memory_order_relaxed);
+    sCounterRing[counter][ri] += value;
+    sCounterRunningSum[counter] += value;
 }
 
 extern "C" float FrameProfiler_GetCounterAvg(ProfileCounter counter) {
-    float sum = 0.0f;
-    for (int i = 0; i < PROFILE_RING_SIZE; i++) {
-        sum += sCounterRing[counter][i];
-    }
-    return sum / PROFILE_RING_SIZE;
+    return sCounterRunningSum[counter] / PROFILE_RING_SIZE;
 }
 
 extern "C" int FrameProfiler_IsEnabled(void) {
@@ -217,14 +244,16 @@ extern "C" void FrameProfiler_ScanAllBuffers(GraphicsContext* gfxCtx) {
         DLBufferStats s = ScanBuffer(buffers[b].start, buffers[b].end);
 
         // Store per-buffer stats in ring buffer
-        sBufferStatsRing[b][0][ri] = (float)s.commands;
-        sBufferStatsRing[b][1][ri] = (float)s.triangles;
-        sBufferStatsRing[b][2][ri] = (float)s.vertices;
-        sBufferStatsRing[b][3][ri] = (float)s.texLoads;
-        sBufferStatsRing[b][4][ri] = (float)s.mtxLoads;
-        sBufferStatsRing[b][5][ri] = (float)s.pipeSyncs;
-        sBufferStatsRing[b][6][ri] = (float)s.subcalls;
-        sBufferStatsRing[b][7][ri] = (float)s.setCombine;
+        const float vals[PROFILE_DL_FIELD_COUNT] = {
+            (float)s.commands, (float)s.triangles, (float)s.vertices, (float)s.texLoads,
+            (float)s.mtxLoads, (float)s.pipeSyncs, (float)s.subcalls,  (float)s.setCombine
+        };
+        for (int f = 0; f < PROFILE_DL_FIELD_COUNT; f++) {
+            const float oldVal = sBufferStatsRing[b][f][ri];
+            const float newVal = vals[f];
+            sBufferStatsRing[b][f][ri] = newVal;
+            sBufferStatsRunningSum[b][f] += newVal - oldVal;
+        }
 
         totalCmds += s.commands;
         totalTris += s.triangles;
@@ -252,25 +281,14 @@ extern "C" DLBufferStats FrameProfiler_GetBufferStats(int bufIdx) {
     if (bufIdx < 0 || bufIdx >= PROFILE_DL_BUFFER_COUNT)
         return stats;
 
-    for (int i = 0; i < PROFILE_RING_SIZE; i++) {
-        stats.commands += (int)sBufferStatsRing[bufIdx][0][i];
-        stats.triangles += (int)sBufferStatsRing[bufIdx][1][i];
-        stats.vertices += (int)sBufferStatsRing[bufIdx][2][i];
-        stats.texLoads += (int)sBufferStatsRing[bufIdx][3][i];
-        stats.mtxLoads += (int)sBufferStatsRing[bufIdx][4][i];
-        stats.pipeSyncs += (int)sBufferStatsRing[bufIdx][5][i];
-        stats.subcalls += (int)sBufferStatsRing[bufIdx][6][i];
-        stats.setCombine += (int)sBufferStatsRing[bufIdx][7][i];
-    }
-    // Average
-    stats.commands /= PROFILE_RING_SIZE;
-    stats.triangles /= PROFILE_RING_SIZE;
-    stats.vertices /= PROFILE_RING_SIZE;
-    stats.texLoads /= PROFILE_RING_SIZE;
-    stats.mtxLoads /= PROFILE_RING_SIZE;
-    stats.pipeSyncs /= PROFILE_RING_SIZE;
-    stats.subcalls /= PROFILE_RING_SIZE;
-    stats.setCombine /= PROFILE_RING_SIZE;
+    stats.commands = (int)(sBufferStatsRunningSum[bufIdx][0] / PROFILE_RING_SIZE);
+    stats.triangles = (int)(sBufferStatsRunningSum[bufIdx][1] / PROFILE_RING_SIZE);
+    stats.vertices = (int)(sBufferStatsRunningSum[bufIdx][2] / PROFILE_RING_SIZE);
+    stats.texLoads = (int)(sBufferStatsRunningSum[bufIdx][3] / PROFILE_RING_SIZE);
+    stats.mtxLoads = (int)(sBufferStatsRunningSum[bufIdx][4] / PROFILE_RING_SIZE);
+    stats.pipeSyncs = (int)(sBufferStatsRunningSum[bufIdx][5] / PROFILE_RING_SIZE);
+    stats.subcalls = (int)(sBufferStatsRunningSum[bufIdx][6] / PROFILE_RING_SIZE);
+    stats.setCombine = (int)(sBufferStatsRunningSum[bufIdx][7] / PROFILE_RING_SIZE);
     return stats;
 }
 
@@ -284,10 +302,10 @@ static const char* sPhaseNames[PROFILE_PHASE_MAX] = {
 // Core assignment labels for display
 static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
     "Core 0", // AT (main thread)
-    "Core 1", // OC (worker thread)
+    "Core 3", // OC (worker thread on Switch; may fall back)
     "Core 0", // Damage
     "Core 0", // Actor Update
-    "Core 1", // Effects (worker thread)
+    "Core 0", // Effects
     "Core 0", // Actor Draw
     "Core 0", // Scene Draw
     "Core 0", // Play Update
@@ -300,7 +318,8 @@ static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
 };
 
 static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
-    "DL Iterations",      "DL Commands",       "Triangles",          "Vertices",         "Tex Loads",
+    "DL Iterations",      "DL Replay Iters",   "DL Replay Fallback", "DL Replay BranchZ", "DL Replay Cooldown",
+    "DL Commands",        "Triangles",         "Vertices",           "Tex Loads",
     "Matrix Loads",       "Pipe Syncs",        "DL Subcalls",        "SetCombine",       "GL Draw Calls",
     "GL Batch Flushes",   "GL BufFull Flushes", "GL State Flushes",  "GL Shader Switches", "GL Shader Compiles", "GL Texture Binds",
     "GL Tex Cache Miss",  "GL Vert Submitted", "GL Tri Submitted",   "GL Time Total ms", "GL Time Dispatch ms",
@@ -478,6 +497,10 @@ static void FrameProfiler_ExportSnapshot(void) {
     // Counters
     out << "--- Display List Statistics ---" << std::endl;
     float dlCmds = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_COMMANDS);
+    float dlReplayIters = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_REPLAY_ITERATIONS);
+    float dlReplayFallbacks = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_REPLAY_FALLBACKS);
+    float dlReplayBranchZFrames = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_REPLAY_BRANCHZ_FRAMES);
+    float dlReplayCooldownSkips = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_REPLAY_COOLDOWN_SKIPS);
     float tris = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_TRIANGLES);
     float verts = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_VERTICES);
     float texLoads = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_TEX_LOADS);
@@ -512,6 +535,10 @@ static void FrameProfiler_ExportSnapshot(void) {
 
     // GBI/Display List counters (game-side)
     out << "DL Iterations:                  " << std::fixed << std::setprecision(0) << dlIter << std::endl;
+    out << "DL Replay Iterations:           " << std::fixed << std::setprecision(0) << dlReplayIters << std::endl;
+    out << "DL Replay Fallback Iterations:  " << std::fixed << std::setprecision(0) << dlReplayFallbacks << std::endl;
+    out << "DL Replay Branch-Z Blocks:      " << std::fixed << std::setprecision(0) << dlReplayBranchZFrames << std::endl;
+    out << "DL Replay Cooldown Skips:       " << std::fixed << std::setprecision(0) << dlReplayCooldownSkips << std::endl;
     out << "Total Commands (all buffers):   " << std::fixed << std::setprecision(0) << dlCmds << std::endl;
     out << "Triangles:                      " << std::fixed << std::setprecision(0) << tris << std::endl;
     out << "Vertices:                       " << std::fixed << std::setprecision(0) << verts << std::endl;
@@ -825,16 +852,15 @@ static void FrameProfiler_ExportSnapshot(void) {
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_DRAW) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_SCENE_DRAW) +
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_AUDIO_WAIT);
-    float core1Ms =
-        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_EFFECTS);
+    float core1Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC);
     float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
 
     out << "--- Core Utilization (Multi-threading Status) ---" << std::endl;
     out << "Core 0 Active Time:             " << std::fixed << std::setprecision(2) << core0Ms << " ms (main thread)" << std::endl;
-    out << "Core 1 Active Time:             " << std::fixed << std::setprecision(2) << core1Ms << " ms (worker threads)" << std::endl;
-    out << "Core 1/Core 0 Ratio:            " << std::fixed << std::setprecision(1) << (imbalance * 100.0f) << "% (100% = balanced)" << std::endl;
+    out << "Worker Core Active Time:        " << std::fixed << std::setprecision(2) << core1Ms << " ms (Switch: usually Core 3)" << std::endl;
+    out << "Worker/Core 0 Ratio:            " << std::fixed << std::setprecision(1) << (imbalance * 100.0f) << "% (100% = balanced)" << std::endl;
     if (imbalance < 0.5f) {
-        out << "Note: Core 1 is significantly underutilized. Consider moving more work to worker threads." << std::endl;
+        out << "Note: Worker core is significantly underutilized. Consider moving more work to worker threads." << std::endl;
     }
     out << std::endl;
 
@@ -896,7 +922,7 @@ static void FrameProfiler_ExportSnapshot(void) {
                 out << "    " << stateActualFlushes << " state-driven flushes across " << glDrawCalls << " draws = " << (stateActualFlushes / glDrawCalls) << " state changes/draw." << std::endl;
             }
             if (imbalance < 0.1f && core0Ms > 30.0f) {
-                out << "  ⚠ Core imbalance: Core 0 = " << core0Ms << " ms, Core 1 = " << core1Ms << " ms (" << (imbalance * 100.0f) << "%)." << std::endl;
+                out << "  ⚠ Core imbalance: Core 0 = " << core0Ms << " ms, worker core = " << core1Ms << " ms (" << (imbalance * 100.0f) << "%)." << std::endl;
                 out << "    Move DL processing or frame interp to a worker thread for ~2x throughput." << std::endl;
             }
             if (glTimeDraw > 10.0f && glDrawCalls > 500.0f) {
@@ -1132,6 +1158,10 @@ void FrameProfilerWindow::DrawElement() {
     ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "--- Display List Stats (per frame avg) ---");
 
     float dlCmds = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_COMMANDS);
+    float dlReplayIters = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_REPLAY_ITERATIONS);
+    float dlReplayFallbacks = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_REPLAY_FALLBACKS);
+    float dlReplayBranchZFrames = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_REPLAY_BRANCHZ_FRAMES);
+    float dlReplayCooldownSkips = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_REPLAY_COOLDOWN_SKIPS);
     float tris = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_TRIANGLES);
     float verts = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_VERTICES);
     float texLoads = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_TEX_LOADS);
@@ -1165,6 +1195,8 @@ void FrameProfilerWindow::DrawElement() {
     float glAvgBatch = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_AVG_BATCH_SIZE);
 
     ImGui::Text("DL Iterations: %.0f   Total Commands: %.0f", dlIter, dlCmds);
+    ImGui::Text("Replay Iters: %.0f   Fallbacks: %.0f   BranchZ: %.0f   Cooldown Skips: %.0f",
+                dlReplayIters, dlReplayFallbacks, dlReplayBranchZFrames, dlReplayCooldownSkips);
     ImGui::Text("Triangles: %.0f   Vertices: %.0f", tris, verts);
     
     // Add derived metric with tooltip
@@ -1430,10 +1462,9 @@ void FrameProfilerWindow::DrawElement() {
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_DRAW) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_SCENE_DRAW) +
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_AUDIO_WAIT);
-    float core1Ms =
-        FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_EFFECTS);
+    float core1Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC);
 
-    ImGui::Text("Core 0 Active: %5.2f ms  |  Core 1 Active: %5.2f ms", core0Ms, core1Ms);
+    ImGui::Text("Core 0 Active: %5.2f ms  |  Worker Core Active: %5.2f ms", core0Ms, core1Ms);
     float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
     
     // Color-code the utilization ratio
@@ -1448,7 +1479,7 @@ void FrameProfilerWindow::DrawElement() {
     
     ImGui::TextColored(ratioColor, "Core utilization ratio: %.1f%% (100%% = balanced)", imbalance * 100.0f);
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Ratio of Core 1 work to Core 0 work\nIdeal: 80-120%% (well balanced)\n<50%%: Consider moving work to worker threads");
+        ImGui::SetTooltip("Ratio of worker-core work to Core 0 work\nIdeal: 80-120%% (well balanced)\n<50%%: Consider moving work to worker threads");
     }
 
     ImGui::Separator();

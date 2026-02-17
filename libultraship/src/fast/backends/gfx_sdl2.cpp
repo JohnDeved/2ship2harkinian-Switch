@@ -731,9 +731,14 @@ void GfxWindowBackendSDL2::SwapBuffersBegin() {
     {
         static bool vsyncForced = false;
         if (!vsyncForced) {
-            SDL_GL_SetSwapInterval(1);
-            mVsyncEnabled = true;
-            vsyncForced = true;
+            int result = SDL_GL_SetSwapInterval(1);
+            if (result == 0) {
+                mVsyncEnabled = true;
+                vsyncForced = true;
+            } else {
+                SPDLOG_ERROR("SDL_GL_SetSwapInterval(1) failed: {}", SDL_GetError());
+                // Will retry on next frame since vsyncForced stays false
+            }
         }
     }
 #else

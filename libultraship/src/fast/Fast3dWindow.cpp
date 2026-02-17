@@ -52,6 +52,9 @@ Fast3dWindow::~Fast3dWindow() {
 #ifdef __SWITCH__
     DestroyRenderThread();
 #endif
+    // Clear raw sInstance pointer before destroying the interpreter to prevent
+    // use-after-free if any code tries to use sInstance after this point.
+    GfxSetInstance(nullptr);
     mInterpreter->Destroy();
     delete mRenderingApi;
     delete mWindowManagerApi;
@@ -491,13 +494,13 @@ void Fast3dWindow::DestroyRenderThread() {
 }
 
 bool Fast3dWindow::SubmitRenderWork(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtxReplacements) {
-    if (!mRenderThreadRunning) {
-        // Fallback: run inline if render thread not active
-        return DrawAndRunGraphicsCommands(commands, mtxReplacements);
-    }
-
     {
         std::unique_lock<std::mutex> lock(mRenderMutex);
+        if (!mRenderThreadRunning) {
+            // Fallback: run inline if render thread not active
+            lock.unlock();
+            return DrawAndRunGraphicsCommands(commands, mtxReplacements);
+        }
         // Wait for any previous work to complete
         while (!mRenderWorkDone) {
             mRenderDoneCV.wait(lock);

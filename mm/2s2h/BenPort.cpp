@@ -1155,11 +1155,23 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 // to apply per-sub-frame state. Must match even when sub-frames are skipped.
                 if (intp) { intp->mInterpolationIndex = (int)i; }
 
-                // Start async interpolation for NEXT sub-frame (if any)
+                // Start async interpolation for the NEXT non-skipped sub-frame (if any).
+                // Note: The async submit + wait pair are always in the same iteration body
+                // (iteration i submits work for the next frame and waits for it at the end),
+                // so there's no leaked async work when sub-frames are skipped.
+                // Find the next sub-frame index that won't be skipped:
+                // - Last sub-frame is never skipped
+                // - Intermediate sub-frames are skipped when over budget
+                size_t nextIdx = i + 1;
+                bool overBudget = (std::chrono::steady_clock::now() - frameStart) >= frameBudget;
+                // Skip past intermediate sub-frames that would be dropped
+                while (nextIdx > 0 && nextIdx < sub_frames.size() - 1 && overBudget) {
+                    nextIdx++;
+                }
                 AsyncInterpJob nextJob;
-                bool hasNext = (i + 1 < sub_frames.size());
-                if (hasNext && !sub_frames[i + 1].isIdentity) {
-                    nextJob.fraction = sub_frames[i + 1].fraction;
+                bool hasNext = (nextIdx < sub_frames.size());
+                if (hasNext && !sub_frames[nextIdx].isIdentity) {
+                    nextJob.fraction = sub_frames[nextIdx].fraction;
                     TaskWorker_Submit(asyncInterpTask, &nextJob);
                 }
 
@@ -1220,13 +1232,15 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 // Wait for next interpolation result (if submitted)
                 if (hasNext) {
                     FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
-                    if (!sub_frames[i + 1].isIdentity) {
+                    if (!sub_frames[nextIdx].isIdentity) {
                         TaskWorker_Wait();
                         current_m = std::move(nextJob.result);
                     } else {
                         current_m.clear();
                     }
                     FrameProfiler_EndPhase(PROFILE_PHASE_FRAME_INTERP);
+                    // Advance loop index to the next sub-frame we prepared for
+                    i = nextIdx - 1; // loop will increment to nextIdx
                 }
             }
 

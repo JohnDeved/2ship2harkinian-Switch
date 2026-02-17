@@ -577,12 +577,8 @@ void BenMenu::AddSettings() {
         .PreFunc([](WidgetInfo& info) {
 #ifdef __SWITCH__
             // VSync is always forced on Switch — show checkbox as checked and disabled.
-            // Set CVar once to ensure it reflects the forced state.
-            static bool cvarForced = false;
-            if (!cvarForced) {
-                CVarSetInteger(CVAR_VSYNC_ENABLED, 1);
-                cvarForced = true;
-            }
+            // Force CVar unconditionally to prevent config loads from overriding.
+            CVarSetInteger(CVAR_VSYNC_ENABLED, 1);
             info.options->disabled = true;
             info.options->disabledTooltip = "VSync is always enabled on Switch";
 #else

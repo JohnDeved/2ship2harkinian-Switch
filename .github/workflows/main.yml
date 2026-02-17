@@ -44,6 +44,11 @@ jobs:
         ccache --show-stats
         
         # Copy the OTR file to a predictable location
+        if [ ! -f mm/2ship.o2r ]; then
+          echo "ERROR: OTR generation failed - mm/2ship.o2r not found"
+          echo "Check the Generate2ShipOtr build output above for errors"
+          exit 1
+        fi
         cp mm/2ship.o2r ./2ship.o2r
 
     - name: Upload OTR artifact

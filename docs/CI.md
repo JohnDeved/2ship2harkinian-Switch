@@ -85,12 +85,14 @@ Therefore, we must:
 
 ### Benefits of Parallel Execution
 
-Assuming approximate build times:
-- OTR generation: ~5-8 minutes (asset extraction)
-- Switch compilation: ~10-15 minutes (full game build)
+Approximate build times (measured on GitHub Actions ubuntu-latest runners, February 2026):
+- OTR generation: ~5-8 minutes (asset extraction, varies with cache hit rate)
+- Switch compilation: ~10-15 minutes (full game build, varies with cache hit rate)
 
 **Sequential (old)**: 15-23 minutes total
 **Parallel (new)**: 10-15 minutes total (40-50% time savings)
+
+*Note: Build times are approximate and will vary based on code changes, cache hit rates, and GitHub Actions runner hardware availability.*
 
 ## Artifact Management
 

@@ -65,6 +65,7 @@ static float sBufferStatsRing[PROFILE_DL_BUFFER_COUNT][PROFILE_DL_FIELD_COUNT][P
 static std::atomic<int> sRingIndex{ 0 };
 static std::atomic<int> sEnabled{ 0 };
 static int sDrawCountdown = 0; // main-thread only
+static bool sProfilingActive = true; // user toggle — when false, zero overhead (sEnabled stays 0)
 
 // ── C API ──────────────────────────────────────────────────────────────
 
@@ -971,10 +972,45 @@ void FrameProfilerWindow::InitElement() {
 void FrameProfilerWindow::UpdateElement() {
 }
 
+// Helper: show a delta indicator next to a metric value
+static void ShowDelta(float current, float baseline, bool lowerIsBetter) {
+    if (!sPrevSnapshot.valid) return;
+    float delta = current - baseline;
+    if (std::abs(delta) < 0.01f) return; // no meaningful change
+    bool improved = lowerIsBetter ? (delta < 0) : (delta > 0);
+    ImVec4 color = improved ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f) : ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+    ImGui::SameLine();
+    if (std::abs(delta) >= 1.0f) {
+        ImGui::TextColored(color, "(%+.1f)", delta);
+    } else {
+        ImGui::TextColored(color, "(%+.2f)", delta);
+    }
+}
+
 void FrameProfilerWindow::DrawElement() {
-    // Enable profiling and reset the keepalive countdown
-    sEnabled.store(1, std::memory_order_relaxed);
-    sDrawCountdown = PROFILE_KEEPALIVE_FRAMES;
+    // On/off toggle — when OFF, zero overhead (no clock_gettime, no counter collection)
+    ImGui::Checkbox("Profiling Active", &sProfilingActive);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("When OFF: zero performance impact on game\n"
+                          "Window stays open showing last captured data");
+    }
+    if (!sProfilingActive) {
+        // Ensure profiling is disabled — zero overhead path
+        sEnabled.store(0, std::memory_order_relaxed);
+        sDrawCountdown = 0;
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "(PAUSED - showing last captured data)");
+    } else {
+        // Enable profiling and reset the keepalive countdown
+        sEnabled.store(1, std::memory_order_relaxed);
+        sDrawCountdown = PROFILE_KEEPALIVE_FRAMES;
+        // Show baseline info on the same line as the checkbox
+        if (sPrevSnapshot.valid) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("Baseline: %s (%.1f FPS)", sPrevSnapshot.commitShort.c_str(), sPrevSnapshot.fps);
+        }
+    }
+    ImGui::Separator();
 
     float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
     float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
@@ -982,7 +1018,7 @@ void FrameProfilerWindow::DrawElement() {
     float renderFrameMs = totalMs / dlIter;
     float fps = (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
 
-    // Enhanced summary with color coding
+    // Enhanced summary with color coding and deltas
     if (renderFrameMs > 20.0f) {
         ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
     } else if (renderFrameMs > PROFILE_TARGET_FRAME_MS) {
@@ -990,9 +1026,19 @@ void FrameProfilerWindow::DrawElement() {
     } else {
         ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
     }
+    ShowDelta(renderFrameMs, sPrevSnapshot.renderFrameMs, true);  // lower frame time = better
     ImGui::SameLine();
     ImGui::TextDisabled("Target: %.2f ms (60 FPS)", PROFILE_TARGET_FRAME_MS);
     
+    // Show FPS delta
+    if (sPrevSnapshot.valid) {
+        float fpsDelta = fps - sPrevSnapshot.fps;
+        if (std::abs(fpsDelta) >= 0.1f) {
+            ImVec4 fpsColor = (fpsDelta > 0) ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f) : ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+            ImGui::TextColored(fpsColor, "FPS vs baseline: %+.1f FPS (%s)", fpsDelta, fpsDelta > 0 ? "IMPROVED" : "REGRESSED");
+        }
+    }
+
     // Show performance headroom or overhead
     if (renderFrameMs > PROFILE_TARGET_FRAME_MS) {
         float overhead = ((renderFrameMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
@@ -1018,6 +1064,10 @@ void FrameProfilerWindow::DrawElement() {
         float pct = (totalMs > 0.01f) ? (ms / totalMs * 100.0f) : 0.0f;
 
         ImGui::Text("%-7s %-18s %5.1f ms (%4.1f%%)", sPhaseCoreLabels[i], sPhaseNames[i], ms, pct);
+        // Show delta for DL Process phase (the main bottleneck)
+        if (i == PROFILE_PHASE_DL_PROCESS && sPrevSnapshot.valid) {
+            ShowDelta(ms, sPrevSnapshot.dlProcessMs, true);
+        }
         ImGui::SameLine();
         ImGui::ProgressBar(frac, ImVec2(200, 0), "");
 
@@ -1092,7 +1142,10 @@ void FrameProfilerWindow::DrawElement() {
     }
     
     float stateActualFlushesGui = glBatchFlushes - glBufferFullFlushes;
-    ImGui::Text("GL Draw Calls: %.0f  Flushes: %.0f (state: %.0f, buf-full: %.0f)", glDrawCalls, glBatchFlushes, stateActualFlushesGui, glBufferFullFlushes);
+    ImGui::Text("GL Draw Calls: %.0f", glDrawCalls);
+    ShowDelta(glDrawCalls, sPrevSnapshot.glDrawCalls, true);  // fewer draws = better
+    ImGui::SameLine();
+    ImGui::Text("  Flushes: %.0f (state: %.0f, buf-full: %.0f)", glBatchFlushes, stateActualFlushesGui, glBufferFullFlushes);
     
     // Flush efficiency warning
     float emptyFlushes = glBatchFlushes - glDrawCalls;
@@ -1126,6 +1179,7 @@ void FrameProfilerWindow::DrawElement() {
     }
     
     ImGui::Text("GL Submitted: %.0f tris, %.0f verts  Avg batch: %.1f tris/draw", glTris, glVerts, glAvgBatch);
+    ShowDelta(glAvgBatch, sPrevSnapshot.glAvgBatch, false);  // bigger batches = better
     if (glDepthQueries > 0.0f) {
         ImGui::Text("Pixel Depth Queries: %.0f", glDepthQueries);
     }
@@ -1195,17 +1249,17 @@ void FrameProfilerWindow::DrawElement() {
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "--- Fast3D Timing Breakdown (%.2f ms total) ---", glTimeTotal);
     float timingBarMax = glTimeTotal > 0.01f ? glTimeTotal : 1.0f;
 
-    struct TimingEntry { const char* name; float ms; ImVec4 color; };
+    struct TimingEntry { const char* name; float ms; ImVec4 color; float baseline; };
     TimingEntry timings[] = {
-        { "Triangle Processing", glTimeTri, ImVec4(1.0f, 0.4f, 0.4f, 1.0f) },
-        { "Draw Submit (GL)",    glTimeDraw, ImVec4(1.0f, 0.7f, 0.3f, 1.0f) },
-        { "Vertex Load",         glTimeVtx, ImVec4(0.4f, 0.8f, 1.0f, 1.0f) },
-        { "Texture Setup",       glTimeTex, ImVec4(0.4f, 1.0f, 0.6f, 1.0f) },
-        { "Matrix Ops",          glTimeMtx, ImVec4(0.8f, 0.6f, 1.0f, 1.0f) },
-        { "Frame Setup/Teardown",glTimeSetup, ImVec4(0.6f, 0.6f, 0.6f, 1.0f) },
-        { "Pixel Depth",         glTimeDepth, ImVec4(1.0f, 1.0f, 0.4f, 1.0f) },
-        { "Shader Setup",        glTimeShader, ImVec4(0.4f, 1.0f, 1.0f, 1.0f) },
-        { "Dispatch (residual)", glTimeDispatch, ImVec4(0.7f, 0.7f, 0.7f, 1.0f) },
+        { "Triangle Processing", glTimeTri, ImVec4(1.0f, 0.4f, 0.4f, 1.0f), sPrevSnapshot.glTimeTri },
+        { "Draw Submit (GL)",    glTimeDraw, ImVec4(1.0f, 0.7f, 0.3f, 1.0f), sPrevSnapshot.glTimeDraw },
+        { "Vertex Load",         glTimeVtx, ImVec4(0.4f, 0.8f, 1.0f, 1.0f), sPrevSnapshot.glTimeVtx },
+        { "Texture Setup",       glTimeTex, ImVec4(0.4f, 1.0f, 0.6f, 1.0f), sPrevSnapshot.glTimeTex },
+        { "Matrix Ops",          glTimeMtx, ImVec4(0.8f, 0.6f, 1.0f, 1.0f), 0.0f },
+        { "Frame Setup/Teardown",glTimeSetup, ImVec4(0.6f, 0.6f, 0.6f, 1.0f), 0.0f },
+        { "Pixel Depth",         glTimeDepth, ImVec4(1.0f, 1.0f, 0.4f, 1.0f), 0.0f },
+        { "Shader Setup",        glTimeShader, ImVec4(0.4f, 1.0f, 1.0f, 1.0f), 0.0f },
+        { "Dispatch (residual)", glTimeDispatch, ImVec4(0.7f, 0.7f, 0.7f, 1.0f), 0.0f },
     };
     for (const auto& t : timings) {
         if (t.ms < 0.001f) continue; // skip zero entries
@@ -1213,6 +1267,9 @@ void FrameProfilerWindow::DrawElement() {
         if (frac > 1.0f) frac = 1.0f;
         float pct = glTimeTotal > 0.01f ? (t.ms / glTimeTotal * 100.0f) : 0.0f;
         ImGui::TextColored(t.color, "  %-22s %6.2f ms (%4.1f%%)", t.name, t.ms, pct);
+        if (sPrevSnapshot.valid && t.baseline > 0.01f) {
+            ShowDelta(t.ms, t.baseline, true);  // lower time = better
+        }
         ImGui::SameLine();
         ImGui::ProgressBar(frac, ImVec2(150, 0), "");
     }
@@ -1229,6 +1286,22 @@ void FrameProfilerWindow::DrawElement() {
         if (estDrawCalls > 0.0f) {
             ImGui::SameLine();
             ImGui::Text("  %.0f us/draw", (dlMs * 1000.0f) / estDrawCalls);
+        }
+    }
+
+    // State change rate — flushes per triangle indicates how much state fragmentation exists
+    if (glTris > 0.5f) {
+        float totalFlushCauses = flushTexture + flushSampler + flushShader + flushAlpha + flushDepthVp + flushCombiner;
+        float stateChangesPerTri = totalFlushCauses / glTris;
+        ImVec4 scColor = (stateChangesPerTri > 0.3f) ? ImVec4(1.0f, 0.5f, 0.2f, 1.0f) : 
+                         (stateChangesPerTri > 0.15f) ? ImVec4(1.0f, 0.8f, 0.2f, 1.0f) :
+                         ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+        ImGui::TextColored(scColor, "State changes/tri: %.3f", stateChangesPerTri);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Ratio of state-change flushes to triangles\n"
+                              "<0.15 = well batched\n"
+                              "0.15-0.30 = moderate fragmentation\n"
+                              ">0.30 = severe fragmentation (nearly 1 flush per 3 tris)");
         }
     }
 

@@ -308,7 +308,7 @@ static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
 
 // ── Helper functions ───────────────────────────────────────────────────
 
-static const float PROFILE_TARGET_FRAME_MS = 1000.0f / 60.0f;  // 60 FPS target
+static const float PROFILE_TARGET_FRAME_MS = 1000.0f / 60.0f;
 
 // Returns true for leaf phases (not parent/aggregate phases) used for bottleneck detection
 static bool IsLeafPhase(int phase) {
@@ -466,7 +466,7 @@ static void FrameProfiler_ExportSnapshot(void) {
     // Derived metrics for context
     float vertsPerTri = (tris > 0.5f) ? (verts / tris) : 0.0f;
     out << "Derived Metrics:" << std::endl;
-    out << "  Vertices per Triangle:        " << std::fixed << std::setprecision(2) << vertsPerTri << " (ideal: ~3.0 for indexed geometry)" << std::endl;
+    out << "  Vertices per Triangle:        " << std::fixed << std::setprecision(2) << vertsPerTri << " (~3.0 for indexed lists, ~1.0 for strips/fans, >3.0 indicates duplication)" << std::endl;
     out << "  Commands per Triangle:        " << std::fixed << std::setprecision(2) << (tris > 0.5f ? dlCmds / tris : 0.0f) << std::endl;
     out << std::endl;
     

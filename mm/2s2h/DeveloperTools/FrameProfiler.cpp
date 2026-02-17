@@ -780,7 +780,25 @@ void FrameProfilerWindow::DrawElement() {
     float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
     float fps = (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
 
-    ImGui::Text("Frame: %.1f ms  (%.0f FPS)  Target: %.1f ms (60 FPS)", totalMs, fps, PROFILE_TARGET_FRAME_MS);
+    // Enhanced summary with color coding
+    if (totalMs > 20.0f) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
+    } else if (totalMs > 16.67f) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
+    } else {
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Target: %.2f ms (60 FPS)", PROFILE_TARGET_FRAME_MS);
+    
+    // Show performance headroom or overhead
+    if (totalMs > 16.67f) {
+        float overhead = ((totalMs / 16.67f) - 1.0f) * 100.0f;
+        ImGui::Text("Performance: %.1f%% over budget", overhead);
+    } else {
+        float headroom = ((16.67f - totalMs) / 16.67f) * 100.0f;
+        ImGui::Text("Performance: %.1f%% headroom", headroom);
+    }
     ImGui::Separator();
 
     // Bar chart with percentages
@@ -848,15 +866,59 @@ void FrameProfilerWindow::DrawElement() {
 
     ImGui::Text("DL Iterations: %.0f   Total Commands: %.0f", dlIter, dlCmds);
     ImGui::Text("Triangles: %.0f   Vertices: %.0f", tris, verts);
+    
+    // Add derived metric with tooltip
+    float vertsPerTri = (tris > 0.5f) ? (verts / tris) : 0.0f;
+    ImGui::Text("Verts/Tri: %.2f", vertsPerTri);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Vertices per triangle (ideal: ~3.0 for indexed geometry)\nHigher values indicate inefficient vertex reuse");
+    }
+    
     ImGui::Text("Tex Loads: %.0f   Matrix Loads: %.0f   SetCombine: %.0f", texLoads, mtxLoads, setCombine);
     ImGui::Text("Pipe Syncs: %.0f   DL Subcalls: %.0f", pipeSyncs, subcalls);
 
+    ImGui::Separator();
+    
     // Estimated draw calls (each PipeSync potentially flushes a draw call)
     float estDrawCalls = pipeSyncs;
     ImGui::Text("Est. Draw Calls: ~%.0f", estDrawCalls);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Upper bound estimate based on PipeSync commands\nActual draw calls may be lower due to batching");
+    }
+    
     ImGui::Text("GL Draw Calls: %.0f  Batch Flushes: %.0f (state: %.0f)", glDrawCalls, glBatchFlushes, glStateFlushes);
+    
+    // Flush efficiency warning
+    float emptyFlushes = glBatchFlushes - glDrawCalls;
+    float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
+    if (emptyPct > 30.0f) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "⚠");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Warning: %.0f%% of flushes are empty (no geometry)\nConsider lazy state application", emptyPct);
+        }
+    }
+    
     ImGui::Text("GL Shader Switches: %.0f (compiles: %.0f)", glShaderSwitches, glShaderCompiles);
+    
+    // Add efficiency metric
+    float drawsPerShader = (glShaderSwitches > 0.5f) ? (glDrawCalls / glShaderSwitches) : 0.0f;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%.1f draws/shader)", drawsPerShader);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Draw calls per shader switch\nHigher is better (indicates better batching)");
+    }
+    
     ImGui::Text("GL Texture Binds: %.0f (cache misses: %.0f)", glTextureBinds, glTextureMisses);
+    
+    // Cache miss rate
+    float cacheMissRate = (glTextureBinds > 0.5f) ? (glTextureMisses / glTextureBinds * 100.0f) : 0.0f;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%.1f%% miss rate)", cacheMissRate);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Texture cache miss rate\nLower is better (indicates good texture locality)");
+    }
+    
     ImGui::Text("GL Submitted: %.0f tris, %.0f verts  Avg batch: %.1f tris/draw", glTris, glVerts, glAvgBatch);
     if (glDepthQueries > 0.0f) {
         ImGui::Text("Pixel Depth Queries: %.0f", glDepthQueries);
@@ -936,9 +998,23 @@ void FrameProfilerWindow::DrawElement() {
     float core1Ms =
         FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC) + FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_EFFECTS);
 
-    ImGui::Text("Core 0 Active: %5.1f ms  |  Core 1 Active: %5.1f ms", core0Ms, core1Ms);
+    ImGui::Text("Core 0 Active: %5.2f ms  |  Core 1 Active: %5.2f ms", core0Ms, core1Ms);
     float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
-    ImGui::Text("Core utilization ratio: %.0f%% (1.0 = perfectly balanced)", imbalance * 100.0f);
+    
+    // Color-code the utilization ratio
+    ImVec4 ratioColor = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);  // default blue
+    if (imbalance < 0.3f) {
+        ratioColor = ImVec4(1.0f, 0.5f, 0.2f, 1.0f);  // orange for severe imbalance
+    } else if (imbalance < 0.6f) {
+        ratioColor = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);  // yellow for moderate imbalance
+    } else if (imbalance > 0.8f && imbalance < 1.2f) {
+        ratioColor = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);  // green for well balanced
+    }
+    
+    ImGui::TextColored(ratioColor, "Core utilization ratio: %.1f%% (100%% = balanced)", imbalance * 100.0f);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Ratio of Core 1 work to Core 0 work\nIdeal: 80-120%% (well balanced)\n<50%%: Consider moving work to worker threads");
+    }
 
     ImGui::Separator();
 

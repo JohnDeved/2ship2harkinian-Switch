@@ -2198,13 +2198,42 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         uint32_t tile = mRdp->first_tile_index + i;
         if (comb->usedTextures[i]) {
             if (mRdp->textures_changed[i]) {
-                state_change_flush();
-                ImportTexture(i, tile, false);
-                if (mRdp->loaded_texture[i].masked) {
-                    ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
+                // Check if the "new" texture is actually the same one already bound.
+                // This avoids flushing the VBO batch when the N64 game redundantly
+                // reloads the same texture (very common — 0% cache miss rate in profiling).
+                bool skipImport = false;
+                if (!mRdp->loaded_texture[i].masked && !mRdp->loaded_texture[i].blended) {
+                    uint8_t fmt = mRdp->texture_tile[tile].fmt;
+                    uint8_t siz = mRdp->texture_tile[tile].siz;
+                    uint32_t tmemIdx = mRdp->texture_tile[tile].tmem_index;
+                    uint8_t paletteIndex = mRdp->texture_tile[tile].palette;
+                    uint32_t origSizeBytes = mRdp->loaded_texture[tmemIdx].orig_size_bytes;
+                    const RawTexMetadata* metadata = &mRdp->loaded_texture[tmemIdx].raw_tex_metadata;
+                    const uint8_t* origAddr = mRdp->loaded_texture[tmemIdx].addr;
+                    TextureCacheKey key;
+                    if (fmt == G_IM_FMT_CI) {
+                        key = { origAddr, { mRdp->palettes[0], mRdp->palettes[1] }, fmt, siz, paletteIndex, origSizeBytes };
+                    } else {
+                        key = { origAddr, {}, fmt, siz, paletteIndex, origSizeBytes };
+                    }
+                    // If the texture is already cached AND is the same one currently bound, skip flush
+                    TextureCacheMap::iterator it = mTextureCache.map.find(key);
+                    if (it != mTextureCache.map.end() && mRenderingState.mTextures[i] == &*it) {
+                        skipImport = true;
+                        // Still update LRU
+                        mTextureCache.lru.splice(mTextureCache.lru.end(), mTextureCache.lru,
+                                                 it->second.lru_location);
+                    }
                 }
-                if (mRdp->loaded_texture[i].blended) {
-                    ImportTexture(SHADER_FIRST_REPLACEMENT_TEXTURE + i, tile, true);
+                if (!skipImport) {
+                    state_change_flush();
+                    ImportTexture(i, tile, false);
+                    if (mRdp->loaded_texture[i].masked) {
+                        ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
+                    }
+                    if (mRdp->loaded_texture[i].blended) {
+                        ImportTexture(SHADER_FIRST_REPLACEMENT_TEXTURE + i, tile, true);
+                    }
                 }
                 mRdp->textures_changed[i] = false;
             }
@@ -2302,6 +2331,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     float clampSVal[2], clampTVal[2];
     bool clampS[2], clampT[2];
     int shifts_arr[2], shiftt_arr[2];
+    float shiftsMul[2], shifttMul[2];
     float ulsOffset[2], ultOffset[2];
     for (int t = 0; t < 2; t++) {
         if (!usedTextures[t]) continue;
@@ -2314,6 +2344,14 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         if (clampT[t]) clampTVal[t] = (tex_height2[t] - 0.5f) * invTexHeight[t];
         shifts_arr[t] = mRdp->texture_tile[tile].shifts;
         shiftt_arr[t] = mRdp->texture_tile[tile].shiftt;
+        // Precompute shift multipliers to avoid per-vertex branches
+        // shifts=0 → mul=1.0, shifts<=10 → mul=1/(1<<shifts), shifts>10 → mul=(1<<(16-shifts))
+        {
+            int s = shifts_arr[t];
+            shiftsMul[t] = (s == 0) ? 1.0f : (s <= 10) ? (1.0f / (float)(1 << s)) : (float)(1 << (16 - s));
+            int st = shiftt_arr[t];
+            shifttMul[t] = (st == 0) ? 1.0f : (st <= 10) ? (1.0f / (float)(1 << st)) : (float)(1 << (16 - st));
+        }
         ulsOffset[t] = mRdp->texture_tile[tile].uls / 4.0f;
         ultOffset[t] = mRdp->texture_tile[tile].ult / 4.0f;
     }
@@ -2425,17 +2463,8 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         for (int t = 0; t < 2; t++) {
             if (!usedTextures[t]) continue;
 
-            float u = vtx->u * (1.0f / 32.0f);
-            float v = vtx->v * (1.0f / 32.0f);
-
-            const int shifts = shifts_arr[t];
-            const int shiftt = shiftt_arr[t];
-            if (shifts != 0) {
-                u = (shifts <= 10) ? u / (1 << shifts) : u * (1 << (16 - shifts));
-            }
-            if (shiftt != 0) {
-                v = (shiftt <= 10) ? v / (1 << shiftt) : v * (1 << (16 - shiftt));
-            }
+            float u = vtx->u * (1.0f / 32.0f) * shiftsMul[t];
+            float v = vtx->v * (1.0f / 32.0f) * shifttMul[t];
 
             u = (u - ulsOffset[t] + linearOffset) * invTexWidth[t];
             v = (v - ultOffset[t] + linearOffset) * invTexHeight[t];

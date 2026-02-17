@@ -118,6 +118,9 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     GLuint mOpenglVbo = 0;
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     size_t mVboAllocatedSize = 0; // Track allocated VBO size for orphan+subdata pattern
+    // Ring buffer state: write VBO data sequentially to avoid orphaning on every draw
+    static constexpr size_t VBO_RING_SIZE = 4 * 1024 * 1024; // 4MB ring buffer
+    size_t mVboRingOffset = 0; // Current write offset in the ring buffer
 #endif
 #if defined(__APPLE__) || defined(USE_OPENGLES)
     GLuint mOpenglVao;

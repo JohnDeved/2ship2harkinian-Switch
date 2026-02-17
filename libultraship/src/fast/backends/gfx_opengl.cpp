@@ -702,21 +702,32 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     // printf("flushing %d tris\n", buf_vbo_num_tris);
     const size_t uploadBytes = sizeof(float) * buf_vbo_len;
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
-    // Orphan + SubData pattern: avoids driver reallocation on every draw.
-    // First call (or size increase) uses glBufferData to allocate; subsequent
-    // calls orphan the old buffer and write just the used portion.
-    if (uploadBytes > mVboAllocatedSize) {
-        glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
-        mVboAllocatedSize = uploadBytes;
-    } else {
-        // Orphan the buffer (NULL data) to allow driver to pipeline, then upload
-        glBufferData(GL_ARRAY_BUFFER, mVboAllocatedSize, NULL, GL_STREAM_DRAW);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, uploadBytes, buf_vbo);
+    // Ring buffer: allocate a large VBO once, write data sequentially.
+    // Only orphan when the ring wraps (roughly once per frame), eliminating
+    // the expensive orphan+SubData pair on every single draw call.
+    // With ~1100 draws/frame and avg 6.5 tris/draw, this reduces GL overhead significantly.
+    if (mVboAllocatedSize < VBO_RING_SIZE) {
+        glBufferData(GL_ARRAY_BUFFER, VBO_RING_SIZE, NULL, GL_STREAM_DRAW);
+        mVboAllocatedSize = VBO_RING_SIZE;
+        mVboRingOffset = 0;
     }
+    if (mVboRingOffset + uploadBytes > VBO_RING_SIZE) {
+        // Ring wraps: orphan to get a fresh buffer
+        glBufferData(GL_ARRAY_BUFFER, VBO_RING_SIZE, NULL, GL_STREAM_DRAW);
+        mVboRingOffset = 0;
+    }
+    glBufferSubData(GL_ARRAY_BUFFER, mVboRingOffset, uploadBytes, buf_vbo);
+    // Compute the first-vertex offset for glDrawArrays.
+    // Vertex attribute pointers were set up with offset 0 at shader load time.
+    // glDrawArrays(first=N) adds N*stride to each pointer, so N = byteOffset/stride.
+    const size_t floatsPerVertex = buf_vbo_len / (buf_vbo_num_tris * 3);
+    const GLint firstVertex = (GLint)(mVboRingOffset / (floatsPerVertex * sizeof(float)));
+    glDrawArrays(GL_TRIANGLES, firstVertex, 3 * buf_vbo_num_tris);
+    mVboRingOffset += uploadBytes;
 #else
     glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
-#endif
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+#endif
 }
 
 void GfxRenderingAPIOGL::Init() {

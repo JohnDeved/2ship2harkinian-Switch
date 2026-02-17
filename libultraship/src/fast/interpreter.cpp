@@ -1852,9 +1852,11 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                                          (float)mRsp->current_lights[i].l.col[1],
                                          (float)mRsp->current_lights[i].l.col[2], 0.0f };
                     rgb_f = vmlaq_n_f32(rgb_f, lcol, intensity);
-                    r = (int)vgetq_lane_f32(rgb_f, 0);
-                    g = (int)vgetq_lane_f32(rgb_f, 1);
-                    b = (int)vgetq_lane_f32(rgb_f, 2);
+                    // Convert all lanes to int at once, then extract
+                    int32x4_t rgb_i = vcvtq_s32_f32(rgb_f);
+                    r = vgetq_lane_s32(rgb_i, 0);
+                    g = vgetq_lane_s32(rgb_i, 1);
+                    b = vgetq_lane_s32(rgb_i, 2);
 #else
                     r += intensity * mRsp->current_lights[i].l.col[0];
                     g += intensity * mRsp->current_lights[i].l.col[1];
@@ -2623,16 +2625,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                         *vbo++ = vtx->color.b * INV_255;
 #endif
                     } else {
-#if defined(__ARM_NEON) && defined(__aarch64__)
-                        // NEON: store precomputed RGB from contiguous struct
-                        vst1_f32(vbo, vld1_f32(&pc.r));
-                        vbo[2] = pc.b;
-                        vbo += 3;
-#else
                         *vbo++ = pc.r;
                         *vbo++ = pc.g;
                         *vbo++ = pc.b;
-#endif
                     }
                 } else {
                     if (use_fog && pc.isShade) {

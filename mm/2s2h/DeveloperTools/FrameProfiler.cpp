@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <cstring>
 #include <cstdint>
+#include <cstdio>
 #include <algorithm>
 #include <atomic>
 #include <fstream>
@@ -531,15 +532,15 @@ static void FrameProfiler_ExportSnapshot(void) {
     float dlMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
     out << "Per-Unit Cost Analysis:" << std::endl;
     if (dlMs > 0.1f && glTris > 0.0f) {
-        out << "  Cost per GL triangle:         " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / glTris) << " µs" << std::endl;
+        out << "  Cost per GL triangle:         " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / glTris) << " us" << std::endl;
         if (dlCmds > 0) {
-            out << "  Cost per DL command:          " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / dlCmds) << " µs" << std::endl;
+            out << "  Cost per DL command:          " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / dlCmds) << " us" << std::endl;
         }
         if (glDrawCalls > 0) {
-            out << "  Cost per GL draw call:        " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / glDrawCalls) << " µs" << std::endl;
+            out << "  Cost per GL draw call:        " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / glDrawCalls) << " us" << std::endl;
         }
         if (glShaderSwitches > 0) {
-            out << "  Cost per shader switch:       " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / glShaderSwitches) << " µs" << std::endl;
+            out << "  Cost per shader switch:       " << std::fixed << std::setprecision(2) << (dlMs * 1000.0f / glShaderSwitches) << " us" << std::endl;
         }
     }
     out << std::endl;
@@ -569,12 +570,12 @@ static void FrameProfiler_ExportSnapshot(void) {
     // Flush efficiency analysis
     out << "--- Flush Efficiency ---" << std::endl;
     float emptyFlushes = glBatchFlushes - glDrawCalls;
-    float bufferFullFlushes = glBatchFlushes - glStateFlushes;
+    float nonStateFlushes = glBatchFlushes - glStateFlushes;
     float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
     float effectiveBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
     out << "Total Flushes:                  " << std::fixed << std::setprecision(0) << glBatchFlushes << std::endl;
     out << "  State-change driven:          " << std::fixed << std::setprecision(0) << glStateFlushes << std::endl;
-    out << "  Buffer-full:                  " << std::fixed << std::setprecision(0) << bufferFullFlushes << std::endl;
+    out << "  Non-state (buffer/frame-end): " << std::fixed << std::setprecision(0) << nonStateFlushes << std::endl;
     out << "  Empty (no geometry):          " << std::fixed << std::setprecision(0) << emptyFlushes 
         << " (" << std::fixed << std::setprecision(1) << emptyPct << "%)" << std::endl;
     out << "Actual Draw Calls:              " << std::fixed << std::setprecision(0) << glDrawCalls << std::endl;
@@ -732,7 +733,7 @@ static void FrameProfiler_ExportSnapshot(void) {
             }
             if (glTimeDraw > 10.0f && glDrawCalls > 500.0f) {
                 float costPerDraw = glTimeDraw * 1000.0f / glDrawCalls;
-                out << "  ⚠ High GL draw overhead: " << glDrawCalls << " calls × " << costPerDraw << " μs/call = " << glTimeDraw << " ms." << std::endl;
+                out << "  ⚠ High GL draw overhead: " << glDrawCalls << " calls × " << costPerDraw << " us/call = " << glTimeDraw << " ms." << std::endl;
                 out << "    Reducing draw calls by 50% would save ~" << (glTimeDraw * 0.5f) << " ms/frame." << std::endl;
             }
         } else if (worstPhase == PROFILE_PHASE_ACTOR_UPDATE) {

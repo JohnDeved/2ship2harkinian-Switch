@@ -126,6 +126,8 @@ Interpreter::Interpreter() {
     // Initialize dirty flags so first triangle recomputes all derived state
     mRdp->other_mode_changed = true;
     mRdp->geometry_mode_changed = true;
+    mCachedTileState[0].valid = false;
+    mCachedTileState[1].valid = false;
 
     // Pre-allocate cache containers to avoid rehash/growth costs at runtime.
     mTextureCache.map.reserve(TEXTURE_CACHE_MAX_SIZE);
@@ -455,6 +457,8 @@ void Interpreter::TextureCacheClear() {
     }
     mTextureCache.map.clear();
     mTextureCache.lru.clear();
+    mCachedTileState[0].valid = false;
+    mCachedTileState[1].valid = false;
 }
 
 bool Interpreter::TextureCacheLookup(int i, const TextureCacheKey& key) {
@@ -2204,6 +2208,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mCachedModeFlags.alpha_threshold = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_THRESHOLD;
         mCachedModeFlags.invisible =
             (mRdp->other_mode_l & (3 << 24)) == (G_BL_0 << 24) && (mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20);
+        mCachedModeFlags.linear_filter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
         mRdp->other_mode_changed = false;
     }
 
@@ -2324,7 +2329,8 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     for (int i = 0; i < 2; i++) {
         uint32_t tile = mRdp->first_tile_index + i;
         if (comb->usedTextures[i]) {
-            if (mRdp->textures_changed[i]) {
+            bool tile_changed = mRdp->textures_changed[i];
+            if (tile_changed) {
                 // Check if the "new" texture is actually the same one already bound.
                 // This avoids flushing the VBO batch when the N64 game redundantly
                 // reloads the same texture (very common — 0% cache miss rate in profiling).
@@ -2368,71 +2374,186 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                     }
                 }
                 mRdp->textures_changed[i] = false;
-            }
 
-            uint8_t cms = mRdp->texture_tile[tile].cms;
-            uint8_t cmt = mRdp->texture_tile[tile].cmt;
+                // Recompute tile-derived values since tile state changed
+                uint8_t cms = mRdp->texture_tile[tile].cms;
+                uint8_t cmt = mRdp->texture_tile[tile].cmt;
 
-            uint32_t tex_size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes;
-            uint32_t line_size = mRdp->texture_tile[tile].line_size_bytes;
+                uint32_t tex_size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes;
+                uint32_t line_size = mRdp->texture_tile[tile].line_size_bytes;
 
-            if (line_size == 0) {
-                line_size = 1;
-            }
-
-            tex_height[i] = tex_size_bytes / line_size;
-            switch (mRdp->texture_tile[tile].siz) {
-                case G_IM_SIZ_4b:
-                    line_size <<= 1;
-                    break;
-                case G_IM_SIZ_8b:
-                    break;
-                case G_IM_SIZ_16b:
-                    line_size /= G_IM_SIZ_16b_LINE_BYTES;
-                    break;
-                case G_IM_SIZ_32b:
-                    line_size /= G_IM_SIZ_32b_LINE_BYTES; // this is 2!
-                    tex_height[i] /= 2;
-                    break;
-            }
-            tex_width[i] = line_size;
-
-            tex_width2[i] = (mRdp->texture_tile[tile].lrs - mRdp->texture_tile[tile].uls + 4) / 4;
-            tex_height2[i] = (mRdp->texture_tile[tile].lrt - mRdp->texture_tile[tile].ult + 4) / 4;
-
-            uint32_t tex_width1 = tex_width[i] << (cms & G_TX_MIRROR);
-            uint32_t tex_height1 = tex_height[i] << (cmt & G_TX_MIRROR);
-
-            if ((cms & G_TX_CLAMP) && ((cms & G_TX_MIRROR) || tex_width1 != tex_width2[i])) {
-                tm |= 1 << 2 * i;
-                cms &= ~G_TX_CLAMP;
-            }
-            if ((cmt & G_TX_CLAMP) && ((cmt & G_TX_MIRROR) || tex_height1 != tex_height2[i])) {
-                tm |= 1 << 2 * i + 1;
-                cmt &= ~G_TX_CLAMP;
-            }
-
-            if (mRenderingState.mTextures[i] == nullptr) {
-                continue;
-            }
-
-            bool linear_filter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
-            if (linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
-                cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
-                state_change_flush();
-                if (mProfilingEnabled) {
-                    mFrameStats.flushCauseSampler++;
+                if (line_size == 0) {
+                    line_size = 1;
                 }
 
-                // Set the same sampler params on the blended texture. Needed for opengl.
-                if (mRdp->loaded_texture[i].blended) {
-                    mRapi->SetSamplerParameters(SHADER_FIRST_REPLACEMENT_TEXTURE + i, linear_filter, cms, cmt);
+                tex_height[i] = tex_size_bytes / line_size;
+                switch (mRdp->texture_tile[tile].siz) {
+                    case G_IM_SIZ_4b:
+                        line_size <<= 1;
+                        break;
+                    case G_IM_SIZ_8b:
+                        break;
+                    case G_IM_SIZ_16b:
+                        line_size /= G_IM_SIZ_16b_LINE_BYTES;
+                        break;
+                    case G_IM_SIZ_32b:
+                        line_size /= G_IM_SIZ_32b_LINE_BYTES; // this is 2!
+                        tex_height[i] /= 2;
+                        break;
+                }
+                tex_width[i] = line_size;
+
+                tex_width2[i] = (mRdp->texture_tile[tile].lrs - mRdp->texture_tile[tile].uls + 4) / 4;
+                tex_height2[i] = (mRdp->texture_tile[tile].lrt - mRdp->texture_tile[tile].ult + 4) / 4;
+
+                uint32_t tex_width1 = tex_width[i] << (cms & G_TX_MIRROR);
+                uint32_t tex_height1 = tex_height[i] << (cmt & G_TX_MIRROR);
+
+                uint32_t tm_bits = 0;
+                if ((cms & G_TX_CLAMP) && ((cms & G_TX_MIRROR) || tex_width1 != tex_width2[i])) {
+                    tm_bits |= 1 << 2 * i;
+                    cms &= ~G_TX_CLAMP;
+                }
+                if ((cmt & G_TX_CLAMP) && ((cmt & G_TX_MIRROR) || tex_height1 != tex_height2[i])) {
+                    tm_bits |= 1 << 2 * i + 1;
+                    cmt &= ~G_TX_CLAMP;
+                }
+                tm |= tm_bits;
+
+                // Cache computed values
+                mCachedTileState[i].tex_width = tex_width[i];
+                mCachedTileState[i].tex_height = tex_height[i];
+                mCachedTileState[i].tex_width2 = tex_width2[i];
+                mCachedTileState[i].tex_height2 = tex_height2[i];
+                mCachedTileState[i].cms = cms;
+                mCachedTileState[i].cmt = cmt;
+                mCachedTileState[i].tm_bits = tm_bits;
+                mCachedTileState[i].valid = true;
+
+                if (mRenderingState.mTextures[i] == nullptr) {
+                    continue;
                 }
 
-                mRapi->SetSamplerParameters(i, linear_filter, cms, cmt);
-                mRenderingState.mTextures[i]->second.linear_filter = linear_filter;
-                mRenderingState.mTextures[i]->second.cms = cms;
-                mRenderingState.mTextures[i]->second.cmt = cmt;
+                // Sampler check needed since tile changed
+                bool linear_filter = mCachedModeFlags.linear_filter;
+                if (linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
+                    cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
+                    state_change_flush();
+                    if (mProfilingEnabled) {
+                        mFrameStats.flushCauseSampler++;
+                    }
+
+                    // Set the same sampler params on the blended texture. Needed for opengl.
+                    if (mRdp->loaded_texture[i].blended) {
+                        mRapi->SetSamplerParameters(SHADER_FIRST_REPLACEMENT_TEXTURE + i, linear_filter, cms, cmt);
+                    }
+
+                    mRapi->SetSamplerParameters(i, linear_filter, cms, cmt);
+                    mRenderingState.mTextures[i]->second.linear_filter = linear_filter;
+                    mRenderingState.mTextures[i]->second.cms = cms;
+                    mRenderingState.mTextures[i]->second.cmt = cmt;
+                }
+            } else if (mCachedTileState[i].valid) {
+                // Tile didn't change — use cached values (skip ~20 ops per texture)
+                tex_width[i] = mCachedTileState[i].tex_width;
+                tex_height[i] = mCachedTileState[i].tex_height;
+                tex_width2[i] = mCachedTileState[i].tex_width2;
+                tex_height2[i] = mCachedTileState[i].tex_height2;
+                tm |= mCachedTileState[i].tm_bits;
+                // cms/cmt unchanged, but linear_filter may have changed via other_mode_h
+                if (mRenderingState.mTextures[i] != nullptr &&
+                    mCachedModeFlags.linear_filter != mRenderingState.mTextures[i]->second.linear_filter) {
+                    bool linear_filter = mCachedModeFlags.linear_filter;
+                    state_change_flush();
+                    if (mProfilingEnabled) {
+                        mFrameStats.flushCauseSampler++;
+                    }
+                    uint8_t cms = mCachedTileState[i].cms;
+                    uint8_t cmt = mCachedTileState[i].cmt;
+                    if (mRdp->loaded_texture[i].blended) {
+                        mRapi->SetSamplerParameters(SHADER_FIRST_REPLACEMENT_TEXTURE + i, linear_filter, cms, cmt);
+                    }
+                    mRapi->SetSamplerParameters(i, linear_filter, cms, cmt);
+                    mRenderingState.mTextures[i]->second.linear_filter = linear_filter;
+                    mRenderingState.mTextures[i]->second.cms = cms;
+                    mRenderingState.mTextures[i]->second.cmt = cmt;
+                }
+            } else {
+                // First use or cache invalid — compute normally
+                uint8_t cms = mRdp->texture_tile[tile].cms;
+                uint8_t cmt = mRdp->texture_tile[tile].cmt;
+
+                uint32_t tex_size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes;
+                uint32_t line_size = mRdp->texture_tile[tile].line_size_bytes;
+
+                if (line_size == 0) {
+                    line_size = 1;
+                }
+
+                tex_height[i] = tex_size_bytes / line_size;
+                switch (mRdp->texture_tile[tile].siz) {
+                    case G_IM_SIZ_4b:
+                        line_size <<= 1;
+                        break;
+                    case G_IM_SIZ_8b:
+                        break;
+                    case G_IM_SIZ_16b:
+                        line_size /= G_IM_SIZ_16b_LINE_BYTES;
+                        break;
+                    case G_IM_SIZ_32b:
+                        line_size /= G_IM_SIZ_32b_LINE_BYTES;
+                        tex_height[i] /= 2;
+                        break;
+                }
+                tex_width[i] = line_size;
+
+                tex_width2[i] = (mRdp->texture_tile[tile].lrs - mRdp->texture_tile[tile].uls + 4) / 4;
+                tex_height2[i] = (mRdp->texture_tile[tile].lrt - mRdp->texture_tile[tile].ult + 4) / 4;
+
+                uint32_t tex_width1 = tex_width[i] << (cms & G_TX_MIRROR);
+                uint32_t tex_height1 = tex_height[i] << (cmt & G_TX_MIRROR);
+
+                uint32_t tm_bits = 0;
+                if ((cms & G_TX_CLAMP) && ((cms & G_TX_MIRROR) || tex_width1 != tex_width2[i])) {
+                    tm_bits |= 1 << 2 * i;
+                    cms &= ~G_TX_CLAMP;
+                }
+                if ((cmt & G_TX_CLAMP) && ((cmt & G_TX_MIRROR) || tex_height1 != tex_height2[i])) {
+                    tm_bits |= 1 << 2 * i + 1;
+                    cmt &= ~G_TX_CLAMP;
+                }
+                tm |= tm_bits;
+
+                mCachedTileState[i].tex_width = tex_width[i];
+                mCachedTileState[i].tex_height = tex_height[i];
+                mCachedTileState[i].tex_width2 = tex_width2[i];
+                mCachedTileState[i].tex_height2 = tex_height2[i];
+                mCachedTileState[i].cms = cms;
+                mCachedTileState[i].cmt = cmt;
+                mCachedTileState[i].tm_bits = tm_bits;
+                mCachedTileState[i].valid = true;
+
+                if (mRenderingState.mTextures[i] == nullptr) {
+                    continue;
+                }
+
+                bool linear_filter = mCachedModeFlags.linear_filter;
+                if (linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
+                    cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
+                    state_change_flush();
+                    if (mProfilingEnabled) {
+                        mFrameStats.flushCauseSampler++;
+                    }
+
+                    if (mRdp->loaded_texture[i].blended) {
+                        mRapi->SetSamplerParameters(SHADER_FIRST_REPLACEMENT_TEXTURE + i, linear_filter, cms, cmt);
+                    }
+
+                    mRapi->SetSamplerParameters(i, linear_filter, cms, cmt);
+                    mRenderingState.mTextures[i]->second.linear_filter = linear_filter;
+                    mRenderingState.mTextures[i]->second.cms = cms;
+                    mRenderingState.mTextures[i]->second.cmt = cmt;
+                }
             }
         }
     }
@@ -5311,6 +5432,8 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
         mRdp->viewport_or_scissor_changed = true;
         mRdp->other_mode_changed = true;
         mRdp->geometry_mode_changed = true;
+        mCachedTileState[0].valid = false;
+        mCachedTileState[1].valid = false;
         mRenderingState.viewport = {};
         mRenderingState.scissor = {};
     }

@@ -634,7 +634,16 @@ class Interpreter {
         bool invisible;
         uint8_t depth_test_and_mask;
         bool zmode_decal;
+        bool linear_filter; // derived from other_mode_h TEXTFILT bits
     } mCachedModeFlags{};
+
+    // Cached per-texture tile computations (updated when textures_changed)
+    struct {
+        uint32_t tex_width, tex_height, tex_width2, tex_height2;
+        uint8_t cms, cmt; // post-clamp-strip values
+        uint32_t tm_bits; // contribution to tm mask for this texture slot
+        bool valid;
+    } mCachedTileState[2]{};
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

@@ -163,8 +163,14 @@ struct GfxExecStack {
     // This is a dlist stack used to handle dlist calls.
 #ifdef __SWITCH__
     // Use vector-backed stack for better cache locality on A57
-    // (std::deque allocates in scattered 512B chunks)
-    std::stack<F3DGfx*, std::vector<F3DGfx*>> cmd_stack = {};
+    // (std::deque allocates in scattered 512B chunks).
+    // IMPORTANT: The vector MUST be pre-reserved because currCmd() returns a reference
+    // to vector.back(), and handlers call call()/branch() which push to the stack.
+    // Without sufficient capacity, push_back could reallocate, invalidating the reference.
+    // (std::deque is immune to this — push_back never invalidates references.)
+    struct PreReservedStack : std::stack<F3DGfx*, std::vector<F3DGfx*>> {
+        PreReservedStack() { c.reserve(128); } // DL call depth never exceeds ~20
+    } cmd_stack;
 #else
     std::stack<F3DGfx*> cmd_stack = {};
 #endif

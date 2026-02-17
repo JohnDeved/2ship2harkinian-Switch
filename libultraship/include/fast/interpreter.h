@@ -10,9 +10,6 @@
 #include <vector>
 #include <stack>
 #include <string>
-#include <atomic>
-#include <thread>
-#include <functional>
 
 #include "fast/lus_gbi.h"
 #include "fast/types.h"
@@ -510,7 +507,6 @@ class Interpreter {
     void ImportTextureImg(int tile, bool importReplacement);
     void ImportTexture(int i, int tile, bool importReplacement);
     void ImportTextureMask(int i, int tile);
-    void MaybeUploadTexture(const uint8_t* buf, uint32_t width, uint32_t height);
     void CalculateNormalDir(const F3DLight_t*, float coeffs[3]);
 
     void GfxSpMatrix(uint8_t params, const int32_t* addr);
@@ -655,24 +651,6 @@ class Interpreter {
     // Cached combiner key + result (skip LookupOrCreateColorCombiner on ~85% of triangles)
     ColorCombinerKey mCachedCombinerKey{};
     ColorCombiner* mCachedCombiner = nullptr;
-
-#if defined(__SWITCH__)
-    // Async texture conversion: overlap CPU format conversion with VBO flush on Core 1
-    // Worker thread converts texture data (CPU-only) while main thread does glBufferSubData+glDrawArrays
-    uint8_t* mTexConvertBuffer = nullptr;   // Second upload buffer for async conversion
-    bool mDeferTextureUpload = false;       // When true, format converters skip mRapi->UploadTexture
-    const uint8_t* mDeferredUploadBuf = nullptr;
-    uint32_t mDeferredUploadWidth = 0;
-    uint32_t mDeferredUploadHeight = 0;
-    std::thread mTexConvertThread;
-    std::atomic<bool> mTexConvertActive{false};
-    std::atomic<bool> mTexConvertHasWork{false};
-    std::atomic<bool> mTexConvertDone{false};
-    std::function<void()> mTexConvertJob;
-    void TexConvertWorkerLoop();
-    void StartAsyncTexConvert(int i, int tile, bool importReplacement);
-    void FinishAsyncTexConvert(int i);
-#endif
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

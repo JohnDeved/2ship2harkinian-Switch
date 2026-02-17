@@ -975,6 +975,7 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
 
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, (float)stats.drawCalls);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BATCH_FLUSHES, (float)stats.batchFlushes);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BUFFER_FULL_FLUSHES, (float)stats.bufferFullFlushes);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_STATE_FLUSHES, (float)stats.stateChangeFlushes);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_SWITCHES, (float)stats.shaderSwitches);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_COMPILATIONS, (float)stats.shaderCompilations);

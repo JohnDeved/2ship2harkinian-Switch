@@ -379,6 +379,7 @@ struct Fast3DStats {
     uint32_t verticesSubmitted;
     uint32_t trianglesSubmitted;
     uint32_t stateChangeFlushes;
+    uint32_t bufferFullFlushes;
     uint32_t pixelDepthQueries;
 
     uint64_t timeTotal;

@@ -1847,30 +1847,38 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     bool depth_test = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
     bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
     uint8_t depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
-    if (depth_test_and_mask != mRenderingState.depth_test_and_mask) {
-        state_change_flush();
-        mRapi->SetDepthTestAndMask(depth_test, depth_mask);
-        mRenderingState.depth_test_and_mask = depth_test_and_mask;
-    }
+    bool depth_changed = (depth_test_and_mask != mRenderingState.depth_test_and_mask);
 
     bool zmode_decal = (mRdp->other_mode_l & ZMODE_DEC) == ZMODE_DEC;
-    if (zmode_decal != mRenderingState.decal_mode) {
-        state_change_flush();
-        mRapi->SetZmodeDecal(zmode_decal);
-        mRenderingState.decal_mode = zmode_decal;
+    bool decal_changed = (zmode_decal != mRenderingState.decal_mode);
+
+    bool viewport_changed = false;
+    bool scissor_changed = false;
+    if (mRdp->viewport_or_scissor_changed) {
+        viewport_changed = memcmp(&mRdp->viewport, &mRenderingState.viewport, sizeof(mRdp->viewport)) != 0;
+        scissor_changed = memcmp(&mRdp->scissor, &mRenderingState.scissor, sizeof(mRdp->scissor)) != 0;
     }
 
-    if (mRdp->viewport_or_scissor_changed) {
-        if (memcmp(&mRdp->viewport, &mRenderingState.viewport, sizeof(mRdp->viewport)) != 0) {
-            state_change_flush();
+    if (depth_changed || decal_changed || viewport_changed || scissor_changed) {
+        state_change_flush();
+        if (depth_changed) {
+            mRapi->SetDepthTestAndMask(depth_test, depth_mask);
+            mRenderingState.depth_test_and_mask = depth_test_and_mask;
+        }
+        if (decal_changed) {
+            mRapi->SetZmodeDecal(zmode_decal);
+            mRenderingState.decal_mode = zmode_decal;
+        }
+        if (viewport_changed) {
             mRapi->SetViewport(mRdp->viewport.x, mRdp->viewport.y, mRdp->viewport.width, mRdp->viewport.height);
             mRenderingState.viewport = mRdp->viewport;
         }
-        if (memcmp(&mRdp->scissor, &mRenderingState.scissor, sizeof(mRdp->scissor)) != 0) {
-            state_change_flush();
+        if (scissor_changed) {
             mRapi->SetScissor(mRdp->scissor.x, mRdp->scissor.y, mRdp->scissor.width, mRdp->scissor.height);
             mRenderingState.scissor = mRdp->scissor;
         }
+    }
+    if (mRdp->viewport_or_scissor_changed) {
         mRdp->viewport_or_scissor_changed = false;
     }
 
@@ -2240,6 +2248,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     mBufVboLen = (size_t)(vbo - mBufVbo);
 
     if (++mBufVboNumTris == MAX_TRI_BUFFER) {
+        if (mProfilingEnabled) {
+            mFrameStats.bufferFullFlushes++;
+        }
         Flush();
     }
 }

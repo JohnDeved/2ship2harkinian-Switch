@@ -301,7 +301,7 @@ static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
 static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
     "DL Iterations",      "DL Commands",       "Triangles",          "Vertices",         "Tex Loads",
     "Matrix Loads",       "Pipe Syncs",        "DL Subcalls",        "SetCombine",       "GL Draw Calls",
-    "GL Batch Flushes",   "GL State Flushes",  "GL Shader Switches", "GL Shader Compiles", "GL Texture Binds",
+    "GL Batch Flushes",   "GL BufFull Flushes", "GL State Flushes",  "GL Shader Switches", "GL Shader Compiles", "GL Texture Binds",
     "GL Tex Cache Miss",  "GL Vert Submitted", "GL Tri Submitted",   "GL Time Total ms", "GL Time Dispatch ms",
     "GL Time Tri ms",     "GL Time Tex ms",    "GL Time Shader ms",  "GL Time Draw ms",  "GL Time Vtx ms",
     "GL Time Mtx ms",     "GL Time Depth ms",  "GL Time Setup ms",   "GL Depth Queries", "GL Avg Batch Size",
@@ -366,7 +366,10 @@ static void FrameProfiler_ExportSnapshot(void) {
     }
 
     float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
-    float fps = (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
+    float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
+    if (dlIter < 1.0f) dlIter = 1.0f;
+    float renderFrameMs = totalMs / dlIter;
+    float fps = (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
 
     out << "=== 2S2H Frame Profiler Snapshot ===" << std::endl;
     out << "Timestamp: " << timeBuf << std::endl;
@@ -387,14 +390,15 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << std::endl;
 
     out << "--- Summary (" << PROFILE_RING_SIZE << "-frame average) ---" << std::endl;
-    out << "Total Frame Time:               " << std::fixed << std::setprecision(2) << totalMs << " ms" << std::endl;
+    out << "Total Update Time:              " << std::fixed << std::setprecision(2) << totalMs << " ms (" << std::setprecision(0) << dlIter << " DL iterations)" << std::endl;
+    out << "Per Rendered Frame:             " << std::fixed << std::setprecision(2) << renderFrameMs << " ms" << std::endl;
     out << "FPS:                            " << std::fixed << std::setprecision(1) << fps << std::endl;
     out << "Target (60 FPS):                " << std::fixed << std::setprecision(2) << PROFILE_TARGET_FRAME_MS << " ms" << std::endl;
-    if (totalMs > PROFILE_TARGET_FRAME_MS) {
-        float overhead = ((totalMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
+    if (renderFrameMs > PROFILE_TARGET_FRAME_MS) {
+        float overhead = ((renderFrameMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
         out << "Performance:                    " << std::fixed << std::setprecision(1) << overhead << "% over budget" << std::endl;
     } else {
-        float headroom = ((PROFILE_TARGET_FRAME_MS - totalMs) / PROFILE_TARGET_FRAME_MS) * 100.0f;
+        float headroom = ((PROFILE_TARGET_FRAME_MS - renderFrameMs) / PROFILE_TARGET_FRAME_MS) * 100.0f;
         out << "Performance:                    " << std::fixed << std::setprecision(1) << headroom << "% headroom remaining" << std::endl;
     }
     out << std::endl;
@@ -421,7 +425,6 @@ static void FrameProfiler_ExportSnapshot(void) {
 
     // Counters
     out << "--- Display List Statistics ---" << std::endl;
-    float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
     float dlCmds = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_COMMANDS);
     float tris = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_TRIANGLES);
     float verts = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_VERTICES);
@@ -432,6 +435,7 @@ static void FrameProfiler_ExportSnapshot(void) {
     float setCombine = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_SETCOMBINE);
     float glDrawCalls = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_DRAW_CALLS);
     float glBatchFlushes = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_BATCH_FLUSHES);
+    float glBufferFullFlushes = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_BUFFER_FULL_FLUSHES);
     float glStateFlushes = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_STATE_FLUSHES);
     float glShaderSwitches = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_SHADER_SWITCHES);
     float glShaderCompiles = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_SHADER_COMPILATIONS);
@@ -476,7 +480,8 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "Est. Draw Calls (from PipeSyncs): ~" << std::fixed << std::setprecision(0) << pipeSyncs << " (upper bound, actual may differ)" << std::endl;
     out << "GL Draw Calls (actual):         " << std::fixed << std::setprecision(0) << glDrawCalls << std::endl;
     out << "GL Batch Flushes:               " << std::fixed << std::setprecision(0) << glBatchFlushes 
-        << " (state-driven: " << std::fixed << std::setprecision(0) << glStateFlushes << ")" << std::endl;
+        << " (state: " << std::fixed << std::setprecision(0) << (glBatchFlushes - glBufferFullFlushes) 
+        << ", buf-full: " << std::setprecision(0) << glBufferFullFlushes << ")" << std::endl;
     out << "GL Shader Switches:             " << std::fixed << std::setprecision(0) << glShaderSwitches 
         << " (compiles: " << std::fixed << std::setprecision(0) << glShaderCompiles << ")" << std::endl;
     out << "GL Texture Binds:               " << std::fixed << std::setprecision(0) << glTextureBinds 
@@ -570,14 +575,16 @@ static void FrameProfiler_ExportSnapshot(void) {
     // Flush efficiency analysis
     out << "--- Flush Efficiency ---" << std::endl;
     float emptyFlushes = glBatchFlushes - glDrawCalls;
-    float nonStateFlushes = glBatchFlushes - glStateFlushes;
+    float stateActualFlushes = glBatchFlushes - glBufferFullFlushes;
     float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
     float effectiveBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
     out << "Total Flushes:                  " << std::fixed << std::setprecision(0) << glBatchFlushes << std::endl;
-    out << "  State-change driven:          " << std::fixed << std::setprecision(0) << glStateFlushes << std::endl;
-    out << "  Non-state (buffer/frame-end): " << std::fixed << std::setprecision(0) << nonStateFlushes << std::endl;
+    out << "  State-change driven:          " << std::fixed << std::setprecision(0) << stateActualFlushes << std::endl;
+    out << "  Buffer-full:                  " << std::fixed << std::setprecision(0) << glBufferFullFlushes << std::endl;
     out << "  Empty (no geometry):          " << std::fixed << std::setprecision(0) << emptyFlushes 
         << " (" << std::fixed << std::setprecision(1) << emptyPct << "%)" << std::endl;
+    out << "State change events:            " << std::fixed << std::setprecision(0) << glStateFlushes 
+        << " (includes " << std::setprecision(0) << (glStateFlushes - stateActualFlushes) << " with empty buffer)" << std::endl;
     out << "Actual Draw Calls:              " << std::fixed << std::setprecision(0) << glDrawCalls << std::endl;
     out << "Effective Batch Size:           " << std::fixed << std::setprecision(1) << effectiveBatch << " tris/draw" << std::endl;
 #ifdef __SWITCH__
@@ -588,7 +595,7 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "Buffer Utilization:             " << std::fixed << std::setprecision(1) << (effectiveBatch / 256.0f * 100.0f) << "% (how full each batch is on average)" << std::endl;
 #endif
     if (glDrawCalls > 0.5f) {
-        out << "State changes per draw:         " << std::fixed << std::setprecision(2) << (glStateFlushes / glDrawCalls) << std::endl;
+        out << "State changes per draw:         " << std::fixed << std::setprecision(2) << (stateActualFlushes / glDrawCalls) << std::endl;
     }
     out << std::endl;
 
@@ -725,7 +732,7 @@ static void FrameProfiler_ExportSnapshot(void) {
             }
             if (effectiveBatch < 20.0f && glDrawCalls > 100.0f) {
                 out << "  ⚠ Low batch size (" << effectiveBatch << " tris/draw). State changes fragment batches." << std::endl;
-                out << "    " << glStateFlushes << " state flushes across " << glDrawCalls << " draws = " << (glStateFlushes / glDrawCalls) << " state changes/draw." << std::endl;
+                out << "    " << stateActualFlushes << " state-driven flushes across " << glDrawCalls << " draws = " << (stateActualFlushes / glDrawCalls) << " state changes/draw." << std::endl;
             }
             if (imbalance < 0.1f && core0Ms > 30.0f) {
                 out << "  ⚠ Core imbalance: Core 0 = " << core0Ms << " ms, Core 1 = " << core1Ms << " ms (" << (imbalance * 100.0f) << "%)." << std::endl;
@@ -779,25 +786,28 @@ void FrameProfilerWindow::DrawElement() {
     sDrawCountdown = PROFILE_KEEPALIVE_FRAMES;
 
     float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
-    float fps = (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
+    float dlIterImGui = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
+    if (dlIterImGui < 1.0f) dlIterImGui = 1.0f;
+    float renderFrameMs = totalMs / dlIterImGui;
+    float fps = (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
 
     // Enhanced summary with color coding
-    if (totalMs > 20.0f) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
-    } else if (totalMs > PROFILE_TARGET_FRAME_MS) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
+    if (renderFrameMs > 20.0f) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
+    } else if (renderFrameMs > PROFILE_TARGET_FRAME_MS) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
     } else {
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", totalMs, fps);
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
     }
     ImGui::SameLine();
     ImGui::TextDisabled("Target: %.2f ms (60 FPS)", PROFILE_TARGET_FRAME_MS);
     
     // Show performance headroom or overhead
-    if (totalMs > PROFILE_TARGET_FRAME_MS) {
-        float overhead = ((totalMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
+    if (renderFrameMs > PROFILE_TARGET_FRAME_MS) {
+        float overhead = ((renderFrameMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
         ImGui::Text("Performance: %.1f%% over budget", overhead);
     } else {
-        float headroom = ((PROFILE_TARGET_FRAME_MS - totalMs) / PROFILE_TARGET_FRAME_MS) * 100.0f;
+        float headroom = ((PROFILE_TARGET_FRAME_MS - renderFrameMs) / PROFILE_TARGET_FRAME_MS) * 100.0f;
         ImGui::Text("Performance: %.1f%% headroom", headroom);
     }
     ImGui::Separator();
@@ -845,6 +855,7 @@ void FrameProfilerWindow::DrawElement() {
     float setCombine = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_SETCOMBINE);
     float glDrawCalls = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_DRAW_CALLS);
     float glBatchFlushes = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_BATCH_FLUSHES);
+    float glBufferFullFlushes = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_BUFFER_FULL_FLUSHES);
     float glStateFlushes = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_STATE_FLUSHES);
     float glShaderSwitches = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_SHADER_SWITCHES);
     float glShaderCompiles = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_SHADER_COMPILATIONS);
@@ -890,7 +901,8 @@ void FrameProfilerWindow::DrawElement() {
         ImGui::SetTooltip("Upper bound estimate based on PipeSync commands\nActual draw calls may be lower due to batching");
     }
     
-    ImGui::Text("GL Draw Calls: %.0f  Batch Flushes: %.0f (state: %.0f)", glDrawCalls, glBatchFlushes, glStateFlushes);
+    float stateActualFlushesGui = glBatchFlushes - glBufferFullFlushes;
+    ImGui::Text("GL Draw Calls: %.0f  Flushes: %.0f (state: %.0f, buf-full: %.0f)", glDrawCalls, glBatchFlushes, stateActualFlushesGui, glBufferFullFlushes);
     
     // Flush efficiency warning
     float emptyFlushes = glBatchFlushes - glDrawCalls;

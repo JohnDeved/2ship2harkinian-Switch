@@ -52,6 +52,16 @@ struct FramebufferOGL {
     GLuint fbo, clrbuf, clrbufMsaa, rbo;
 };
 
+// Hash for shader program pool key (same approach as Metal backend)
+struct HashPairShaderIds {
+    size_t operator()(const std::pair<uint64_t, uint32_t>& p) const {
+        // Mix the two IDs with xor-shift; collisions are rare with shader ID pairs.
+        size_t h = std::hash<uint64_t>{}(p.first);
+        h ^= std::hash<uint32_t>{}(p.second) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        return h;
+    }
+};
+
 class GfxRenderingAPIOGL final : public GfxRenderingAPI {
   public:
     ~GfxRenderingAPIOGL() override;
@@ -107,24 +117,31 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
         uint16_t width;
         uint16_t height;
         uint16_t filtering;
-    } textures[1024];
+        uint16_t pad;
+        uint32_t uniformsVersion;
+    } textures[1024]{};
 
-    GLuint mCurrentTextureIds[SHADER_MAX_TEXTURES];
+    GLuint mCurrentTextureIds[SHADER_MAX_TEXTURES]{};
     uint8_t mCurrentTile;
 
-    std::map<std::pair<uint64_t, uint32_t>, ShaderProgram> mShaderProgramPool;
+    std::unordered_map<std::pair<uint64_t, uint32_t>, ShaderProgram, HashPairShaderIds> mShaderProgramPool;
     ShaderProgram* mCurrentShaderProgram;
 
     GLuint mOpenglVbo = 0;
-#if defined(__SWITCH__) || defined(USE_OPENGLES)
-    size_t mVboAllocatedSize = 0; // Track allocated VBO size for orphan+subdata pattern
-#endif
 #if defined(__APPLE__) || defined(USE_OPENGLES)
     GLuint mOpenglVao;
 #endif
 
+    // Per-iteration VBO batching: orphan once per DL iteration, then use
+    // glBufferSubData + glDrawArrays(first=N) for each draw within the
+    // iteration. Reduces ~320 glBufferData allocations per iteration to 1.
+    static constexpr size_t VBO_ITER_SIZE = 2 * 1024 * 1024; // 2MB per iteration
+    size_t mVboIterOffset = 0;  // Running byte offset within current iteration's VBO
+    bool mVboIterActive = false; // True after orphaning for this iteration
+
     // Cache state to skip redundant SetPerDrawUniforms calls
     uint32_t mLastUniformTextureIds[2] = { UINT32_MAX, UINT32_MAX };
+    uint32_t mLastUniformTextureVersions[2] = { UINT32_MAX, UINT32_MAX };
 
     uint32_t mFrameCount = 0;
 

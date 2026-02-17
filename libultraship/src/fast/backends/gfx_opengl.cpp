@@ -72,21 +72,32 @@ void GfxRenderingAPIOGL::SetUniforms(ShaderProgram* prg) const {
 
 void GfxRenderingAPIOGL::SetPerDrawUniforms() {
     if (mCurrentShaderProgram->usedTextures[0] || mCurrentShaderProgram->usedTextures[1]) {
+        const bool useTex0 = mCurrentShaderProgram->usedTextures[0];
+        const bool useTex1 = mCurrentShaderProgram->usedTextures[1];
+        const uint32_t tex0 = useTex0 ? mCurrentTextureIds[0] : 0;
+        const uint32_t tex1 = useTex1 ? mCurrentTextureIds[1] : 0;
+        const uint32_t tex0Version = useTex0 ? textures[tex0].uniformsVersion : 0;
+        const uint32_t tex1Version = useTex1 ? textures[tex1].uniformsVersion : 0;
+
         // Skip redundant uniform uploads when texture IDs haven't changed
-        if (mCurrentTextureIds[0] == mLastUniformTextureIds[0] &&
-            mCurrentTextureIds[1] == mLastUniformTextureIds[1]) {
+        if (tex0 == mLastUniformTextureIds[0] &&
+            tex1 == mLastUniformTextureIds[1] &&
+            tex0Version == mLastUniformTextureVersions[0] &&
+            tex1Version == mLastUniformTextureVersions[1]) {
             return;
         }
-        mLastUniformTextureIds[0] = mCurrentTextureIds[0];
-        mLastUniformTextureIds[1] = mCurrentTextureIds[1];
+        mLastUniformTextureIds[0] = tex0;
+        mLastUniformTextureIds[1] = tex1;
+        mLastUniformTextureVersions[0] = tex0Version;
+        mLastUniformTextureVersions[1] = tex1Version;
 
-        GLint filtering[2] = { textures[mCurrentTextureIds[0]].filtering, textures[mCurrentTextureIds[1]].filtering };
+        GLint filtering[2] = { useTex0 ? textures[tex0].filtering : 0, useTex1 ? textures[tex1].filtering : 0 };
         glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
 
-        GLint width[2] = { textures[mCurrentTextureIds[0]].width, textures[mCurrentTextureIds[1]].width };
+        GLint width[2] = { useTex0 ? textures[tex0].width : 0, useTex1 ? textures[tex1].width : 0 };
         glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
 
-        GLint height[2] = { textures[mCurrentTextureIds[0]].height, textures[mCurrentTextureIds[1]].height };
+        GLint height[2] = { useTex0 ? textures[tex0].height : 0, useTex1 ? textures[tex1].height : 0 };
         glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
     }
 }
@@ -114,6 +125,8 @@ void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     // Invalidate uniform cache on shader switch (uniform locations differ per program)
     mLastUniformTextureIds[0] = UINT32_MAX;
     mLastUniformTextureIds[1] = UINT32_MAX;
+    mLastUniformTextureVersions[0] = UINT32_MAX;
+    mLastUniformTextureVersions[1] = UINT32_MAX;
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     // Bind per-shader VAO instead of reconfiguring attribs each time.
     glBindVertexArray(new_prg->vao);
@@ -590,8 +603,12 @@ void GfxRenderingAPIOGL::SelectTexture(int tile, GLuint texture_id) {
 
 void GfxRenderingAPIOGL::UploadTexture(const uint8_t* rgba32_buf, uint32_t width, uint32_t height) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
-    textures[mCurrentTextureIds[mCurrentTile]].width = width;
-    textures[mCurrentTextureIds[mCurrentTile]].height = height;
+    auto& tex = textures[mCurrentTextureIds[mCurrentTile]];
+    if (tex.width != width || tex.height != height) {
+        tex.width = width;
+        tex.height = height;
+        tex.uniformsVersion++;
+    }
 }
 
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
@@ -617,7 +634,12 @@ void GfxRenderingAPIOGL::SetSamplerParameters(int tile, bool linear_filter, uint
     const GLint filter = linear_filter && mCurrentFilterMode == FILTER_LINEAR ? GL_LINEAR : GL_NEAREST;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
-    textures[mCurrentTextureIds[tile]].filtering = !linear_filter ? FILTER_LINEAR : FILTER_THREE_POINT;
+    auto& tex = textures[mCurrentTextureIds[tile]];
+    const uint16_t filtering = !linear_filter ? FILTER_LINEAR : FILTER_THREE_POINT;
+    if (tex.filtering != filtering) {
+        tex.filtering = filtering;
+        tex.uniformsVersion++;
+    }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gfx_cm_to_opengl(cms));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gfx_cm_to_opengl(cmt));
 }
@@ -701,22 +723,67 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
 
     // printf("flushing %d tris\n", buf_vbo_num_tris);
     const size_t uploadBytes = sizeof(float) * buf_vbo_len;
-#if defined(__SWITCH__) || defined(USE_OPENGLES)
-    // Orphan + SubData pattern: avoids driver reallocation on every draw.
-    // First call (or size increase) uses glBufferData to allocate; subsequent
-    // calls orphan the old buffer and write just the used portion.
-    if (uploadBytes > mVboAllocatedSize) {
-        glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
-        mVboAllocatedSize = uploadBytes;
+    const bool profiling = (mStats != nullptr);
+    // When profiling is off, Fast3DScopedTimer(enabled=false) is a no-op:
+    // the destructor skips the write, so dummyTarget is never modified.
+    uint64_t dummyTarget = 0;
+    uint64_t& vboTarget = profiling ? mStats->timeVboUpload : dummyTarget;
+    uint64_t& drawTarget = profiling ? mStats->timeGlDraw : dummyTarget;
+
+#if defined(__SWITCH__)
+    // Per-iteration VBO batching: orphan the VBO once per DL iteration,
+    // then use glBufferSubData for each draw. This reduces ~320 glBufferData
+    // allocations per iteration to just 1 orphan.
+    size_t strideBytes = mCurrentShaderProgram ? (size_t)mCurrentShaderProgram->numFloats * sizeof(float) : 0;
+    if (strideBytes == 0) {
+        // Fallback: no valid shader, use simple upload
+        {
+            Fast3DScopedTimer t(vboTarget, profiling);
+            glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
+        }
+        {
+            Fast3DScopedTimer t(drawTarget, profiling);
+            glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+        }
     } else {
-        // Orphan the buffer (NULL data) to allow driver to pipeline, then upload
-        glBufferData(GL_ARRAY_BUFFER, mVboAllocatedSize, NULL, GL_STREAM_DRAW);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, uploadBytes, buf_vbo);
+        {
+            Fast3DScopedTimer t(vboTarget, profiling);
+            if (!mVboIterActive) {
+                glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
+                mVboIterOffset = 0;
+                mVboIterActive = true;
+            }
+
+            // Align offset to vertex stride
+            if ((mVboIterOffset % strideBytes) != 0) {
+                mVboIterOffset += strideBytes - (mVboIterOffset % strideBytes);
+            }
+
+            // Re-orphan if data doesn't fit after alignment
+            if (mVboIterOffset + uploadBytes > VBO_ITER_SIZE) {
+                glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
+                mVboIterOffset = 0;
+            }
+
+            glBufferSubData(GL_ARRAY_BUFFER, mVboIterOffset, uploadBytes, buf_vbo);
+        }
+        GLint firstVertex = (GLint)(mVboIterOffset / strideBytes);
+        {
+            Fast3DScopedTimer t(drawTarget, profiling);
+            glDrawArrays(GL_TRIANGLES, firstVertex, 3 * buf_vbo_num_tris);
+        }
+        mVboIterOffset += uploadBytes;
     }
 #else
-    glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
+    {
+        Fast3DScopedTimer t(vboTarget, profiling);
+        glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
+    }
+    {
+        Fast3DScopedTimer t(drawTarget, profiling);
+        glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
+    }
 #endif
-    glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
 }
 
 void GfxRenderingAPIOGL::Init() {
@@ -760,6 +827,11 @@ void GfxRenderingAPIOGL::OnResize() {
 
 void GfxRenderingAPIOGL::StartFrame() {
     mFrameCount++;
+#if defined(__SWITCH__)
+    // Reset per-iteration VBO batching state.
+    // The next DrawTriangles call will orphan the VBO.
+    mVboIterActive = false;
+#endif
 }
 
 void GfxRenderingAPIOGL::EndFrame() {

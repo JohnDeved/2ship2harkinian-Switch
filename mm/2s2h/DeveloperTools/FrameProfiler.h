@@ -36,6 +36,10 @@ typedef enum {
 
 typedef enum {
     PROFILE_COUNTER_DL_ITERATIONS, // number of DrawAndRunGraphicsCommands calls per frame
+    PROFILE_COUNTER_DL_REPLAY_ITERATIONS, // number of RunReplay calls per frame
+    PROFILE_COUNTER_DL_REPLAY_FALLBACKS,  // non-first iterations that fell back to full interpretation
+    PROFILE_COUNTER_DL_REPLAY_BRANCHZ_FRAMES, // first iterations where replay was blocked by G_BRANCH_Z
+    PROFILE_COUNTER_DL_REPLAY_COOLDOWN_SKIPS, // first iterations skipped due branch-z cooldown
     PROFILE_COUNTER_DL_COMMANDS,   // total GBI commands across all buffers
     PROFILE_COUNTER_DL_TRIANGLES,  // G_TRI1 + 2*G_TRI2 triangle count
     PROFILE_COUNTER_DL_VERTICES,   // total vertices loaded (from G_VTX)
@@ -48,6 +52,7 @@ typedef enum {
     // Fast3D internal counters (libultraship, actual backend activity)
     PROFILE_COUNTER_GL_DRAW_CALLS,
     PROFILE_COUNTER_GL_BATCH_FLUSHES,
+    PROFILE_COUNTER_GL_BUFFER_FULL_FLUSHES,
     PROFILE_COUNTER_GL_STATE_FLUSHES,
     PROFILE_COUNTER_GL_SHADER_SWITCHES,
     PROFILE_COUNTER_GL_SHADER_COMPILATIONS,
@@ -61,12 +66,32 @@ typedef enum {
     PROFILE_COUNTER_GL_TIME_TEX_MS,
     PROFILE_COUNTER_GL_TIME_SHADER_MS,
     PROFILE_COUNTER_GL_TIME_DRAW_MS,
+    PROFILE_COUNTER_GL_TIME_VBO_UPLOAD_MS,
+    PROFILE_COUNTER_GL_TIME_GL_DRAW_MS,
     PROFILE_COUNTER_GL_TIME_VTX_MS,
     PROFILE_COUNTER_GL_TIME_MTX_MS,
     PROFILE_COUNTER_GL_TIME_DEPTH_MS,
     PROFILE_COUNTER_GL_TIME_SETUP_MS,
     PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES,
     PROFILE_COUNTER_GL_AVG_BATCH_SIZE,
+
+    // Flush cause breakdown: which state triggered each batch-breaking flush
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE,
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER,
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER,
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_ALPHA,
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_DEPTH_VIEWPORT,
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER,
+    PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS,
+
+    // Batch size histogram: draws per bucket (1-2, 3-8, 9-32, 33-128, 129+)
+    PROFILE_COUNTER_GL_BATCH_HIST_0,       // 1-2 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_1,       // 3-8 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_2,       // 9-32 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_3,       // 33-128 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_4,       // 129+ tris
+    PROFILE_COUNTER_GL_MAX_BATCH_SIZE,     // max batch size seen this frame
+
     PROFILE_COUNTER_MAX
 } ProfileCounter;
 

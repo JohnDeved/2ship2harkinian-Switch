@@ -118,10 +118,17 @@ constexpr size_t MAX_TRI_BUFFER = 1024;
 constexpr size_t MAX_TRI_BUFFER = 256;
 #endif
 
+
 Interpreter::Interpreter() {
     mRsp = new RSP();
     mRdp = new RDP();
     mBufVbo = new float[MAX_TRI_BUFFER * (32 * 3)];
+
+    // Initialize dirty flags so first triangle recomputes all derived state
+    mRdp->other_mode_changed = true;
+    mRdp->geometry_mode_changed = true;
+    mCachedTileState[0].valid = false;
+    mCachedTileState[1].valid = false;
 
     // Pre-allocate cache containers to avoid rehash/growth costs at runtime.
     mTextureCache.map.reserve(TEXTURE_CACHE_MAX_SIZE);
@@ -135,6 +142,7 @@ Interpreter::~Interpreter() {
 }
 
 static std::weak_ptr<Interpreter> mInstance;
+
 // Set a cached pointer to the instance so we don't need to go through the window every time
 void GfxSetInstance(std::shared_ptr<Interpreter> gfx) {
     mInstance = gfx;
@@ -150,6 +158,12 @@ void Interpreter::Flush() {
             mFrameStats.drawCalls++;
             mFrameStats.verticesSubmitted += (uint32_t)(mBufVboNumTris * 3);
             mFrameStats.trianglesSubmitted += (uint32_t)mBufVboNumTris;
+
+            // Batch size histogram
+            uint32_t n = (uint32_t)mBufVboNumTris;
+            int bucket = (n <= 2) ? 0 : (n <= 8) ? 1 : (n <= 32) ? 2 : (n <= 128) ? 3 : 4;
+            mFrameStats.batchHistogram[bucket]++;
+            if (n > mFrameStats.maxBatchSize) mFrameStats.maxBatchSize = n;
         }
 
         Fast3DScopedTimer timer(mFrameStats.timeDrawSubmit, mProfilingEnabled);
@@ -166,6 +180,8 @@ ShaderProgram* Interpreter::LookupOrCreateShaderProgram(uint64_t id0, uint64_t i
         mRapi->UnloadShader(mRenderingState.mShaderProgram);
         prg = mRapi->CreateAndLoadNewShader(id0, id1);
         mRenderingState.mShaderProgram = prg;
+        // Update shader info cache since we loaded a new shader
+        mRapi->ShaderGetInfo(prg, &mCachedNumInputs, mCachedUsedTextures);
     }
     return prg;
 }
@@ -429,6 +445,7 @@ ColorCombiner* Interpreter::LookupOrCreateColorCombiner(const ColorCombinerKey& 
     }
     if (mProfilingEnabled) {
         mFrameStats.stateChangeFlushes++;
+        mFrameStats.flushCauseCombiner++;
     }
     Flush();
     mPrevCombiner = mColorCombinerPool.insert(std::make_pair(key, ColorCombiner())).first;
@@ -442,6 +459,8 @@ void Interpreter::TextureCacheClear() {
     }
     mTextureCache.map.clear();
     mTextureCache.lru.clear();
+    mCachedTileState[0].valid = false;
+    mCachedTileState[1].valid = false;
 }
 
 bool Interpreter::TextureCacheLookup(int i, const TextureCacheKey& key) {
@@ -586,10 +605,34 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
     {
         uint32_t i = 0;
         for (uint32_t y = 0; y < height; y++) {
-            for (uint32_t x = 0; x < width; x++) {
-                uint32_t clrIdx = (y * (fullImageLineSizeBytes / 2)) + (x);
-
-                uint16_t col16 = (addr[2 * clrIdx] << 8) | addr[2 * clrIdx + 1];
+            const uint8_t* rowAddr = addr + y * fullImageLineSizeBytes;
+            uint8_t* dst = mTexUploadBuffer + i * 4;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: process 8 RGBA5551 pixels per iteration within each row
+            uint32_t x = 0;
+            for (; x + 8 <= width; x += 8, dst += 32) {
+                uint8x16_t raw = vld1q_u8(rowAddr + x * 2);
+                uint8x16_t swapped = vrev16q_u8(raw);
+                uint16x8_t pixels = vreinterpretq_u16_u8(swapped);
+                uint16x8_t r5 = vshrq_n_u16(pixels, 11);
+                uint16x8_t g5 = vandq_u16(vshrq_n_u16(pixels, 6), vdupq_n_u16(0x1f));
+                uint16x8_t b5 = vandq_u16(vshrq_n_u16(pixels, 1), vdupq_n_u16(0x1f));
+                uint16x8_t a1 = vandq_u16(pixels, vdupq_n_u16(1));
+                uint8x8_t r8 = vmovn_u16(vorrq_u16(vshlq_n_u16(r5, 3), vshrq_n_u16(r5, 2)));
+                uint8x8_t g8 = vmovn_u16(vorrq_u16(vshlq_n_u16(g5, 3), vshrq_n_u16(g5, 2)));
+                uint8x8_t b8 = vmovn_u16(vorrq_u16(vshlq_n_u16(b5, 3), vshrq_n_u16(b5, 2)));
+                uint8x8_t a8 = vmovn_u16(vmulq_n_u16(a1, 255));
+                uint8x8x4_t rgba = {{ r8, g8, b8, a8 }};
+                vst4_u8(dst, rgba);
+            }
+            i += x;
+            // Scalar tail for remaining pixels in the row
+            for (; x < width; x++, i++) {
+                uint16_t col16 = (rowAddr[2 * x] << 8) | rowAddr[2 * x + 1];
+#else
+            for (uint32_t x = 0; x < width; x++, i++) {
+                uint16_t col16 = (rowAddr[2 * x] << 8) | rowAddr[2 * x + 1];
+#endif
                 uint8_t a = col16 & 1;
                 uint8_t r = col16 >> 11;
                 uint8_t g = (col16 >> 6) & 0x1f;
@@ -598,8 +641,6 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
                 mTexUploadBuffer[4 * i + 1] = SCALE_5_8(g);
                 mTexUploadBuffer[4 * i + 2] = SCALE_5_8(b);
                 mTexUploadBuffer[4 * i + 3] = a ? 255 : 0;
-
-                i++;
             }
         }
     }
@@ -819,17 +860,30 @@ void Interpreter::ImportTextureIA16(int tile, bool importReplacement) {
     {
         uint32_t i = 0;
         for (uint32_t y = 0; y < height; y++) {
-            for (uint32_t x = 0; x < width; x++) {
-                uint32_t clrIdx = (y * (full_image_line_size_bytes / 2)) + (x);
-
-                uint8_t intensity = addr[2 * clrIdx];
-                uint8_t alpha = addr[2 * clrIdx + 1];
-                mTexUploadBuffer[4 * i + 0] = intensity;
-                mTexUploadBuffer[4 * i + 1] = intensity;
-                mTexUploadBuffer[4 * i + 2] = intensity;
-                mTexUploadBuffer[4 * i + 3] = alpha;
-
-                i++;
+            const uint8_t* rowAddr = addr + y * full_image_line_size_bytes;
+            uint8_t* dst = mTexUploadBuffer + i * 4;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: process 16 IA16 pixels per iteration within each row
+            uint32_t x = 0;
+            for (; x + 16 <= width; x += 16, dst += 64) {
+                uint8x16x2_t ia = vld2q_u8(rowAddr + x * 2);
+                uint8x16x4_t rgba = {{ ia.val[0], ia.val[0], ia.val[0], ia.val[1] }};
+                vst4q_u8(dst, rgba);
+            }
+            i += x;
+            // Scalar tail for remaining pixels in the row
+            for (; x < width; x++, i++) {
+                mTexUploadBuffer[4 * i + 0] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 1] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 2] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 3] = rowAddr[2 * x + 1];
+#else
+            for (uint32_t x = 0; x < width; x++, i++) {
+                mTexUploadBuffer[4 * i + 0] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 1] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 2] = rowAddr[2 * x];
+                mTexUploadBuffer[4 * i + 3] = rowAddr[2 * x + 1];
+#endif
             }
         }
     }
@@ -1097,12 +1151,40 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
         lut[p][3] = (col16 & 1) ? 255 : 0;
     }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON fast path: when texture rows are contiguous, gather 4 pixels at a time
+    if (fullImageLineSizeBytes == lineSizeBytes) {
+        uint32_t i = 0;
+        const uint32_t* lut32 = reinterpret_cast<const uint32_t*>(&lut[0][0]);
+        uint32_t* dst32 = reinterpret_cast<uint32_t*>(mTexUploadBuffer);
+        // Scalar gather — each pixel is a 4-byte LUT lookup by 8-bit index
+        // NEON can't do arbitrary 256-entry gathers, but we avoid memcpy overhead
+        for (; i + 4 <= sizeBytes; i += 4) {
+            dst32[i + 0] = lut32[addr[i + 0]];
+            dst32[i + 1] = lut32[addr[i + 1]];
+            dst32[i + 2] = lut32[addr[i + 2]];
+            dst32[i + 3] = lut32[addr[i + 3]];
+        }
+        for (; i < sizeBytes; i++) {
+            dst32[i] = lut32[addr[i]];
+        }
+    } else {
+        const uint32_t* lut32 = reinterpret_cast<const uint32_t*>(&lut[0][0]);
+        uint32_t* dst32 = reinterpret_cast<uint32_t*>(mTexUploadBuffer);
+        for (uint32_t i = 0, j = 0; i < sizeBytes; j += fullImageLineSizeBytes - lineSizeBytes) {
+            for (uint32_t k = 0; k < lineSizeBytes; i++, k++, j++) {
+                dst32[i] = lut32[addr[j]];
+            }
+        }
+    }
+#else
     for (uint32_t i = 0, j = 0; i < sizeBytes; j += fullImageLineSizeBytes - lineSizeBytes) {
         for (uint32_t k = 0; k < lineSizeBytes; i++, k++, j++) {
             uint8_t idx = addr[j];
             memcpy(&mTexUploadBuffer[4 * i], lut[idx], 4);
         }
     }
+#endif
 
     uint32_t resultLineSizeBytes = mRdp->texture_tile[tile].line_size_bytes;
     if (metadata->h_byte_scale != 1) {
@@ -1333,7 +1415,33 @@ void Interpreter::ImportTextureMask(int i, int tile) {
             break;
     }
 
-    for (uint32_t texIndex = 0; texIndex < width * height; texIndex++) {
+    uint32_t totalPixels = width * height;
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON: process 16 mask pixels at a time, branch-free
+    // For each byte: 0 → {0,0,0,0}, nonzero → {0,0,0,0xFF}
+    uint32_t texIndex = 0;
+    uint8x16_t zero_vec = vdupq_n_u8(0);
+    for (; texIndex + 16 <= totalPixels; texIndex += 16) {
+        uint8x16_t mask = vld1q_u8(&orig_addr[texIndex]);
+        // Compare != 0: produces 0xFF for nonzero bytes, 0x00 for zero bytes
+        uint8x16_t alpha = vcgtq_u8(mask, zero_vec);
+        // Build RGBA output: R=0, G=0, B=0, A=alpha
+        uint8x16x4_t rgba;
+        rgba.val[0] = zero_vec;
+        rgba.val[1] = zero_vec;
+        rgba.val[2] = zero_vec;
+        rgba.val[3] = alpha;
+        vst4q_u8(&mTexUploadBuffer[4 * texIndex], rgba);
+    }
+    // Scalar tail
+    for (; texIndex < totalPixels; texIndex++) {
+        mTexUploadBuffer[4 * texIndex + 0] = 0;
+        mTexUploadBuffer[4 * texIndex + 1] = 0;
+        mTexUploadBuffer[4 * texIndex + 2] = 0;
+        mTexUploadBuffer[4 * texIndex + 3] = orig_addr[texIndex] ? 0xFF : 0;
+    }
+#else
+    for (uint32_t texIndex = 0; texIndex < totalPixels; texIndex++) {
         uint8_t masked = orig_addr[texIndex];
         if (masked) {
             mTexUploadBuffer[4 * texIndex + 0] = 0;
@@ -1347,21 +1455,51 @@ void Interpreter::ImportTextureMask(int i, int tile) {
             mTexUploadBuffer[4 * texIndex + 3] = 0;
         }
     }
+#endif
 
     mRapi->UploadTexture(mTexUploadBuffer, width, height);
 }
 
 void Interpreter::NormalizeVector(float v[3]) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON: normalize using fast reciprocal square root
+    float32x4_t vec = { v[0], v[1], v[2], 0.0f };
+    float32x4_t sq = vmulq_f32(vec, vec);
+    float len_sq = vgetq_lane_f32(sq, 0) + vgetq_lane_f32(sq, 1) + vgetq_lane_f32(sq, 2);
+    float32x2_t len_sq_v = vdup_n_f32(len_sq);
+    float32x2_t inv_len = vrsqrte_f32(len_sq_v);
+    inv_len = vmul_f32(inv_len, vrsqrts_f32(vmul_f32(len_sq_v, inv_len), inv_len));
+    float32x4_t inv_len_q = vdupq_lane_f32(inv_len, 0);
+    vec = vmulq_f32(vec, inv_len_q);
+    v[0] = vgetq_lane_f32(vec, 0);
+    v[1] = vgetq_lane_f32(vec, 1);
+    v[2] = vgetq_lane_f32(vec, 2);
+#else
     float s = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     v[0] /= s;
     v[1] /= s;
     v[2] /= s;
+#endif
 }
 
 void Interpreter::TransposedMatrixMul(float res[3], const float a[3], const float b[4][4]) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON: compute res[k] = a[0]*b[k][0] + a[1]*b[k][1] + a[2]*b[k][2]
+    // Each result is a dot product of a with row k of b (first 3 elements)
+    // Load each matrix row, multiply by a (broadcast), then horizontal sum
+    float32x4_t a_v = { a[0], a[1], a[2], 0.0f };
+    float32x4_t r0 = vmulq_f32(a_v, vld1q_f32(b[0]));
+    float32x4_t r1 = vmulq_f32(a_v, vld1q_f32(b[1]));
+    float32x4_t r2 = vmulq_f32(a_v, vld1q_f32(b[2]));
+    // Horizontal sum of first 3 lanes for each row
+    res[0] = vgetq_lane_f32(r0, 0) + vgetq_lane_f32(r0, 1) + vgetq_lane_f32(r0, 2);
+    res[1] = vgetq_lane_f32(r1, 0) + vgetq_lane_f32(r1, 1) + vgetq_lane_f32(r1, 2);
+    res[2] = vgetq_lane_f32(r2, 0) + vgetq_lane_f32(r2, 1) + vgetq_lane_f32(r2, 2);
+#else
     res[0] = a[0] * b[0][0] + a[1] * b[0][1] + a[2] * b[0][2];
     res[1] = a[0] * b[1][0] + a[1] * b[1][1] + a[2] * b[1][2];
     res[2] = a[0] * b[2][0] + a[1] * b[2][1] + a[2] * b[2][2];
+#endif
 }
 
 void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[4][4]) {
@@ -1394,34 +1532,37 @@ void Interpreter::MatrixMul(float res[4][4], const float a[4][4], const float b[
 }
 
 void Interpreter::CalculateNormalDir(const F3DLight_t* light, float coeffs[3]) {
-    float light_dir[3] = { light->dir[0] / 127.0f, light->dir[1] / 127.0f, light->dir[2] / 127.0f };
-
 #if defined(__ARM_NEON) && defined(__aarch64__)
+    // NEON: convert light dir int8 → float and multiply by 1/127 in one step
+    float32x4_t dir_f = vmulq_n_f32(
+        (float32x4_t){ (float)light->dir[0], (float)light->dir[1], (float)light->dir[2], 0.0f },
+        1.0f / 127.0f);
+
     // Fused TransposedMatrixMul + NormalizeVector using NEON
-    // TransposedMatrixMul: res[i] = a[0]*b[0][i] + a[1]*b[0+1][i] + a[2]*b[0+2][i] for i=0,1,2
-    // Then normalize the result vector
+    // TransposedMatrixMul: res[k] = dir[0]*mtx[k][0] + dir[1]*mtx[k][1] + dir[2]*mtx[k][2]
+    // Each result is a dot product of dir with row k of mtx
     float(*mtx)[4] = mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1];
-    float32x4_t r0 = vld1q_f32(mtx[0]);
-    float32x4_t r1 = vld1q_f32(mtx[1]);
-    float32x4_t r2 = vld1q_f32(mtx[2]);
-    // res = light_dir[0] * mtx_row0 + light_dir[1] * mtx_row1 + light_dir[2] * mtx_row2
-    float32x4_t res = vmulq_n_f32(r0, light_dir[0]);
-    res = vmlaq_n_f32(res, r1, light_dir[1]);
-    res = vmlaq_n_f32(res, r2, light_dir[2]);
+    float32x4_t r0 = vmulq_f32(dir_f, vld1q_f32(mtx[0]));
+    float32x4_t r1 = vmulq_f32(dir_f, vld1q_f32(mtx[1]));
+    float32x4_t r2 = vmulq_f32(dir_f, vld1q_f32(mtx[2]));
+    float32x4_t res = {
+        vgetq_lane_f32(r0, 0) + vgetq_lane_f32(r0, 1) + vgetq_lane_f32(r0, 2),
+        vgetq_lane_f32(r1, 0) + vgetq_lane_f32(r1, 1) + vgetq_lane_f32(r1, 2),
+        vgetq_lane_f32(r2, 0) + vgetq_lane_f32(r2, 1) + vgetq_lane_f32(r2, 2),
+        0.0f
+    };
     // Normalize: compute length² = x² + y² + z², then rsqrt
     float32x4_t sq = vmulq_f32(res, res);
-    // Sum x² + y² + z² (lane 0 + lane 1 + lane 2)
     float len_sq = vgetq_lane_f32(sq, 0) + vgetq_lane_f32(sq, 1) + vgetq_lane_f32(sq, 2);
     float32x2_t len_sq_v = vdup_n_f32(len_sq);
     float32x2_t inv_len = vrsqrte_f32(len_sq_v);
-    // One Newton-Raphson iteration for better accuracy
     inv_len = vmul_f32(inv_len, vrsqrts_f32(vmul_f32(len_sq_v, inv_len), inv_len));
-    float32x4_t inv_len_q = vdupq_lane_f32(inv_len, 0);
-    res = vmulq_f32(res, inv_len_q);
+    res = vmulq_f32(res, vdupq_lane_f32(inv_len, 0));
     coeffs[0] = vgetq_lane_f32(res, 0);
     coeffs[1] = vgetq_lane_f32(res, 1);
     coeffs[2] = vgetq_lane_f32(res, 2);
 #else
+    float light_dir[3] = { light->dir[0] / 127.0f, light->dir[1] / 127.0f, light->dir[2] / 127.0f };
     Interpreter::TransposedMatrixMul(coeffs, light_dir,
                                      mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1]);
     Interpreter::NormalizeVector(coeffs);
@@ -1433,6 +1574,17 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
     float matrix[4][4];
 
     if (auto it = mCurMtxReplacements->find((Mtx*)addr); it != mCurMtxReplacements->end()) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: vectorize truncate-to-fixed-point-and-back for 4 floats at a time
+        float32x4_t scale = vdupq_n_f32(65536.0f);
+        float32x4_t inv_scale = vdupq_n_f32(1.0f / 65536.0f);
+        for (int i = 0; i < 4; i++) {
+            float32x4_t row = vld1q_f32(it->second.mf[i]);
+            int32x4_t as_int = vcvtq_s32_f32(vmulq_f32(row, scale));
+            float32x4_t result = vmulq_f32(vcvtq_f32_s32(as_int), inv_scale);
+            vst1q_f32(matrix[i], result);
+        }
+#else
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
                 float v = it->second.mf[i][j];
@@ -1440,9 +1592,28 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
                 matrix[i][j] = as_int * (1.0f / 65536.0f);
             }
         }
+#endif
     } else {
 #ifndef GBI_FLOATS
         // Original GBI where fixed point matrices are used
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: vectorized fixed-point matrix conversion
+        // Each row has 2 int32 int_parts and 2 uint32 frac_parts → 4 floats
+        float32x4_t inv_scale = vdupq_n_f32(1.0f / 65536.0f);
+        for (int i = 0; i < 4; i++) {
+            int32_t ip0 = addr[i * 2 + 0];
+            int32_t ip1 = addr[i * 2 + 1];
+            uint32_t fp0 = addr[8 + i * 2 + 0];
+            uint32_t fp1 = addr[8 + i * 2 + 1];
+            // Reconstruct 4 fixed-point values as int32
+            int32x4_t fixed = { (int32_t)((ip0 & 0xffff0000) | (fp0 >> 16)),
+                                (int32_t)((ip0 << 16) | (fp0 & 0xffff)),
+                                (int32_t)((ip1 & 0xffff0000) | (fp1 >> 16)),
+                                (int32_t)((ip1 << 16) | (fp1 & 0xffff)) };
+            float32x4_t result = vmulq_f32(vcvtq_f32_s32(fixed), inv_scale);
+            vst1q_f32(matrix[i], result);
+        }
+#else
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j += 2) {
                 int32_t int_part = addr[i * 2 + j / 2];
@@ -1451,6 +1622,7 @@ void Interpreter::GfxSpMatrix(uint8_t parameters, const int32_t* addr) {
                 matrix[i][j + 1] = (int32_t)((int_part << 16) | (frac_part & 0xffff)) / 65536.0f;
             }
         }
+#endif
 #else
         // For a modified GBI where fixed point values are replaced with floats
         memcpy(matrix, addr, sizeof(matrix));
@@ -1611,6 +1783,67 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
             for (int i = 0; i < mRsp->current_num_lights - 1; i++) {
                 float intensity = 0;
                 if (hasPositionalLighting && (mRsp->current_lights[i].p.unk3 != 0)) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                    // NEON: vectorized positional lighting
+                    // Distance vector, dist_sq, TransposedMatrixMul, intensity, and attenuation
+                    float32x4_t lpos = { (float)mRsp->current_lights[i].p.pos[0],
+                                         (float)mRsp->current_lights[i].p.pos[1],
+                                         (float)mRsp->current_lights[i].p.pos[2], 0.0f };
+                    float32x4_t wpos = { world_pos[0], world_pos[1], world_pos[2], 0.0f };
+                    float32x4_t dv = vsubq_f32(lpos, wpos);
+                    // dist_sq = dx*dx + dy*dy + dz*dz*2
+                    float32x4_t dv_sq = vmulq_f32(dv, dv);
+                    float dist_sq = vgetq_lane_f32(dv_sq, 0) + vgetq_lane_f32(dv_sq, 1) +
+                                    vgetq_lane_f32(dv_sq, 2) * 2.0f;
+
+                    // dist via NEON rsqrt approximation: dist = dist_sq * rsqrt(dist_sq)
+                    float32x2_t dsq_v = vdup_n_f32(dist_sq);
+                    float32x2_t rsq = vrsqrte_f32(dsq_v);
+                    rsq = vmul_f32(rsq, vrsqrts_f32(vmul_f32(dsq_v, rsq), rsq));
+                    float dist = dist_sq * vget_lane_f32(rsq, 0);
+
+                    // TransposedMatrixMul: light_model[k] = sum_j(dist_vec[j] * mtx[k][j])
+                    float(*mtx_p)[4] = mRsp->modelview_matrix_stack[mRsp->modelview_matrix_stack_size - 1];
+                    // NEON: element-wise multiply + horizontal sum for 3 dot products
+                    float32x4_t p0 = vmulq_f32(dv, vld1q_f32(mtx_p[0]));
+                    float32x4_t p1 = vmulq_f32(dv, vld1q_f32(mtx_p[1]));
+                    float32x4_t p2 = vmulq_f32(dv, vld1q_f32(mtx_p[2]));
+                    float light_model[3] = {
+                        vgetq_lane_f32(p0, 0) + vgetq_lane_f32(p0, 1) + vgetq_lane_f32(p0, 2),
+                        vgetq_lane_f32(p1, 0) + vgetq_lane_f32(p1, 1) + vgetq_lane_f32(p1, 2),
+                        vgetq_lane_f32(p2, 0) + vgetq_lane_f32(p2, 1) + vgetq_lane_f32(p2, 2)
+                    };
+
+                    // light_intensity = clamp(4 * light_model / dist_sq, -1, 1)
+                    float32x4_t lm_v = { light_model[0], light_model[1], light_model[2], 0.0f };
+                    // Use NEON reciprocal for 4.0f / dist_sq
+                    float32x2_t dsq_r = vdup_n_f32(dist_sq);
+                    float32x2_t dsq_inv = vrecpe_f32(dsq_r);
+                    dsq_inv = vmul_f32(dsq_inv, vrecps_f32(dsq_r, dsq_inv));
+                    float inv_dist_sq = vget_lane_f32(dsq_inv, 0);
+                    float32x4_t li_v = vmulq_n_f32(lm_v, 4.0f * inv_dist_sq);
+                    li_v = vmaxq_f32(li_v, vdupq_n_f32(-1.0f));
+                    li_v = vminq_f32(li_v, vdupq_n_f32(1.0f));
+
+                    // total_intensity = dot(light_intensity, vn->n)
+                    float32x4_t nv = { (float)vn->n[0], (float)vn->n[1], (float)vn->n[2], 0.0f };
+                    float32x4_t ti_prod = vmulq_f32(li_v, nv);
+                    float total_intensity = vgetq_lane_f32(ti_prod, 0) + vgetq_lane_f32(ti_prod, 1) +
+                                            vgetq_lane_f32(ti_prod, 2);
+                    if (total_intensity > 1.0f) total_intensity = 1.0f;
+                    if (total_intensity < -1.0f) total_intensity = -1.0f;
+
+                    float distf = floorf(dist);
+                    float attenuation = (distf * mRsp->current_lights[i].p.unk7 * 2.0f +
+                                         distf * distf * mRsp->current_lights[i].p.unkE / 8.0f) /
+                                            (float)0xFFFF +
+                                        1.0f;
+                    // Use NEON reciprocal for 1/attenuation
+                    float32x2_t att_v = vdup_n_f32(attenuation);
+                    float32x2_t att_inv = vrecpe_f32(att_v);
+                    att_inv = vmul_f32(att_inv, vrecps_f32(att_v, att_inv));
+                    intensity = total_intensity * vget_lane_f32(att_inv, 0);
+#else
                     // Calculate distance from the light to the vertex
                     float dist_vec[3] = { mRsp->current_lights[i].p.pos[0] - world_pos[0],
                                           mRsp->current_lights[i].p.pos[1] - world_pos[1],
@@ -1647,6 +1880,7 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                                             (float)0xFFFF +
                                         1.0f;
                     intensity = total_intensity / attenuation;
+#endif
                 } else {
 #if defined(__ARM_NEON) && defined(__aarch64__)
                     // NEON: dot product of vertex normal with light coefficients
@@ -1665,15 +1899,39 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
 #endif
                 }
                 if (intensity > 0.0f) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                    // NEON: vectorized light color accumulation
+                    float32x4_t rgb_f = { (float)r, (float)g, (float)b, 0.0f };
+                    float32x4_t lcol = { (float)mRsp->current_lights[i].l.col[0],
+                                         (float)mRsp->current_lights[i].l.col[1],
+                                         (float)mRsp->current_lights[i].l.col[2], 0.0f };
+                    rgb_f = vmlaq_n_f32(rgb_f, lcol, intensity);
+                    // Convert all lanes to int at once, then extract
+                    int32x4_t rgb_i = vcvtq_s32_f32(rgb_f);
+                    r = vgetq_lane_s32(rgb_i, 0);
+                    g = vgetq_lane_s32(rgb_i, 1);
+                    b = vgetq_lane_s32(rgb_i, 2);
+#else
                     r += intensity * mRsp->current_lights[i].l.col[0];
                     g += intensity * mRsp->current_lights[i].l.col[1];
                     b += intensity * mRsp->current_lights[i].l.col[2];
+#endif
                 }
             }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: branchless clamp to 255
+            int32x4_t rgb_v = { r, g, b, 0 };
+            int32x4_t max255 = vdupq_n_s32(255);
+            rgb_v = vminq_s32(rgb_v, max255);
+            d->color.r = vgetq_lane_s32(rgb_v, 0);
+            d->color.g = vgetq_lane_s32(rgb_v, 1);
+            d->color.b = vgetq_lane_s32(rgb_v, 2);
+#else
             d->color.r = r > 255 ? 255 : r;
             d->color.g = g > 255 ? 255 : g;
             d->color.b = b > 255 ? 255 : b;
+#endif
 
             if (mRsp->geometry_mode & G_TEXTURE_GEN) {
                 float dotx = 0, doty = 0;
@@ -1699,8 +1957,19 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                 doty /= 127.0f;
 #endif
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                // NEON: branchless clamp dotx/doty to [-1, 1]
+                {
+                    float32x2_t dots = { dotx, doty };
+                    dots = vmax_f32(dots, vdup_n_f32(-1.0f));
+                    dots = vmin_f32(dots, vdup_n_f32(1.0f));
+                    dotx = vget_lane_f32(dots, 0);
+                    doty = vget_lane_f32(dots, 1);
+                }
+#else
                 dotx = Ship::Math::clamp(dotx, -1.0f, 1.0f);
                 doty = Ship::Math::clamp(doty, -1.0f, 1.0f);
+#endif
 
                 if (mRsp->geometry_mode & G_TEXTURE_GEN_LINEAR) {
                     // Not sure exactly what formula we should use to get accurate values
@@ -1711,12 +1980,31 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                     dotx = acosf(-dotx) /* M_PI */ * 0.159155f;
                     doty = acosf(-doty) /* M_PI */ * 0.159155f;
                 } else {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                    // NEON: (dot + 1.0) * 0.25 for both dotx/doty in parallel
+                    float32x2_t dots = { dotx, doty };
+                    dots = vmul_n_f32(vadd_f32(dots, vdup_n_f32(1.0f)), 0.25f);
+                    dotx = vget_lane_f32(dots, 0);
+                    doty = vget_lane_f32(dots, 1);
+#else
                     dotx = (dotx + 1.0f) / 4.0f;
                     doty = (doty + 1.0f) / 4.0f;
+#endif
                 }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                // NEON: compute U and V scaling in parallel
+                {
+                    float32x2_t dots = { dotx, doty };
+                    float32x2_t scale = { (float)mRsp->texture_scaling_factor.s, (float)mRsp->texture_scaling_factor.t };
+                    int32x2_t result = vcvt_s32_f32(vmul_f32(dots, scale));
+                    U = vget_lane_s32(result, 0);
+                    V = vget_lane_s32(result, 1);
+                }
+#else
                 U = (int32_t)(dotx * mRsp->texture_scaling_factor.s);
                 V = (int32_t)(doty * mRsp->texture_scaling_factor.t);
+#endif
             }
         } else {
             d->color.r = v->cn[0];
@@ -1728,6 +2016,25 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         d->v = V;
 
         // trivial clip rejection
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: branchless clip rejection — 5 comparisons → single bitmask
+        // vclt/vcgt return all-ones (0xFFFFFFFF) for true, 0 for false.
+        // ANDing with the flag bit extracts the flag when true, 0 when false.
+        {
+            float32x4_t xyzw = { x, y, z, w };
+            float32x4_t pos_w = vdupq_n_f32(w);
+            float32x4_t neg_w = vdupq_n_f32(-w);
+            uint32x4_t lt_neg = vcltq_f32(xyzw, neg_w);
+            uint32x4_t gt_pos = vcgtq_f32(xyzw, pos_w);
+            uint8_t clip = 0;
+            clip |= (vgetq_lane_u32(lt_neg, 0) & 1);   // CLIP_LEFT:   x < -w
+            clip |= (vgetq_lane_u32(gt_pos, 0) & 2);   // CLIP_RIGHT:  x > w
+            clip |= (vgetq_lane_u32(lt_neg, 1) & 4);   // CLIP_BOTTOM: y < -w
+            clip |= (vgetq_lane_u32(gt_pos, 1) & 8);   // CLIP_TOP:    y > w
+            clip |= (vgetq_lane_u32(gt_pos, 2) & 32);  // CLIP_FAR:    z > w
+            d->clip_rej = clip;
+        }
+#else
         d->clip_rej = 0;
         if (x < -w) {
             d->clip_rej |= 1; // CLIP_LEFT
@@ -1745,11 +2052,20 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
         if (z > w) {
             d->clip_rej |= 32; // CLIP_FAR
         }
+#endif
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: store vertex position {x, y, z, w} as single 4-float write
+        {
+            float32x4_t pos = { x, y, z, w };
+            vst1q_f32(&d->x, pos);
+        }
+#else
         d->x = x;
         d->y = y;
         d->z = z;
         d->w = w;
+#endif
 
         if (mRsp->geometry_mode & G_FOG) {
             if (fabsf(w) < 0.001f) {
@@ -1757,7 +2073,15 @@ void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx
                 w = 0.001f;
             }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: fast reciprocal for 1/w using vrecpe + one Newton-Raphson step
+            float32x2_t w_v = vdup_n_f32(w);
+            float32x2_t est = vrecpe_f32(w_v);
+            est = vmul_f32(est, vrecps_f32(w_v, est));
+            float winv = vget_lane_f32(est, 0);
+#else
             float winv = 1.0f / w;
+#endif
             if (winv < 0.0f) {
                 winv = std::numeric_limits<int16_t>::max();
             }
@@ -1810,11 +2134,27 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     const uint32_t cull_back = get_attr(CULL_BACK);
 
     if ((mRsp->geometry_mode & cull_both) != 0) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: compute 3 reciprocals (1/w1, 1/w2, 1/w3) in parallel using
+        // vrecpe + one Newton-Raphson step, then derive the cross product.
+        float32x4_t w_vec = { v1->w, v2->w, v3->w, 1.0f };
+        float32x4_t est = vrecpeq_f32(w_vec);
+        est = vmulq_f32(est, vrecpsq_f32(w_vec, est));
+        float iw1 = vgetq_lane_f32(est, 0);
+        float iw2 = vgetq_lane_f32(est, 1);
+        float iw3 = vgetq_lane_f32(est, 2);
+        float dx1 = v1->x * iw1 - v2->x * iw2;
+        float dy1 = v1->y * iw1 - v2->y * iw2;
+        float dx2 = v3->x * iw3 - v2->x * iw2;
+        float dy2 = v3->y * iw3 - v2->y * iw2;
+        float cross = dx1 * dy2 - dy1 * dx2;
+#else
         float dx1 = v1->x / (v1->w) - v2->x / (v2->w);
         float dy1 = v1->y / (v1->w) - v2->y / (v2->w);
         float dx2 = v3->x / (v3->w) - v2->x / (v2->w);
         float dy2 = v3->y / (v3->w) - v2->y / (v2->w);
         float cross = dx1 * dy2 - dy1 * dx2;
+#endif
 
         if ((v1->w < 0) ^ (v2->w < 0) ^ (v3->w < 0)) {
             // If one vertex lies behind the eye, negating cross will give the correct result.
@@ -1844,49 +2184,84 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         }
     }
 
-    bool depth_test = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
-    bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
-    uint8_t depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
-    if (depth_test_and_mask != mRenderingState.depth_test_and_mask) {
-        state_change_flush();
-        mRapi->SetDepthTestAndMask(depth_test, depth_mask);
-        mRenderingState.depth_test_and_mask = depth_test_and_mask;
+    // --- State check section: depth, viewport, texture, shader, alpha ---
+
+    // Only recompute other_mode_l / geometry_mode derived flags when they've actually changed
+    if (mRdp->geometry_mode_changed) {
+        bool depth_test = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
+        bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
+        mCachedModeFlags.depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
+        mRdp->geometry_mode_changed = false;
+    }
+    if (mRdp->other_mode_changed) {
+        // depth_mask and zmode_decal come from other_mode_l, recompute with depth_test
+        bool depth_test = (mRsp->geometry_mode & G_ZBUFFER) == G_ZBUFFER;
+        bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
+        mCachedModeFlags.depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
+        mCachedModeFlags.zmode_decal = (mRdp->other_mode_l & ZMODE_DEC) == ZMODE_DEC;
+        mCachedModeFlags.use_alpha = ((mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20) &&
+                          (mRdp->other_mode_l & (3 << 16)) == (G_BL_1MA << 16)) ||
+                         ((mRdp->other_mode_l & (3 << 22)) == (G_BL_CLR_MEM << 22) &&
+                          (mRdp->other_mode_l & (3 << 18)) == (G_BL_1MA << 18));
+        mCachedModeFlags.use_fog = (mRdp->other_mode_l >> 30) == G_BL_CLR_FOG;
+        mCachedModeFlags.texture_edge = (mRdp->other_mode_l & CVG_X_ALPHA) == CVG_X_ALPHA;
+        mCachedModeFlags.use_noise = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_DITHER;
+        mCachedModeFlags.use_2cyc = (mRdp->other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE;
+        mCachedModeFlags.alpha_threshold = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_THRESHOLD;
+        mCachedModeFlags.invisible =
+            (mRdp->other_mode_l & (3 << 24)) == (G_BL_0 << 24) && (mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20);
+        mCachedModeFlags.linear_filter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
+        mRdp->other_mode_changed = false;
     }
 
-    bool zmode_decal = (mRdp->other_mode_l & ZMODE_DEC) == ZMODE_DEC;
-    if (zmode_decal != mRenderingState.decal_mode) {
-        state_change_flush();
-        mRapi->SetZmodeDecal(zmode_decal);
-        mRenderingState.decal_mode = zmode_decal;
-    }
+    uint8_t depth_test_and_mask = mCachedModeFlags.depth_test_and_mask;
+    bool depth_changed = (depth_test_and_mask != mRenderingState.depth_test_and_mask);
 
+    bool zmode_decal = mCachedModeFlags.zmode_decal;
+    bool decal_changed = (zmode_decal != mRenderingState.decal_mode);
+
+    bool viewport_changed = false;
+    bool scissor_changed = false;
     if (mRdp->viewport_or_scissor_changed) {
-        if (memcmp(&mRdp->viewport, &mRenderingState.viewport, sizeof(mRdp->viewport)) != 0) {
-            state_change_flush();
+        viewport_changed = memcmp(&mRdp->viewport, &mRenderingState.viewport, sizeof(mRdp->viewport)) != 0;
+        scissor_changed = memcmp(&mRdp->scissor, &mRenderingState.scissor, sizeof(mRdp->scissor)) != 0;
+    }
+
+    if (depth_changed || decal_changed || viewport_changed || scissor_changed) {
+        state_change_flush();
+        if (mProfilingEnabled) {
+            mFrameStats.flushCauseDepthViewport++;
+        }
+        if (depth_changed) {
+            mRapi->SetDepthTestAndMask((depth_test_and_mask & 1) != 0, (depth_test_and_mask & 2) != 0);
+            mRenderingState.depth_test_and_mask = depth_test_and_mask;
+        }
+        if (decal_changed) {
+            mRapi->SetZmodeDecal(zmode_decal);
+            mRenderingState.decal_mode = zmode_decal;
+        }
+        if (viewport_changed) {
             mRapi->SetViewport(mRdp->viewport.x, mRdp->viewport.y, mRdp->viewport.width, mRdp->viewport.height);
             mRenderingState.viewport = mRdp->viewport;
         }
-        if (memcmp(&mRdp->scissor, &mRenderingState.scissor, sizeof(mRdp->scissor)) != 0) {
-            state_change_flush();
+        if (scissor_changed) {
             mRapi->SetScissor(mRdp->scissor.x, mRdp->scissor.y, mRdp->scissor.width, mRdp->scissor.height);
             mRenderingState.scissor = mRdp->scissor;
         }
+    }
+    if (mRdp->viewport_or_scissor_changed) {
         mRdp->viewport_or_scissor_changed = false;
     }
 
     uint64_t cc_id = mRdp->combine_mode;
     uint64_t cc_options = 0;
-    bool use_alpha = ((mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20) &&
-                      (mRdp->other_mode_l & (3 << 16)) == (G_BL_1MA << 16)) ||
-                     ((mRdp->other_mode_l & (3 << 22)) == (G_BL_CLR_MEM << 22) &&
-                      (mRdp->other_mode_l & (3 << 18)) == (G_BL_1MA << 18));
-    bool use_fog = (mRdp->other_mode_l >> 30) == G_BL_CLR_FOG;
-    bool texture_edge = (mRdp->other_mode_l & CVG_X_ALPHA) == CVG_X_ALPHA;
-    bool use_noise = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_DITHER;
-    bool use_2cyc = (mRdp->other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE;
-    bool alpha_threshold = (mRdp->other_mode_l & (3U << G_MDSFT_ALPHACOMPARE)) == G_AC_THRESHOLD;
-    bool invisible =
-        (mRdp->other_mode_l & (3 << 24)) == (G_BL_0 << 24) && (mRdp->other_mode_l & (3 << 20)) == (G_BL_CLR_MEM << 20);
+    bool use_alpha = mCachedModeFlags.use_alpha;
+    bool use_fog = mCachedModeFlags.use_fog;
+    bool texture_edge = mCachedModeFlags.texture_edge;
+    bool use_noise = mCachedModeFlags.use_noise;
+    bool use_2cyc = mCachedModeFlags.use_2cyc;
+    bool alpha_threshold = mCachedModeFlags.alpha_threshold;
+    bool invisible = mCachedModeFlags.invisible;
     bool use_grayscale = mRdp->grayscale;
     auto shader = mRdp->current_shader;
 
@@ -1948,7 +2323,15 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         key.combine_mode &= ~((0xfff << 16) | ((uint64_t)0xfff << 44));
     }
 
-    ColorCombiner* comb = LookupOrCreateColorCombiner(key);
+    // Cache combiner lookup: skip expensive hash map search when key unchanged (~85% of triangles)
+    ColorCombiner* comb;
+    if (key.combine_mode == mCachedCombinerKey.combine_mode && key.options == mCachedCombinerKey.options) {
+        comb = mCachedCombiner;
+    } else {
+        comb = LookupOrCreateColorCombiner(key);
+        mCachedCombinerKey = key;
+        mCachedCombiner = comb;
+    }
 
     uint32_t tm = 0;
     uint32_t tex_width[2], tex_height[2], tex_width2[2], tex_height2[2];
@@ -1956,78 +2339,233 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     for (int i = 0; i < 2; i++) {
         uint32_t tile = mRdp->first_tile_index + i;
         if (comb->usedTextures[i]) {
-            if (mRdp->textures_changed[i]) {
-                state_change_flush();
-                ImportTexture(i, tile, false);
-                if (mRdp->loaded_texture[i].masked) {
-                    ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
+            bool tile_changed = mRdp->textures_changed[i];
+            if (tile_changed) {
+                // Check if the "new" texture is actually the same one already bound.
+                // This avoids flushing the VBO batch when the N64 game redundantly
+                // reloads the same texture (very common — 0% cache miss rate in profiling).
+                // Uses cheap field comparisons instead of a hash map lookup.
+                bool skipImport = false;
+                if (!mRdp->loaded_texture[i].masked && !mRdp->loaded_texture[i].blended &&
+                    mRenderingState.mTextures[i] != nullptr) {
+                    uint32_t tmemIdx = mRdp->texture_tile[tile].tmem_index;
+                    const uint8_t* origAddr = mRdp->loaded_texture[tmemIdx].addr;
+                    uint8_t fmt = mRdp->texture_tile[tile].fmt;
+                    uint8_t siz = mRdp->texture_tile[tile].siz;
+                    uint32_t origSizeBytes = mRdp->loaded_texture[tmemIdx].orig_size_bytes;
+                    // Fast check: compare texture identity fields against the currently
+                    // bound texture's cache key. Includes size_bytes to catch resized
+                    // textures. For CI format: also checks palette memory pointers AND
+                    // palette_index, since different tiles can use different sub-palettes
+                    // from the same palette memory (e.g. GfxPrint font uses 8 sub-palettes).
+                    const TextureCacheKey& boundKey = mRenderingState.mTextures[i]->first;
+                    if (boundKey.texture_addr == origAddr && boundKey.fmt == fmt &&
+                        boundKey.siz == siz && boundKey.size_bytes == origSizeBytes &&
+                        (fmt != G_IM_FMT_CI || (boundKey.palette_addrs[0] == mRdp->palettes[0] &&
+                                                 boundKey.palette_addrs[1] == mRdp->palettes[1] &&
+                                                 boundKey.palette_index == mRdp->texture_tile[tile].palette))) {
+                        skipImport = true;
+                        if (mProfilingEnabled) {
+                            mFrameStats.textureReloadSkips++;
+                        }
+                    }
                 }
-                if (mRdp->loaded_texture[i].blended) {
-                    ImportTexture(SHADER_FIRST_REPLACEMENT_TEXTURE + i, tile, true);
+                if (!skipImport) {
+                    {
+                        state_change_flush();
+                        if (mProfilingEnabled) {
+                            mFrameStats.flushCauseTexture++;
+                        }
+                        ImportTexture(i, tile, false);
+                        if (mRdp->loaded_texture[i].masked) {
+                            ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
+                        }
+                        if (mRdp->loaded_texture[i].blended) {
+                            ImportTexture(SHADER_FIRST_REPLACEMENT_TEXTURE + i, tile, true);
+                        }
+                    }
                 }
                 mRdp->textures_changed[i] = false;
-            }
 
-            uint8_t cms = mRdp->texture_tile[tile].cms;
-            uint8_t cmt = mRdp->texture_tile[tile].cmt;
+                // Recompute tile-derived values since tile state changed
+                uint8_t cms = mRdp->texture_tile[tile].cms;
+                uint8_t cmt = mRdp->texture_tile[tile].cmt;
 
-            uint32_t tex_size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes;
-            uint32_t line_size = mRdp->texture_tile[tile].line_size_bytes;
+                uint32_t tex_size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes;
+                uint32_t line_size = mRdp->texture_tile[tile].line_size_bytes;
 
-            if (line_size == 0) {
-                line_size = 1;
-            }
-
-            tex_height[i] = tex_size_bytes / line_size;
-            switch (mRdp->texture_tile[tile].siz) {
-                case G_IM_SIZ_4b:
-                    line_size <<= 1;
-                    break;
-                case G_IM_SIZ_8b:
-                    break;
-                case G_IM_SIZ_16b:
-                    line_size /= G_IM_SIZ_16b_LINE_BYTES;
-                    break;
-                case G_IM_SIZ_32b:
-                    line_size /= G_IM_SIZ_32b_LINE_BYTES; // this is 2!
-                    tex_height[i] /= 2;
-                    break;
-            }
-            tex_width[i] = line_size;
-
-            tex_width2[i] = (mRdp->texture_tile[tile].lrs - mRdp->texture_tile[tile].uls + 4) / 4;
-            tex_height2[i] = (mRdp->texture_tile[tile].lrt - mRdp->texture_tile[tile].ult + 4) / 4;
-
-            uint32_t tex_width1 = tex_width[i] << (cms & G_TX_MIRROR);
-            uint32_t tex_height1 = tex_height[i] << (cmt & G_TX_MIRROR);
-
-            if ((cms & G_TX_CLAMP) && ((cms & G_TX_MIRROR) || tex_width1 != tex_width2[i])) {
-                tm |= 1 << 2 * i;
-                cms &= ~G_TX_CLAMP;
-            }
-            if ((cmt & G_TX_CLAMP) && ((cmt & G_TX_MIRROR) || tex_height1 != tex_height2[i])) {
-                tm |= 1 << 2 * i + 1;
-                cmt &= ~G_TX_CLAMP;
-            }
-
-            if (mRenderingState.mTextures[i] == nullptr) {
-                continue;
-            }
-
-            bool linear_filter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
-            if (linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
-                cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
-                state_change_flush();
-
-                // Set the same sampler params on the blended texture. Needed for opengl.
-                if (mRdp->loaded_texture[i].blended) {
-                    mRapi->SetSamplerParameters(SHADER_FIRST_REPLACEMENT_TEXTURE + i, linear_filter, cms, cmt);
+                if (line_size == 0) {
+                    line_size = 1;
                 }
 
-                mRapi->SetSamplerParameters(i, linear_filter, cms, cmt);
-                mRenderingState.mTextures[i]->second.linear_filter = linear_filter;
-                mRenderingState.mTextures[i]->second.cms = cms;
-                mRenderingState.mTextures[i]->second.cmt = cmt;
+                tex_height[i] = tex_size_bytes / line_size;
+                switch (mRdp->texture_tile[tile].siz) {
+                    case G_IM_SIZ_4b:
+                        line_size <<= 1;
+                        break;
+                    case G_IM_SIZ_8b:
+                        break;
+                    case G_IM_SIZ_16b:
+                        line_size /= G_IM_SIZ_16b_LINE_BYTES;
+                        break;
+                    case G_IM_SIZ_32b:
+                        line_size /= G_IM_SIZ_32b_LINE_BYTES; // this is 2!
+                        tex_height[i] /= 2;
+                        break;
+                }
+                tex_width[i] = line_size;
+
+                tex_width2[i] = (mRdp->texture_tile[tile].lrs - mRdp->texture_tile[tile].uls + 4) / 4;
+                tex_height2[i] = (mRdp->texture_tile[tile].lrt - mRdp->texture_tile[tile].ult + 4) / 4;
+
+                uint32_t tex_width1 = tex_width[i] << (cms & G_TX_MIRROR);
+                uint32_t tex_height1 = tex_height[i] << (cmt & G_TX_MIRROR);
+
+                uint32_t tm_bits = 0;
+                if ((cms & G_TX_CLAMP) && ((cms & G_TX_MIRROR) || tex_width1 != tex_width2[i])) {
+                    tm_bits |= 1 << 2 * i;
+                    cms &= ~G_TX_CLAMP;
+                }
+                if ((cmt & G_TX_CLAMP) && ((cmt & G_TX_MIRROR) || tex_height1 != tex_height2[i])) {
+                    tm_bits |= 1 << 2 * i + 1;
+                    cmt &= ~G_TX_CLAMP;
+                }
+                tm |= tm_bits;
+
+                // Cache computed values
+                mCachedTileState[i].tex_width = tex_width[i];
+                mCachedTileState[i].tex_height = tex_height[i];
+                mCachedTileState[i].tex_width2 = tex_width2[i];
+                mCachedTileState[i].tex_height2 = tex_height2[i];
+                mCachedTileState[i].cms = cms;
+                mCachedTileState[i].cmt = cmt;
+                mCachedTileState[i].tm_bits = tm_bits;
+                mCachedTileState[i].valid = true;
+
+                if (mRenderingState.mTextures[i] == nullptr) {
+                    continue;
+                }
+
+                // Sampler check needed since tile changed
+                bool linear_filter = mCachedModeFlags.linear_filter;
+                if (linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
+                    cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
+                    state_change_flush();
+                    if (mProfilingEnabled) {
+                        mFrameStats.flushCauseSampler++;
+                    }
+
+                    // Set the same sampler params on the blended texture. Needed for opengl.
+                    if (mRdp->loaded_texture[i].blended) {
+                        mRapi->SetSamplerParameters(SHADER_FIRST_REPLACEMENT_TEXTURE + i, linear_filter, cms, cmt);
+                    }
+
+                    mRapi->SetSamplerParameters(i, linear_filter, cms, cmt);
+                    mRenderingState.mTextures[i]->second.linear_filter = linear_filter;
+                    mRenderingState.mTextures[i]->second.cms = cms;
+                    mRenderingState.mTextures[i]->second.cmt = cmt;
+                }
+            } else if (mCachedTileState[i].valid) {
+                // Tile didn't change — use cached values (skip ~20 ops per texture)
+                tex_width[i] = mCachedTileState[i].tex_width;
+                tex_height[i] = mCachedTileState[i].tex_height;
+                tex_width2[i] = mCachedTileState[i].tex_width2;
+                tex_height2[i] = mCachedTileState[i].tex_height2;
+                tm |= mCachedTileState[i].tm_bits;
+                // cms/cmt unchanged, but linear_filter may have changed via other_mode_h
+                if (mRenderingState.mTextures[i] != nullptr &&
+                    mCachedModeFlags.linear_filter != mRenderingState.mTextures[i]->second.linear_filter) {
+                    bool linear_filter = mCachedModeFlags.linear_filter;
+                    state_change_flush();
+                    if (mProfilingEnabled) {
+                        mFrameStats.flushCauseSampler++;
+                    }
+                    uint8_t cms = mCachedTileState[i].cms;
+                    uint8_t cmt = mCachedTileState[i].cmt;
+                    if (mRdp->loaded_texture[i].blended) {
+                        mRapi->SetSamplerParameters(SHADER_FIRST_REPLACEMENT_TEXTURE + i, linear_filter, cms, cmt);
+                    }
+                    mRapi->SetSamplerParameters(i, linear_filter, cms, cmt);
+                    mRenderingState.mTextures[i]->second.linear_filter = linear_filter;
+                    mRenderingState.mTextures[i]->second.cms = cms;
+                    mRenderingState.mTextures[i]->second.cmt = cmt;
+                }
+            } else {
+                // First use or cache invalid — compute normally
+                uint8_t cms = mRdp->texture_tile[tile].cms;
+                uint8_t cmt = mRdp->texture_tile[tile].cmt;
+
+                uint32_t tex_size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes;
+                uint32_t line_size = mRdp->texture_tile[tile].line_size_bytes;
+
+                if (line_size == 0) {
+                    line_size = 1;
+                }
+
+                tex_height[i] = tex_size_bytes / line_size;
+                switch (mRdp->texture_tile[tile].siz) {
+                    case G_IM_SIZ_4b:
+                        line_size <<= 1;
+                        break;
+                    case G_IM_SIZ_8b:
+                        break;
+                    case G_IM_SIZ_16b:
+                        line_size /= G_IM_SIZ_16b_LINE_BYTES;
+                        break;
+                    case G_IM_SIZ_32b:
+                        line_size /= G_IM_SIZ_32b_LINE_BYTES;
+                        tex_height[i] /= 2;
+                        break;
+                }
+                tex_width[i] = line_size;
+
+                tex_width2[i] = (mRdp->texture_tile[tile].lrs - mRdp->texture_tile[tile].uls + 4) / 4;
+                tex_height2[i] = (mRdp->texture_tile[tile].lrt - mRdp->texture_tile[tile].ult + 4) / 4;
+
+                uint32_t tex_width1 = tex_width[i] << (cms & G_TX_MIRROR);
+                uint32_t tex_height1 = tex_height[i] << (cmt & G_TX_MIRROR);
+
+                uint32_t tm_bits = 0;
+                if ((cms & G_TX_CLAMP) && ((cms & G_TX_MIRROR) || tex_width1 != tex_width2[i])) {
+                    tm_bits |= 1 << 2 * i;
+                    cms &= ~G_TX_CLAMP;
+                }
+                if ((cmt & G_TX_CLAMP) && ((cmt & G_TX_MIRROR) || tex_height1 != tex_height2[i])) {
+                    tm_bits |= 1 << 2 * i + 1;
+                    cmt &= ~G_TX_CLAMP;
+                }
+                tm |= tm_bits;
+
+                mCachedTileState[i].tex_width = tex_width[i];
+                mCachedTileState[i].tex_height = tex_height[i];
+                mCachedTileState[i].tex_width2 = tex_width2[i];
+                mCachedTileState[i].tex_height2 = tex_height2[i];
+                mCachedTileState[i].cms = cms;
+                mCachedTileState[i].cmt = cmt;
+                mCachedTileState[i].tm_bits = tm_bits;
+                mCachedTileState[i].valid = true;
+
+                if (mRenderingState.mTextures[i] == nullptr) {
+                    continue;
+                }
+
+                bool linear_filter = mCachedModeFlags.linear_filter;
+                if (linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
+                    cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
+                    state_change_flush();
+                    if (mProfilingEnabled) {
+                        mFrameStats.flushCauseSampler++;
+                    }
+
+                    if (mRdp->loaded_texture[i].blended) {
+                        mRapi->SetSamplerParameters(SHADER_FIRST_REPLACEMENT_TEXTURE + i, linear_filter, cms, cmt);
+                    }
+
+                    mRapi->SetSamplerParameters(i, linear_filter, cms, cmt);
+                    mRenderingState.mTextures[i]->second.linear_filter = linear_filter;
+                    mRenderingState.mTextures[i]->second.cms = cms;
+                    mRenderingState.mTextures[i]->second.cmt = cmt;
+                }
             }
         }
     }
@@ -2039,28 +2577,36 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     }
     if (prg != mRenderingState.mShaderProgram) {
         state_change_flush();
+        if (mProfilingEnabled) {
+            mFrameStats.flushCauseShader++;
+        }
         mRapi->UnloadShader(mRenderingState.mShaderProgram);
         mRapi->LoadShader(prg);
         mRenderingState.mShaderProgram = prg;
+        // Cache shader info on switch (avoids virtual call on every triangle)
+        mRapi->ShaderGetInfo(prg, &mCachedNumInputs, mCachedUsedTextures);
     }
     if (use_alpha != mRenderingState.alpha_blend) {
         state_change_flush();
+        if (mProfilingEnabled) {
+            mFrameStats.flushCauseAlpha++;
+        }
         mRapi->SetUseAlpha(use_alpha);
         mRenderingState.alpha_blend = use_alpha;
     }
-    uint8_t numInputs = 0;
-    bool usedTextures[2] = { false, false };
-    mRapi->ShaderGetInfo(prg, &numInputs, usedTextures);
+    uint8_t numInputs = mCachedNumInputs;
+    const bool* usedTextures = mCachedUsedTextures;
 
-    struct GfxClipParameters clip_parameters = mRapi->GetClipParameters();
+    struct GfxClipParameters clip_parameters = mCachedClipParams;
 
     // Pre-compute texture parameters that are constant across all 3 vertices
-    const bool linearFilter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
+    const bool linearFilter = mCachedModeFlags.linear_filter;
     const float linearOffset = (linearFilter && !is_rect) ? 0.5f : 0.0f;
     float invTexWidth[2], invTexHeight[2];
     float clampSVal[2], clampTVal[2];
     bool clampS[2], clampT[2];
     int shifts_arr[2], shiftt_arr[2];
+    float shiftsMul[2], shifttMul[2];
     float ulsOffset[2], ultOffset[2];
     for (int t = 0; t < 2; t++) {
         if (!usedTextures[t]) continue;
@@ -2073,6 +2619,14 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         if (clampT[t]) clampTVal[t] = (tex_height2[t] - 0.5f) * invTexHeight[t];
         shifts_arr[t] = mRdp->texture_tile[tile].shifts;
         shiftt_arr[t] = mRdp->texture_tile[tile].shiftt;
+        // Precompute shift multipliers to avoid per-vertex branches
+        // shifts=0 → mul=1.0, shifts<=10 → mul=1/(1<<shifts), shifts>10 → mul=(1<<(16-shifts))
+        {
+            int s = shifts_arr[t];
+            shiftsMul[t] = (s == 0) ? 1.0f : (s <= 10) ? (1.0f / (float)(1 << s)) : (float)(1 << (16 - s));
+            int st = shiftt_arr[t];
+            shifttMul[t] = (st == 0) ? 1.0f : (st <= 10) ? (1.0f / (float)(1 << st)) : (float)(1 << (16 - st));
+        }
         ulsOffset[t] = mRdp->texture_tile[tile].uls / 4.0f;
         ultOffset[t] = mRdp->texture_tile[tile].ult / 4.0f;
     }
@@ -2167,48 +2721,75 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             z = (z + w) * 0.5f;
         }
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+        // NEON: write position {x, ±y, z, w} as a single 4-float store
+        {
+            float32x4_t pos = { vtx->x, clip_parameters.invertY ? -vtx->y : vtx->y, z, w };
+            vst1q_f32(vbo, pos);
+            vbo += 4;
+        }
+#else
         *vbo++ = vtx->x;
         *vbo++ = clip_parameters.invertY ? -vtx->y : vtx->y;
         *vbo++ = z;
         *vbo++ = w;
+#endif
 
         for (int t = 0; t < 2; t++) {
             if (!usedTextures[t]) continue;
 
-            float u = vtx->u * (1.0f / 32.0f);
-            float v = vtx->v * (1.0f / 32.0f);
-
-            const int shifts = shifts_arr[t];
-            const int shiftt = shiftt_arr[t];
-            if (shifts != 0) {
-                u = (shifts <= 10) ? u / (1 << shifts) : u * (1 << (16 - shifts));
-            }
-            if (shiftt != 0) {
-                v = (shiftt <= 10) ? v / (1 << shiftt) : v * (1 << (16 - shiftt));
-            }
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: compute both u,v texture coordinates in parallel
+            float32x2_t uv_raw = { (float)vtx->u, (float)vtx->v };
+            float32x2_t inv32 = vdup_n_f32(1.0f / 32.0f);
+            float32x2_t shiftMul = { shiftsMul[t], shifttMul[t] };
+            float32x2_t uv = vmul_f32(vmul_f32(uv_raw, inv32), shiftMul);
+            float32x2_t offset = { ulsOffset[t] - linearOffset, ultOffset[t] - linearOffset };
+            float32x2_t invDim = { invTexWidth[t], invTexHeight[t] };
+            uv = vmul_f32(vsub_f32(uv, offset), invDim);
+            vst1_f32(vbo, uv);
+            vbo += 2;
+#else
+            float u = vtx->u * (1.0f / 32.0f) * shiftsMul[t];
+            float v = vtx->v * (1.0f / 32.0f) * shifttMul[t];
 
             u = (u - ulsOffset[t] + linearOffset) * invTexWidth[t];
             v = (v - ultOffset[t] + linearOffset) * invTexHeight[t];
 
             *vbo++ = u;
             *vbo++ = v;
+#endif
 
             if (clampS[t]) *vbo++ = clampSVal[t];
             if (clampT[t]) *vbo++ = clampTVal[t];
         }
 
         if (use_fog) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: single 4-float store for fog color {R, G, B, A}
+            float32x4_t fog_v = { fogR, fogG, fogB, vtx->color.a * INV_255 };
+            vst1q_f32(vbo, fog_v);
+            vbo += 4;
+#else
             *vbo++ = fogR;
             *vbo++ = fogG;
             *vbo++ = fogB;
             *vbo++ = vtx->color.a * INV_255;
+#endif
         }
 
         if (use_grayscale) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+            // NEON: single 4-float store for grayscale color
+            float32x4_t gray_v = { grayR, grayG, grayB, grayA };
+            vst1q_f32(vbo, gray_v);
+            vbo += 4;
+#else
             *vbo++ = grayR;
             *vbo++ = grayG;
             *vbo++ = grayB;
             *vbo++ = grayA;
+#endif
         }
 
         for (int j = 0; j < numInputs; j++) {
@@ -2216,9 +2797,19 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
                 const PrecomputedInput& pc = precomputed[k][j];
                 if (k == 0) {
                     if (pc.isShade) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+                        // NEON: convert vertex color bytes to float and store 3 RGB values
+                        float32x4_t col = { (float)vtx->color.r, (float)vtx->color.g, (float)vtx->color.b, 0.0f };
+                        col = vmulq_n_f32(col, INV_255);
+                        // Store 2 + 1 floats (can't use full vst1q since we only need 3)
+                        vst1_f32(vbo, vget_low_f32(col));
+                        vbo[2] = vgetq_lane_f32(col, 2);
+                        vbo += 3;
+#else
                         *vbo++ = vtx->color.r * INV_255;
                         *vbo++ = vtx->color.g * INV_255;
                         *vbo++ = vtx->color.b * INV_255;
+#endif
                     } else {
                         *vbo++ = pc.r;
                         *vbo++ = pc.g;
@@ -2240,6 +2831,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     mBufVboLen = (size_t)(vbo - mBufVbo);
 
     if (++mBufVboNumTris == MAX_TRI_BUFFER) {
+        if (mProfilingEnabled) {
+            mFrameStats.bufferFullFlushes++;
+        }
         Flush();
     }
 }
@@ -2247,6 +2841,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 void Interpreter::GfxSpGeometryMode(uint32_t clear, uint32_t set) {
     mRsp->geometry_mode &= ~clear;
     mRsp->geometry_mode |= set;
+    mRdp->geometry_mode_changed = true;
 }
 
 void Interpreter::GfxSpExtraGeometryMode(uint32_t clear, uint32_t set) {
@@ -2257,7 +2852,7 @@ void Interpreter::GfxSpExtraGeometryMode(uint32_t clear, uint32_t set) {
 void Interpreter::AdjustVIewportOrScissor(XYWidthHeight* area) {
     if (!mFbActive) {
         // Adjust the y origin based on the y-inversion for the active framebuffer
-        GfxClipParameters clipParameters = mRapi->GetClipParameters();
+        GfxClipParameters clipParameters = mCachedClipParams;
         if (clipParameters.invertY) {
             area->y -= area->height;
         } else {
@@ -2948,11 +3543,13 @@ void Interpreter::GfxSpSetOtherMode(uint32_t shift, uint32_t num_bits, uint64_t 
     om = (om & ~mask) | mode;
     mRdp->other_mode_l = (uint32_t)om;
     mRdp->other_mode_h = (uint32_t)(om >> 32);
+    mRdp->other_mode_changed = true;
 }
 
 void Interpreter::GfxDpSetOtherMode(uint32_t h, uint32_t l) {
     mRdp->other_mode_h = h;
     mRdp->other_mode_l = l;
+    mRdp->other_mode_changed = true;
 }
 
 void Interpreter::Gfxs2dexBgCopy(F3DuObjBg* bg) {
@@ -3161,11 +3758,12 @@ void gfx_copy_framebuffer(int fb_dst_id, int fb_src_id, bool copyOnce, bool* has
 // double pointer because we sometimes need to increment and decrement the underlying pointer Returns false if the
 // current opcode should be incremented after the handler ends.
 typedef bool (*GfxOpcodeHandlerFunc)(F3DGfx** gfx);
+static void gfx_set_ucode_handler(UcodeHandlers ucode);
 
-bool gfx_load_ucode_handler_f3dex2(F3DGfx** cmd) {
-    Interpreter* gfx = mInstance.lock().get();
-    gfx->mRsp->fog_mul = 0;
-    gfx->mRsp->fog_offset = 0;
+bool gfx_load_ucode_handler_f3dex2(F3DGfx** cmd0) {
+    F3DGfx* cmd = *cmd0;
+    gfx_set_ucode_handler((UcodeHandlers)(cmd->words.w0 & 0xFFFFFF));
+    ++(*cmd0);
     return false;
 }
 
@@ -3937,10 +4535,12 @@ bool gfx_set_fb_handler_custom(F3DGfx** cmd0) {
         gfx->SetFrameBuffer((int32_t)cmd->words.w1, 1.0f);
         gfx->mActiveFrameBuffer = gfx->mFrameBuffers.find((int32_t)cmd->words.w1);
         gfx->mFbActive = true;
+        gfx->mCachedClipParams = gfx->mRapi->GetClipParameters();
     } else {
         gfx->ResetFrameBuffer();
         gfx->mFbActive = false;
         gfx->mActiveFrameBuffer = gfx->mFrameBuffers.end();
+        gfx->mCachedClipParams = gfx->mRapi->GetClipParameters();
     }
     return false;
 }
@@ -3952,6 +4552,7 @@ bool gfx_reset_fb_handler_custom(F3DGfx** cmd0) {
     gfx->mActiveFrameBuffer = gfx->mFrameBuffers.end();
     gfx->mRapi->StartDrawToFramebuffer(gfx->mRendersToFb ? gfx->mGameFb : 0,
                                        (float)gfx->mCurDimensions.height / gfx->mNativeDimensions.height);
+    gfx->mCachedClipParams = gfx->mRapi->GetClipParameters();
     // Force viewport and scissor to reapply against the main framebuffer, in case a previous smaller
     // framebuffer truncated the values
     gfx->mRdp->viewport_or_scissor_changed = true;
@@ -4373,9 +4974,54 @@ class UcodeHandler {
         return mHandlers[static_cast<uint8_t>(opcode)];
     }
 
+    // Single-lookup: returns handler function pointer or nullptr if opcode not in this table.
+    inline GfxOpcodeHandlerFunc get(int8_t opcode) const {
+        return mHandlers[static_cast<uint8_t>(opcode)].second;
+    }
+
   private:
     std::pair<const char*, GfxOpcodeHandlerFunc> mHandlers[std::numeric_limits<uint8_t>::max() + 1];
 };
+
+#if defined(__SWITCH__)
+// Flat lookup table: maps handler function pointer → true if it is a traversal handler.
+// Replaces an 8-comparison chain in IsTraversalHandler() with a single O(1) lookup.
+// Built once at startup; the set of traversal handlers is fixed for the lifetime of the process.
+static constexpr size_t kTraversalTableBuckets = 64; // power-of-2 for fast modulo
+static GfxOpcodeHandlerFunc sTraversalTable[kTraversalTableBuckets] = {};
+
+static void InitTraversalTable() {
+    std::memset(sTraversalTable, 0, sizeof(sTraversalTable));
+    const GfxOpcodeHandlerFunc traversalHandlers[] = {
+        gfx_dl_handler_common,
+        gfx_end_dl_handler_common,
+        gfx_branch_z_otr_handler_f3dex2,
+        gfx_dl_otr_filepath_handler_custom,
+        gfx_dl_otr_hash_handler_custom,
+        gfx_dl_index_handler,
+        gfx_cull_dl_handler_f3dex2,
+        gfx_noop_handler_f3dex2,
+    };
+    for (auto h : traversalHandlers) {
+        // Open addressing with linear probing
+        size_t idx = (reinterpret_cast<uintptr_t>(h) >> 2) & (kTraversalTableBuckets - 1);
+        while (sTraversalTable[idx] != nullptr) {
+            idx = (idx + 1) & (kTraversalTableBuckets - 1);
+        }
+        sTraversalTable[idx] = h;
+    }
+}
+
+static inline bool IsTraversalHandler(GfxOpcodeHandlerFunc handler) {
+    size_t idx = (reinterpret_cast<uintptr_t>(handler) >> 2) & (kTraversalTableBuckets - 1);
+    while (true) {
+        GfxOpcodeHandlerFunc entry = sTraversalTable[idx];
+        if (entry == handler) return true;
+        if (entry == nullptr) return false;
+        idx = (idx + 1) & (kTraversalTableBuckets - 1);
+    }
+}
+#endif
 
 static constexpr UcodeHandler rdpHandlers = {
     { RDP_G_SETTARGETINTERPINDEX,
@@ -4598,31 +5244,36 @@ static void gfx_step() {
 #endif
 
     if (opcode == F3DEX2_G_LOAD_UCODE) {
-        gfx_set_ucode_handler((UcodeHandlers)(cmd->words.w0 & 0xFFFFFF));
-        ++cmd;
+        gfx_load_ucode_handler_f3dex2(&cmd);
         return;
         // Instead of having a handler for each ucode for switching ucode, just check for it early and return.
     }
 
-    if (otrHandlers.contains(opcode)) {
-        if (otrHandlers.at(opcode).second(&cmd)) {
-            return;
+    // Single-lookup dispatch: get() returns handler or nullptr in one array access.
+    // OTR handlers take priority (custom overrides), then try the active ucode
+    // table (most common: G_VTX, G_TRI1, G_MTX, etc.), then RDP.
+    GfxOpcodeHandlerFunc handler = otrHandlers.get(opcode);
+    if (!handler) {
+        if (ucode_handler_index < ucode_handlers.size()) {
+            handler = ucode_handlers[ucode_handler_index]->get(opcode);
         }
-    } else if (rdpHandlers.contains(opcode)) {
-        if (rdpHandlers.at(opcode).second(&cmd)) {
-            return;
+        if (!handler) {
+            handler = rdpHandlers.get(opcode);
         }
-    } else if (ucode_handler_index < ucode_handlers.size()) {
-        if (ucode_handlers[ucode_handler_index]->contains(opcode)) {
-            if (ucode_handlers[ucode_handler_index]->at(opcode).second(&cmd)) {
-                return;
+        if (!handler) {
+            if (ucode_handler_index < ucode_handlers.size()) {
+                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}", (uint8_t)opcode,
+                                (uint32_t)ucode_handler_index);
+            } else {
+                SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}", (uint8_t)opcode, (uint32_t)ucode_handler_index);
             }
-        } else {
-            SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, for loaded ucode: {}", (uint8_t)opcode,
-                            (uint32_t)ucode_handler_index);
         }
-    } else {
-        SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, invalid ucode: {}", (uint8_t)opcode, (uint32_t)ucode_handler_index);
+    }
+
+    if (handler) {
+        if (handler(&cmd)) {
+            return;
+        }
     }
 
     ++cmd;
@@ -4660,6 +5311,9 @@ void Interpreter::Init(class GfxWindowBackend* wapi, class GfxRenderingAPI* rapi
     // values passed in may be stale.
     int32_t actualPosX, actualPosY;
     mWapi->GetDimensions(&width, &height, &actualPosX, &actualPosY);
+
+    // Build the traversal handler lookup table for DL replay recording.
+    InitTraversalTable();
 #endif
 
     mRapi->UpdateFramebufferParameters(0, width, height, 1, false, true, true, true);
@@ -4845,12 +5499,22 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
         mRapi->StartDrawToFramebuffer(mRendersToFb ? mGameFb : 0, (float)mCurDimensions.height / mNativeDimensions.height);
         mRapi->ClearFramebuffer(false, true);
         mRdp->viewport_or_scissor_changed = true;
+        mRdp->other_mode_changed = true;
+        mRdp->geometry_mode_changed = true;
+        mCachedTileState[0].valid = false;
+        mCachedTileState[1].valid = false;
         mRenderingState.viewport = {};
         mRenderingState.scissor = {};
+        // Cache clip parameters once per DL iteration (only changes on framebuffer switch)
+        mCachedClipParams = mRapi->GetClipParameters();
+        // Force combiner recalculation for first triangle
+        mCachedCombinerKey.combine_mode = UINT64_MAX;
+        mCachedCombinerKey.options = UINT64_MAX;
     }
 
     auto dbg = Ship::Context::GetInstance()->GetGfxDebugger();
     g_exec_stack.start((F3DGfx*)commands);
+
     while (!g_exec_stack.cmd_stack.empty()) {
         auto cmd = g_exec_stack.cmd_stack.top();
 
@@ -4905,7 +5569,6 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
         mFrameStats.ComputeDerived();
     }
 }
-
 void Interpreter::EndFrame() {
     mRapi->EndFrame();
     mWapi->SwapBuffersBegin();

@@ -328,6 +328,8 @@ struct RDP {
     struct RGBA env_color, prim_color, fog_color, fill_color, grayscale_color;
     struct XYWidthHeight viewport, scissor;
     bool viewport_or_scissor_changed;
+    bool other_mode_changed;    // Set when other_mode_l or other_mode_h changes
+    bool geometry_mode_changed; // Set when geometry_mode changes
     void* z_buf_address;
     void* color_image_address;
 };
@@ -379,7 +381,17 @@ struct Fast3DStats {
     uint32_t verticesSubmitted;
     uint32_t trianglesSubmitted;
     uint32_t stateChangeFlushes;
+    uint32_t bufferFullFlushes;
     uint32_t pixelDepthQueries;
+
+    // Flush cause breakdown: which state changes triggered batch flushes
+    uint32_t flushCauseTexture;      // texture changed (required new bind)
+    uint32_t flushCauseSampler;      // sampler params changed (filter/clamp)
+    uint32_t flushCauseShader;       // shader program changed
+    uint32_t flushCauseAlpha;        // alpha blend state changed
+    uint32_t flushCauseDepthViewport; // depth/decal/viewport/scissor changed
+    uint32_t flushCauseCombiner;     // new color combiner created
+    uint32_t textureReloadSkips;     // redundant texture loads skipped (same texture already bound)
 
     uint64_t timeTotal;
     uint64_t timeGbiDispatch; // computed: timeTotal minus all other accounted sub-timings
@@ -387,10 +399,20 @@ struct Fast3DStats {
     uint64_t timeTextureSetup;
     uint64_t timeShaderSetup;
     uint64_t timeDrawSubmit;
+    uint64_t timeVboUpload;    // VBO data upload (glBufferData/glBufferSubData) — sub-component of timeDrawSubmit
+    uint64_t timeGlDraw;       // actual glDrawArrays call — sub-component of timeDrawSubmit
     uint64_t timeVertexLoad;
     uint64_t timeMatrixOps;    // matrix multiply, push/pop, normal dir calculations
     uint64_t timePixelDepth;   // pixel depth prepare + readback
     uint64_t timeFrameSetup;   // Run() setup/teardown, framebuffer ops, clear, MSAA resolve
+
+    // Batch size histogram: how many draws fall into each size bucket
+    // Bucket 0: 1-2 tris, 1: 3-8, 2: 9-32, 3: 33-128, 4: 129+
+    static constexpr int BATCH_HISTOGRAM_BUCKETS = 5;
+    uint32_t batchHistogram[BATCH_HISTOGRAM_BUCKETS];
+
+    // Max batch size seen this frame
+    uint32_t maxBatchSize;
 
     float avgBatchSize;
     float usPerTriangle;
@@ -405,9 +427,12 @@ struct Fast3DStats {
         usPerTriangle = trianglesSubmitted > 0 ? (float)timeTotal / (float)trianglesSubmitted / 1000.0f : 0.0f;
         usPerDrawCall = drawCalls > 0 ? (float)timeTotal / (float)drawCalls / 1000.0f : 0.0f;
 
+        // Note: timeDrawSubmit is NOT in accounted because it is nested inside
+        // timeTriProcessing (Flush->DrawTriangles called from GfxSpTri1).
+        // Including it would double-count, inflating dispatch artificially.
         const uint64_t accounted = timeTriProcessing + timeTextureSetup + timeShaderSetup +
-                                   timeDrawSubmit + timeVertexLoad + timeMatrixOps +
-                                   timePixelDepth + timeFrameSetup;
+                                    timeVertexLoad + timeMatrixOps +
+                                    timePixelDepth + timeFrameSetup;
         timeGbiDispatch = timeTotal > accounted ? (timeTotal - accounted) : 0;
     }
 };
@@ -595,6 +620,39 @@ class Interpreter {
     std::vector<std::string> shader_ids;
     int mInterpolationIndex;
     int mInterpolationIndexTarget;
+
+    // Cached per-framebuffer clip parameters (updated on framebuffer change)
+    GfxClipParameters mCachedClipParams{};
+
+    // Cached shader info (updated on shader switch to avoid virtual call per triangle)
+    uint8_t mCachedNumInputs{};
+    bool mCachedUsedTextures[2]{};
+
+    // Cached other_mode_l / geometry_mode derived flags (updated when dirty)
+    struct {
+        bool use_alpha;
+        bool use_fog;
+        bool texture_edge;
+        bool use_noise;
+        bool use_2cyc;
+        bool alpha_threshold;
+        bool invisible;
+        uint8_t depth_test_and_mask;
+        bool zmode_decal;
+        bool linear_filter; // derived from other_mode_h TEXTFILT bits
+    } mCachedModeFlags{};
+
+    // Cached per-texture tile computations (updated when textures_changed)
+    struct {
+        uint32_t tex_width, tex_height, tex_width2, tex_height2;
+        uint8_t cms, cmt; // post-clamp-strip values
+        uint32_t tm_bits; // contribution to tm mask for this texture slot
+        bool valid;
+    } mCachedTileState[2]{};
+
+    // Cached combiner key + result (skip LookupOrCreateColorCombiner on ~85% of triangles)
+    ColorCombinerKey mCachedCombinerKey{};
+    ColorCombiner* mCachedCombiner = nullptr;
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

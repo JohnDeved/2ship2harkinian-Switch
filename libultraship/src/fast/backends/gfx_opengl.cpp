@@ -714,7 +714,7 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     if (uploadBytes > VBO_RING_SIZE) {
         // Oversized upload: fall back to direct upload (shouldn't happen in practice)
         glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);
-        mVboAllocatedSize = 0; // Force re-alloc next draw
+        mVboAllocatedSize = uploadBytes; // Track actual size to avoid redundant realloc
         glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
     } else if (mUseRingBuffer) {
         // Heavy scene path: ring buffer to avoid per-draw orphans.

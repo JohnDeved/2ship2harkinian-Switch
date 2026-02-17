@@ -727,6 +727,7 @@ void GfxWindowBackendSDL2::SwapBuffersBegin() {
     // Vsync provides frame pacing; the nanosleep-based limiter adds unnecessary latency.
     // Re-apply SDL_GL_SetSwapInterval from the GL thread on first call, since the context
     // may have been transferred from the main thread to the render thread after init.
+    // Thread safety: SwapBuffersBegin is only called from the single render thread.
     {
         static bool vsyncForced = false;
         if (!vsyncForced) {

@@ -718,19 +718,23 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
         glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
         mVboRingOffset = VBO_RING_SIZE; // Force re-alloc next draw
     } else {
-        if (mVboRingOffset + uploadBytes > VBO_RING_SIZE) {
+        // Align ring offset to current vertex stride so glDrawArrays(first=N)
+        // reads from the correct byte offset. Different shaders have different
+        // vertex sizes, so the offset from a previous draw may not be aligned.
+        const size_t floatsPerVertex = buf_vbo_len / (buf_vbo_num_tris * 3);
+        const size_t vertexStride = floatsPerVertex * sizeof(float);
+        size_t alignedOffset = ((mVboRingOffset + vertexStride - 1) / vertexStride) * vertexStride;
+        if (alignedOffset + uploadBytes > VBO_RING_SIZE) {
             // Ring wraps: orphan to get a fresh buffer
             glBufferData(GL_ARRAY_BUFFER, VBO_RING_SIZE, NULL, GL_STREAM_DRAW);
-            mVboRingOffset = 0;
+            alignedOffset = 0;
         }
-        glBufferSubData(GL_ARRAY_BUFFER, mVboRingOffset, uploadBytes, buf_vbo);
-        // Compute the first-vertex offset for glDrawArrays.
-        // Vertex attribute pointers were set up with offset 0 at shader load time.
-        // glDrawArrays(first=N) adds N*stride to each pointer, so N = byteOffset/stride.
-        const size_t floatsPerVertex = buf_vbo_len / (buf_vbo_num_tris * 3);
-        const GLint firstVertex = (GLint)(mVboRingOffset / (floatsPerVertex * sizeof(float)));
+        glBufferSubData(GL_ARRAY_BUFFER, alignedOffset, uploadBytes, buf_vbo);
+        // glDrawArrays(first=N) adds N*stride to each attribute pointer,
+        // so N = byteOffset / stride. With alignment, this is always exact.
+        const GLint firstVertex = (GLint)(alignedOffset / vertexStride);
         glDrawArrays(GL_TRIANGLES, firstVertex, 3 * buf_vbo_num_tris);
-        mVboRingOffset += uploadBytes;
+        mVboRingOffset = alignedOffset + uploadBytes;
     }
 #else
     glBufferData(GL_ARRAY_BUFFER, uploadBytes, buf_vbo, GL_STREAM_DRAW);

@@ -73,6 +73,9 @@ void GfxRenderingAPIOGL::SetUniforms(ShaderProgram* prg) const {
     glUniform1f(prg->celSoftnessLocation, mShaderCelSoftness);
     glUniform1i(prg->tonemappingEnabledLocation, mShaderTonemappingEnabled);
     glUniform1f(prg->colorTempLocation, mShaderColorTemp);
+    glUniform1f(prg->brightnessLocation, mShaderBrightness);
+    glUniform1f(prg->contrastLocation, mShaderContrast);
+    glUniform1f(prg->filmGrainLocation, mShaderFilmGrain);
 }
 
 void GfxRenderingAPIOGL::SetPerDrawUniforms() {
@@ -538,6 +541,9 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->celSoftnessLocation = glGetUniformLocation(shader_program, "shader_cel_softness");
     prg->tonemappingEnabledLocation = glGetUniformLocation(shader_program, "shader_tonemapping_enabled");
     prg->colorTempLocation = glGetUniformLocation(shader_program, "shader_color_temp");
+    prg->brightnessLocation = glGetUniformLocation(shader_program, "shader_brightness");
+    prg->contrastLocation = glGetUniformLocation(shader_program, "shader_contrast");
+    prg->filmGrainLocation = glGetUniformLocation(shader_program, "shader_film_grain");
 
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     // Create a per-shader VAO: bind the shared VBO and configure attribs once.
@@ -845,6 +851,9 @@ void GfxRenderingAPIOGL::StartFrame() {
     mShaderCelSoftness = cv->GetFloat("gShaderEffects.CelShading.Softness", 0.3f);
     mShaderTonemappingEnabled = cv->GetInteger("gShaderEffects.ToneMapping.Enabled", 0);
     mShaderColorTemp = cv->GetFloat("gShaderEffects.ColorTemperature", 0.0f);
+    mShaderBrightness = cv->GetFloat("gShaderEffects.Brightness", 0.0f);
+    mShaderContrast = cv->GetFloat("gShaderEffects.Contrast", 0.0f);
+    mShaderFilmGrain = cv->GetFloat("gShaderEffects.FilmGrain", 0.0f);
 
 #if defined(__SWITCH__)
     // Reset per-iteration VBO batching state.

@@ -43,6 +43,9 @@ struct ShaderProgram {
     GLint celSoftnessLocation;
     GLint tonemappingEnabledLocation;
     GLint colorTempLocation;
+    GLint brightnessLocation;
+    GLint contrastLocation;
+    GLint filmGrainLocation;
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     GLuint vao; // Per-shader VAO: configured once, bound on shader switch
 #endif
@@ -160,6 +163,9 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     float mShaderCelSoftness = 0.3f;
     int mShaderTonemappingEnabled = 0;
     float mShaderColorTemp = 0.0f;
+    float mShaderBrightness = 0.0f;
+    float mShaderContrast = 0.0f;
+    float mShaderFilmGrain = 0.0f;
 
     GLint mMaxMsaaLevel = 1;
     GLuint mPixelDepthRb = 0;

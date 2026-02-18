@@ -521,6 +521,9 @@ void GfxRenderingAPIMetal::StartFrame() {
     mFrameUniforms.celSoftness = cv->GetFloat("gShaderEffects.CelShading.Softness", 0.3f);
     mFrameUniforms.tonemappingEnabled = cv->GetInteger("gShaderEffects.ToneMapping.Enabled", 0);
     mFrameUniforms.colorTemp = cv->GetFloat("gShaderEffects.ColorTemperature", 0.0f);
+    mFrameUniforms.brightness = cv->GetFloat("gShaderEffects.Brightness", 0.0f);
+    mFrameUniforms.contrast = cv->GetFloat("gShaderEffects.Contrast", 0.0f);
+    mFrameUniforms.filmGrain = cv->GetFloat("gShaderEffects.FilmGrain", 0.0f);
 
     if (!mFrameUniformBuffer) {
         mFrameUniformBuffer = mDevice->newBuffer(sizeof(FrameUniforms), MTL::ResourceCPUCacheModeDefaultCache);

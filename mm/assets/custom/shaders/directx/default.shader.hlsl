@@ -71,7 +71,11 @@ cbuffer PerFrameCB : register(b0) {
     float shader_cel_softness;
     int shader_tonemapping_enabled;
     float shader_color_temp;
-    float padding_cb0;
+    float shader_brightness;
+    float shader_contrast;
+    float shader_film_grain;
+    float padding_cb0_0;
+    float padding_cb0_1;
 }
 
 float random(in float3 value) {
@@ -341,6 +345,17 @@ float4 PSMain(PSInput input, float4 screenSpace : SV_Position) : SV_TARGET {
     if (shader_tonemapping_enabled != 0) {
         float3 x = texel.rgb;
         texel.rgb = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+    }
+
+    // Shader Effects: Brightness/Contrast
+    if (shader_brightness != 0.0 || shader_contrast != 0.0) {
+        texel.rgb = clamp((texel.rgb - 0.5) * (1.0 + shader_contrast) + 0.5 + shader_brightness, 0.0, 1.0);
+    }
+
+    // Shader Effects: Film Grain
+    if (shader_film_grain > 0.0) {
+        float grain = random(float3(floor(screenSpace.xy), noise_frame)) * 2.0 - 1.0;
+        texel.rgb = clamp(texel.rgb + float3(grain, grain, grain) * shader_film_grain * 0.15, 0.0, 1.0);
     }
 
     @if(o_alpha)

@@ -725,6 +725,9 @@ void GfxRenderingAPIDX11::StartFrame() {
     mPerFrameCbData.shader_cel_softness = cv->GetFloat("gShaderEffects.CelShading.Softness", 0.3f);
     mPerFrameCbData.shader_tonemapping_enabled = cv->GetInteger("gShaderEffects.ToneMapping.Enabled", 0);
     mPerFrameCbData.shader_color_temp = cv->GetFloat("gShaderEffects.ColorTemperature", 0.0f);
+    mPerFrameCbData.shader_brightness = cv->GetFloat("gShaderEffects.Brightness", 0.0f);
+    mPerFrameCbData.shader_contrast = cv->GetFloat("gShaderEffects.Contrast", 0.0f);
+    mPerFrameCbData.shader_film_grain = cv->GetFloat("gShaderEffects.FilmGrain", 0.0f);
 }
 
 void GfxRenderingAPIDX11::EndFrame() {

@@ -12,6 +12,9 @@ struct FrameUniforms {
     float celSoftness;
     int tonemappingEnabled;
     float colorTemp;
+    float brightness;
+    float contrast;
+    float filmGrain;
 };
 
 struct Vertex {
@@ -300,6 +303,17 @@ fragment float4 fragmentShader(ProjectedVertex in [[stage_in]], constant FrameUn
     if (frameUniforms.tonemappingEnabled != 0) {
         float3 x = texel.xyz;
         texel.xyz = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+    }
+
+    // Shader Effects: Brightness/Contrast
+    if (frameUniforms.brightness != 0.0 || frameUniforms.contrast != 0.0) {
+        texel.xyz = clamp((texel.xyz - 0.5) * (1.0 + frameUniforms.contrast) + 0.5 + frameUniforms.brightness, 0.0, 1.0);
+    }
+
+    // Shader Effects: Film Grain
+    if (frameUniforms.filmGrain > 0.0) {
+        float grain = random(float3(floor(in.position.xy), frameUniforms.frameCount)) * 2.0 - 1.0;
+        texel.xyz = clamp(texel.xyz + float3(grain, grain, grain) * frameUniforms.filmGrain * 0.15, 0.0, 1.0);
     }
 
     @if(o_alpha)

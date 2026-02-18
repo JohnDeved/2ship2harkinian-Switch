@@ -645,6 +645,31 @@ void BenMenu::AddSettings() {
                      .Min(-1.0f)
                      .Max(1.0f)
                      .DefaultValue(0.0f));
+    AddWidget(path, "Brightness: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.Brightness")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjusts overall screen brightness. 0%% is default.")
+                     .IsPercentage()
+                     .Min(-0.5f)
+                     .Max(0.5f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Contrast: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.Contrast")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjusts overall contrast. 0%% is default. Positive values increase contrast, "
+                              "negative values decrease it.")
+                     .IsPercentage()
+                     .Min(-1.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Film Grain: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.FilmGrain")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adds a subtle film grain noise overlay for a cinematic look. 0%% disables the effect.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
 
     path.sidebarName = "Controls";
     AddSidebarEntry("Settings", "Controls", 1);

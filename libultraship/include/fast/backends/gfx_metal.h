@@ -113,6 +113,9 @@ struct FrameUniforms {
     simd::float1 celSoftness;
     simd::int1 tonemappingEnabled;
     simd::float1 colorTemp;
+    simd::float1 brightness;
+    simd::float1 contrast;
+    simd::float1 filmGrain;
 };
 
 struct CoordUniforms {

@@ -53,6 +53,9 @@ uniform int shader_cel_bands;
 uniform float shader_cel_softness;
 uniform int shader_tonemapping_enabled;
 uniform float shader_color_temp;
+uniform float shader_brightness;
+uniform float shader_contrast;
+uniform float shader_film_grain;
 
 #define TEX_OFFSET(off) @{texture}(tex, texCoord - off / texSize)
 #define WRAP(x, low, high) mod((x)-(low), (high)-(low)) + (low)
@@ -224,6 +227,17 @@ void main() {
     if (shader_tonemapping_enabled != 0) {
         vec3 x = texel.rgb;
         texel.rgb = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+    }
+
+    // Shader Effects: Brightness/Contrast
+    if (shader_brightness != 0.0 || shader_contrast != 0.0) {
+        texel.rgb = clamp((texel.rgb - 0.5) * (1.0 + shader_contrast) + 0.5 + shader_brightness, 0.0, 1.0);
+    }
+
+    // Shader Effects: Film Grain
+    if (shader_film_grain > 0.0) {
+        float grain = random(vec3(gl_FragCoord.xy, float(frame_count))) * 2.0 - 1.0;
+        texel.rgb = clamp(texel.rgb + vec3(grain * shader_film_grain * 0.15), 0.0, 1.0);
     }
 
     @if(o_alpha)

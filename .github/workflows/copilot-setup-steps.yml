@@ -25,10 +25,12 @@ jobs:
       CCACHE_SLOPPINESS: include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
       SDL2_VERSION: "2.30.3"
       TINYXML2_VERSION: "10.0.0"
+      CCACHE_BASEDIR: /home/runner/work/2ship2harkinian-Switch/2ship2harkinian-Switch
+      CCACHE_NOHASHDIR: 1
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 

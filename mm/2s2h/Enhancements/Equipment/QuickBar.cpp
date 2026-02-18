@@ -31,7 +31,8 @@ static s8 sSavedRightStickX = 0;
 static s8 sSavedRightStickY = 0;
 
 // Saved R_UPDATE_RATE before QuickBar opened (for restoring game speed)
-static s32 sSavedUpdateRate = 0;
+// Default to 3 (the N64's native 60Hz/3 = 20fps) in case it's read before initialization
+static s32 sSavedUpdateRate = 3;
 
 // Deferred song playback (needs many frames for the ocarina state machine to initialize)
 struct DeferredSong {
@@ -324,6 +325,7 @@ static void EnterTimeStop() {
     if (gPlayState == nullptr) return;
     // Save the current game speed divisor so we can restore it later
     sSavedUpdateRate = R_UPDATE_RATE;
+    if (sSavedUpdateRate <= 0) sSavedUpdateRate = 3;
     // Double the rate to halve the game speed (visible slow motion)
     R_UPDATE_RATE = sSavedUpdateRate * 2;
     // Also stop the day/night clock (same as TimeStop cheat)

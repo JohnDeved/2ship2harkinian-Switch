@@ -722,6 +722,26 @@ void GfxWindowBackendSDL2::SyncFramerateWithTime() const {
 }
 
 void GfxWindowBackendSDL2::SwapBuffersBegin() {
+#ifdef __SWITCH__
+    // Force vsync on Switch and skip SyncFramerateWithTime.
+    // Vsync provides frame pacing; the nanosleep-based limiter adds unnecessary latency.
+    // Re-apply SDL_GL_SetSwapInterval from the GL thread on first call, since the context
+    // may have been transferred from the main thread to the render thread after init.
+    // Thread safety: SwapBuffersBegin is only called from the single render thread.
+    {
+        static bool vsyncForced = false;
+        if (!vsyncForced) {
+            int result = SDL_GL_SetSwapInterval(1);
+            if (result == 0) {
+                mVsyncEnabled = true;
+                vsyncForced = true;
+            } else {
+                SPDLOG_ERROR("SDL_GL_SetSwapInterval(1) failed: {}", SDL_GetError());
+                // Will retry on next frame since vsyncForced stays false
+            }
+        }
+    }
+#else
     bool nextVsyncEnabled = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_VSYNC_ENABLED, 1);
 
     if (mVsyncEnabled != nextVsyncEnabled) {
@@ -731,6 +751,7 @@ void GfxWindowBackendSDL2::SwapBuffersBegin() {
     }
 
     SyncFramerateWithTime();
+#endif
     SDL_GL_SwapWindow(mWnd);
 }
 
@@ -778,6 +799,18 @@ void GfxWindowBackendSDL2::Destroy() {
 
 bool GfxWindowBackendSDL2::IsFullscreen() {
     return mFullScreen;
+}
+
+void GfxWindowBackendSDL2::MakeContextCurrent() {
+    if (mWnd && mCtx) {
+        SDL_GL_MakeCurrent(mWnd, mCtx);
+    }
+}
+
+void GfxWindowBackendSDL2::ReleaseContext() {
+    if (mWnd) {
+        SDL_GL_MakeCurrent(mWnd, nullptr);
+    }
 }
 } // namespace Fast
 #endif

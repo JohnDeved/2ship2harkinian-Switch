@@ -9,6 +9,7 @@ extern "C" {
 #include "functions.h"
 #include "z64ocarina.h"
 void Player_UseItem(PlayState* play, Player* thisx, ItemId item);
+void GameState_SetFramerateDivisor(GameState* gameState, s32 divisor);
 }
 
 #define CVAR_NAME "gEnhancements.Equipment.QuickBar"
@@ -23,6 +24,7 @@ static const int STICK_RELEASE_THRESHOLD = 20;
 
 static QuickBarState sState = {};
 static bool sStickReleased = true;
+static u8 sSavedFramerateDivisor = 0;
 
 QuickBarState& GetQuickBarState() {
     return sState;
@@ -158,7 +160,6 @@ static const int sSongQuests[] = {
 };
 
 static int GetSlotForItem(int itemId) {
-    // Maps item IDs that share slots with their inventory slot
     switch (itemId) {
         case ITEM_BOW: return SLOT_BOW;
         case ITEM_ARROW_FIRE: return SLOT_ARROW_FIRE;
@@ -273,7 +274,7 @@ static void SetActiveTool(int itemId) {
     sState.activeToolItem = itemId;
 }
 
-static void EquipMask(int itemId) {
+static void UseItemOnPlayer(int itemId) {
     if (gPlayState == nullptr) return;
     Player* player = GET_PLAYER(gPlayState);
     Player_UseItem(gPlayState, player, (ItemId)itemId);
@@ -303,9 +304,26 @@ static void PlaySong(int questBit) {
     if (gPlayState == nullptr) return;
     int songId = QuestBitToSongId(questBit);
     if (songId >= 0) {
+        // Use the ocarina to trigger the song through the game's normal system
+        UseItemOnPlayer(ITEM_OCARINA_OF_TIME);
         AudioOcarina_SetInstrument(OCARINA_INSTRUMENT_DEFAULT);
         AudioOcarina_SetPlaybackSong(songId + 1, 1);
     }
+}
+
+// ─── Slow-motion control ────────────────────────────────────────────────────
+
+static void EnterSlowMotion() {
+    if (gPlayState == nullptr) return;
+    sSavedFramerateDivisor = gPlayState->state.framerateDivisor;
+    GameState_SetFramerateDivisor(&gPlayState->state, 3);
+}
+
+static void ExitSlowMotion() {
+    if (gPlayState == nullptr) return;
+    u8 restore = (sSavedFramerateDivisor > 0) ? sSavedFramerateDivisor : 1;
+    GameState_SetFramerateDivisor(&gPlayState->state, restore);
+    sSavedFramerateDivisor = 0;
 }
 
 // ─── Open / close QuickBar ──────────────────────────────────────────────────
@@ -329,11 +347,13 @@ static void OpenQuickBar(QuickBarCategory cat) {
     }
 
     sStickReleased = true;
-    Audio_PlaySfx(NA_SE_SY_DECIDE);
+    EnterSlowMotion();
 }
 
 static void CloseQuickBar(bool confirm) {
     if (!sState.isOpen) return;
+
+    ExitSlowMotion();
 
     if (confirm && !sState.currentItems.empty()) {
         int selectedItem = sState.currentItems[sState.selectionIndex];
@@ -344,7 +364,7 @@ static void CloseQuickBar(bool confirm) {
                 SetActiveTool(selectedItem);
                 break;
             case QB_CAT_MASKS:
-                EquipMask(selectedItem);
+                UseItemOnPlayer(selectedItem);
                 break;
             case QB_CAT_SONGS:
                 if (CVarGetInteger("gEnhancements.Equipment.QuickBar.AutoPlaySongs", 1)) {
@@ -368,25 +388,45 @@ static void CloseQuickBar(bool confirm) {
 
 static void TapRecall(QuickBarCategory cat) {
     int lastItem = sState.lastUsed[cat];
-    if (lastItem < 0) return;
 
     switch (cat) {
         case QB_CAT_TOOLS:
+            // Tap RIGHT: use the active tool directly via Player_UseItem
+            if (sState.activeToolItem >= 0) {
+                UseItemOnPlayer(sState.activeToolItem);
+            }
+            break;
         case QB_CAT_BOTTLES:
-            SetActiveTool(lastItem);
-            Audio_PlaySfx(NA_SE_SY_DECIDE);
+            // Tap DOWN: use last selected bottle
+            if (lastItem >= 0) {
+                UseItemOnPlayer(lastItem);
+            }
             break;
         case QB_CAT_MASKS:
-            EquipMask(lastItem);
+            // Tap UP: equip last mask
+            if (lastItem >= 0) {
+                UseItemOnPlayer(lastItem);
+            }
             break;
         case QB_CAT_SONGS:
-            if (CVarGetInteger("gEnhancements.Equipment.QuickBar.AutoPlaySongs", 1)) {
-                PlaySong(lastItem);
-            }
+            // Tap LEFT: pull out ocarina
+            UseItemOnPlayer(ITEM_OCARINA_OF_TIME);
             break;
         default:
             break;
     }
+}
+
+// ─── Pre-main hook (consumes input before camera reads it) ──────────────────
+
+static void QuickBarPreMain() {
+    if (gPlayState == nullptr) return;
+    if (!sState.isOpen) return;
+
+    // Consume right stick BEFORE the camera system reads it
+    Input* input = CONTROLLER1(&gPlayState->state);
+    input->cur.right_stick_x = 0;
+    input->cur.right_stick_y = 0;
 }
 
 // ─── Per-frame update ───────────────────────────────────────────────────────
@@ -420,7 +460,7 @@ static void QuickBarUpdate() {
         } else if (sState.dpadHoldFrames[i] > 0) {
             // Button was just released
             if (!sState.dpadWasHeld[i]) {
-                // Was a tap → recall
+                // Was a tap → recall (no sound effect)
                 TapRecall(cat);
             } else if (sState.isOpen && sState.openCategory == cat) {
                 // Was a hold → confirm selection
@@ -477,6 +517,11 @@ void RegisterQuickBar() {
         sState.dpadWasHeld[i] = false;
     }
     sState.selectionIndex = 0;
+
+    // Pre-main hook: consume right stick before camera reads it
+    COND_HOOK(OnGameStateMainStart, CVAR, []() {
+        QuickBarPreMain();
+    });
 
     COND_HOOK(OnGameStateUpdate, CVAR, []() {
         QuickBarUpdate();

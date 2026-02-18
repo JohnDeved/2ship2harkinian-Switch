@@ -57,29 +57,28 @@ void QuickBarOverlayWindow::Draw() {
 
     // ─── Active Tool chip (top-right corner) ────────────────────────────────
     if (state.activeToolItem >= 0) {
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.55f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.7f, 1.0f, 0.6f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.12f, 0.75f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.7f, 1.0f, 0.5f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
 
         ImGuiWindowFlags chipFlags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking |
                                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
                                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs;
 
-        // Position at top-right corner
-        ImGui::SetNextWindowPos(ImVec2(viewport.x - 180, 10), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(viewport.x - 200, 10), ImGuiCond_Always);
 
         ImGui::Begin("ActiveToolChip", nullptr, chipFlags);
 
         ImTextureID tex = GetItemTexture(state.activeToolItem, QB_CAT_TOOLS);
         if (tex) {
-            ImGui::Image(tex, ImVec2(24, 24));
-            ImGui::SameLine(0, 6);
+            ImGui::Image(tex, ImVec2(28, 28));
+            ImGui::SameLine(0, 8);
         }
 
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6);
         ImGui::TextColored(ImVec4(1, 1, 1, 0.9f), "%s", QuickBar_GetItemName(state.activeToolItem));
 
         ImGui::End();
@@ -87,14 +86,14 @@ void QuickBarOverlayWindow::Draw() {
         ImGui::PopStyleColor(2);
     }
 
-    // ─── QuickBar overlay (center of screen, carousel-style) ────────────────
+    // ─── QuickBar overlay (BotW-style centered carousel) ────────────────────
     if (!state.isOpen || state.currentItems.empty()) return;
 
     int itemCount = (int)state.currentItems.size();
 
-    // Draw fullscreen tint overlay to indicate slow-motion / focus mode
+    // Fullscreen dim overlay
     {
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.02f, 0.08f, 0.35f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.25f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -112,113 +111,137 @@ void QuickBarOverlayWindow::Draw() {
         ImGui::PopStyleColor(1);
     }
 
-    // Carousel parameters — selected item is always centered
-    const float centerIconSize = 64.0f;   // Size of the selected (center) icon
-    const float sideIconSize = 48.0f;     // Size of neighboring icons
-    const float iconSpacing = 16.0f;      // Gap between icons
-    const float barHeight = centerIconSize + 40.0f; // Bar height (icon + text)
-    const float fadeDistance = 200.0f;     // Distance from center where icons start fading out
+    // BotW-style tile parameters
+    const float tileSize = 80.0f;        // Each tile is a square
+    const float selectedScale = 1.15f;    // Selected tile is slightly larger
+    const float tilePadding = 4.0f;       // Gap between tiles
+    const float iconPad = 10.0f;          // Padding inside tile for icon
+    const float minAlpha = 0.25f;         // Never fully disappear
 
     float centerX = viewport.x * 0.5f;
     float centerY = viewport.y * 0.5f;
 
-    // Draw the QuickBar background (thin translucent strip)
-    float bgWidth = viewport.x * 0.6f;
-    float bgX = (viewport.x - bgWidth) * 0.5f;
-    float bgY = centerY - barHeight * 0.5f - 8.0f;
-
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.03f, 0.03f, 0.08f, 0.7f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.5f, 0.8f, 0.3f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    // Calculate visible area
+    float maxVisibleWidth = viewport.x * 0.75f;
 
     ImGuiWindowFlags barFlags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking |
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
-                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs;
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs |
+                                ImGuiWindowFlags_NoBackground;
 
-    ImGui::SetNextWindowPos(ImVec2(bgX, bgY));
-    ImGui::SetNextWindowSize(ImVec2(bgWidth, barHeight + 16.0f));
+    float winW = viewport.x;
+    float winH = tileSize * selectedScale + 60.0f;
+    float winY = centerY - winH * 0.5f;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+
+    ImGui::SetNextWindowPos(ImVec2(0, winY));
+    ImGui::SetNextWindowSize(ImVec2(winW, winH));
 
     ImGui::Begin("QuickBar", nullptr, barFlags);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    ImVec2 winPos = ImGui::GetWindowPos();
-    float iconY = winPos.y + 8.0f;
 
-    // Draw each item relative to center: selected item at center, others offset
+    // Draw tiles centered on the selected item
     for (int i = 0; i < itemCount; i++) {
         int offset = i - state.selectionIndex;
         bool isSelected = (offset == 0);
+        float scale = isSelected ? selectedScale : 1.0f;
+        float curTileSize = tileSize * scale;
 
-        float iconSize = isSelected ? centerIconSize : sideIconSize;
-
-        // Calculate position: selected item at center, others spaced out
+        // Calculate X position: selected at center, others offset
         float posX;
         if (isSelected) {
-            posX = centerX - iconSize * 0.5f;
-        } else {
-            float dist = (float)offset;
-            // Sum up widths to get exact position
-            float px = centerX;
-            if (offset > 0) {
-                px += centerIconSize * 0.5f + iconSpacing;
-                for (int j = 1; j < offset; j++) {
-                    px += sideIconSize + iconSpacing;
-                }
-                posX = px;
-            } else {
-                px -= centerIconSize * 0.5f + iconSpacing;
-                for (int j = -1; j > offset; j--) {
-                    px -= sideIconSize + iconSpacing;
-                }
-                posX = px - sideIconSize;
+            posX = centerX - curTileSize * 0.5f;
+        } else if (offset > 0) {
+            // Right of center
+            float px = centerX + (tileSize * selectedScale * 0.5f) + tilePadding;
+            for (int j = 1; j < offset; j++) {
+                px += tileSize + tilePadding;
             }
+            posX = px;
+        } else {
+            // Left of center
+            float px = centerX - (tileSize * selectedScale * 0.5f) - tilePadding;
+            for (int j = -1; j > offset; j--) {
+                px -= tileSize + tilePadding;
+            }
+            posX = px - tileSize;
         }
 
-        float posY = iconY + (centerIconSize - iconSize) * 0.5f;
+        float posY = centerY - curTileSize * 0.5f;
 
-        // Skip if fully off-screen
-        if (posX + iconSize < bgX || posX > bgX + bgWidth) continue;
+        // Skip tiles far off-screen
+        if (posX + curTileSize < 0 || posX > viewport.x) continue;
 
-        // Calculate alpha based on distance from center (fade toward edges)
-        float distFromCenter = std::fabs((posX + iconSize * 0.5f) - centerX);
+        // Calculate alpha: fade based on distance from center but never fully disappear
+        float tileCenterX = posX + curTileSize * 0.5f;
+        float distFromCenter = std::fabs(tileCenterX - centerX);
         float alpha;
         if (isSelected) {
             alpha = 1.0f;
         } else {
-            alpha = 1.0f - (distFromCenter / fadeDistance);
-            if (alpha < 0.0f) alpha = 0.0f;
-            if (alpha > 0.8f) alpha = 0.8f;
+            float fadeStart = tileSize * 0.5f;
+            float fadeEnd = maxVisibleWidth * 0.5f;
+            if (distFromCenter <= fadeStart) {
+                alpha = 0.85f;
+            } else if (distFromCenter >= fadeEnd) {
+                alpha = minAlpha;
+            } else {
+                float t = (distFromCenter - fadeStart) / (fadeEnd - fadeStart);
+                alpha = 0.85f - t * (0.85f - minAlpha);
+            }
         }
 
-        // Highlight outline for selected item
+        // Draw tile background (dark slate)
+        ImU32 bgCol = IM_COL32(30, 35, 42, (int)(alpha * 220));
+        drawList->AddRectFilled(ImVec2(posX, posY), ImVec2(posX + curTileSize, posY + curTileSize),
+                                bgCol, 4.0f);
+
+        // Selected tile: bright yellow/gold border (BotW style)
         if (isSelected) {
-            float hlBorder = 3.0f;
-            ImVec2 hlMin(posX - hlBorder, posY - hlBorder);
-            ImVec2 hlMax(posX + iconSize + hlBorder, posY + iconSize + hlBorder);
-            drawList->AddRect(hlMin, hlMax, IM_COL32(100, 180, 255, 220), 8.0f, 0, 2.5f);
+            drawList->AddRect(ImVec2(posX, posY), ImVec2(posX + curTileSize, posY + curTileSize),
+                              IM_COL32(255, 215, 0, 230), 4.0f, 0, 3.0f);
+        } else {
+            // Subtle border on non-selected tiles
+            ImU32 borderCol = IM_COL32(80, 90, 100, (int)(alpha * 120));
+            drawList->AddRect(ImVec2(posX, posY), ImVec2(posX + curTileSize, posY + curTileSize),
+                              borderCol, 4.0f, 0, 1.0f);
         }
 
+        // Draw icon inside tile
         ImTextureID tex = GetItemTexture(state.currentItems[i], state.openCategory);
         if (tex) {
-            ImGui::SetCursorPos(ImVec2(posX - winPos.x, posY - winPos.y));
-            ImGui::Image(tex, ImVec2(iconSize, iconSize), ImVec2(0, 0), ImVec2(1, 1),
+            float iconDrawSize = curTileSize - iconPad * 2 * scale;
+            float iconX = posX + (curTileSize - iconDrawSize) * 0.5f;
+            float iconYpos = posY + (curTileSize - iconDrawSize) * 0.5f;
+            ImGui::SetCursorPos(ImVec2(iconX, iconYpos - winY));
+            ImGui::Image(tex, ImVec2(iconDrawSize, iconDrawSize), ImVec2(0, 0), ImVec2(1, 1),
                          ImVec4(1, 1, 1, alpha), ImVec4(0, 0, 0, 0));
         }
     }
 
-    // Name text below the icons (centered)
+    // Divider line below selected item
+    float selectedBottom = centerY + (tileSize * selectedScale * 0.5f);
+    float dividerW = tileSize * 0.5f;
+    drawList->AddLine(
+        ImVec2(centerX - dividerW * 0.5f, selectedBottom + 6.0f),
+        ImVec2(centerX + dividerW * 0.5f, selectedBottom + 6.0f),
+        IM_COL32(255, 255, 255, 180), 2.0f);
+
+    // Name text below the divider
     if (state.selectionIndex >= 0 && state.selectionIndex < (int)state.currentNames.size()) {
         const char* itemName = state.currentNames[state.selectionIndex];
         ImVec2 textSize = ImGui::CalcTextSize(itemName);
-        float textX = (bgWidth - textSize.x) * 0.5f;
-        ImGui::SetCursorPos(ImVec2(textX, 8.0f + centerIconSize + 6.0f));
+        float textX = centerX - textSize.x * 0.5f;
+        float textY = selectedBottom + 14.0f;
+        ImGui::SetCursorPos(ImVec2(textX, textY - winY));
         ImGui::TextColored(ImVec4(1, 1, 1, 0.95f), "%s", itemName);
     }
 
     ImGui::End();
     ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor(2);
 }

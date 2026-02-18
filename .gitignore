@@ -76,3 +76,5 @@ build/
 nxlink-last.log
 
 dist/switch/2ship.nro
+.ccache/
+deps/

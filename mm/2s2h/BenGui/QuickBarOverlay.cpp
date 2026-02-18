@@ -1,6 +1,7 @@
 #include "QuickBarOverlay.h"
 
 #include <imgui.h>
+#include <cmath>
 #include <libultraship/bridge/consolevariablebridge.h>
 #include <ship/Context.h>
 #include <ship/window/Window.h>
@@ -44,17 +45,6 @@ static ImTextureID GetItemTexture(int itemId, QuickBarCategory cat) {
     return Ship::Context::GetInstance()->GetWindow()->GetGui()->GetTextureByName(texName);
 }
 
-// Category display names
-static const char* GetCategoryName(QuickBarCategory cat) {
-    switch (cat) {
-        case QB_CAT_MASKS:   return "Masks";
-        case QB_CAT_TOOLS:   return "Tools";
-        case QB_CAT_SONGS:   return "Songs";
-        case QB_CAT_BOTTLES: return "Bottles";
-        default:             return "";
-    }
-}
-
 void QuickBarOverlayWindow::InitElement() {
 }
 
@@ -63,8 +53,9 @@ void QuickBarOverlayWindow::Draw() {
     if (!IsQuickBarEnabled()) return;
 
     QuickBarState& state = GetQuickBarState();
+    ImVec2 viewport = ImGui::GetIO().DisplaySize;
 
-    // Draw Active Tool chip (always visible when an active tool is set)
+    // ─── Active Tool chip (top-right corner) ────────────────────────────────
     if (state.activeToolItem >= 0) {
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.55f));
         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.7f, 1.0f, 0.6f));
@@ -76,6 +67,9 @@ void QuickBarOverlayWindow::Draw() {
                                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking |
                                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
                                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs;
+
+        // Position at top-right corner
+        ImGui::SetNextWindowPos(ImVec2(viewport.x - 180, 10), ImGuiCond_Always);
 
         ImGui::Begin("ActiveToolChip", nullptr, chipFlags);
 
@@ -93,99 +87,134 @@ void QuickBarOverlayWindow::Draw() {
         ImGui::PopStyleColor(2);
     }
 
-    // Draw QuickBar overlay when open
+    // ─── QuickBar overlay (center of screen, carousel-style) ────────────────
     if (!state.isOpen || state.currentItems.empty()) return;
-
-    const float iconSize = 40.0f;
-    const float iconPadding = 6.0f;
-    const float barPaddingX = 12.0f;
-    const float barPaddingY = 8.0f;
-    const float highlightBorder = 3.0f;
-    const float highlightScale = 1.15f;
 
     int itemCount = (int)state.currentItems.size();
 
-    // Calculate bar dimensions
-    float barWidth = (iconSize + iconPadding) * itemCount - iconPadding + barPaddingX * 2;
-    float barHeight = iconSize + barPaddingY * 2;
+    // Draw fullscreen tint overlay to indicate slow-motion / focus mode
+    {
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.02f, 0.08f, 0.35f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 
-    // Limit bar width to viewport
-    ImVec2 viewport = ImGui::GetIO().DisplaySize;
-    if (barWidth > viewport.x * 0.9f) {
-        barWidth = viewport.x * 0.9f;
+        ImGuiWindowFlags tintFlags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+                                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking |
+                                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
+                                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs;
+
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(viewport);
+        ImGui::Begin("QuickBarTint", nullptr, tintFlags);
+        ImGui::End();
+        ImGui::PopStyleVar(3);
+        ImGui::PopStyleColor(1);
     }
 
-    // Position at top-center
-    float barX = (viewport.x - barWidth) * 0.5f;
-    float barY = 40.0f;
+    // Carousel parameters — selected item is always centered
+    const float centerIconSize = 64.0f;   // Size of the selected (center) icon
+    const float sideIconSize = 48.0f;     // Size of neighboring icons
+    const float iconSpacing = 16.0f;      // Gap between icons
+    const float barHeight = centerIconSize + 40.0f; // Bar height (icon + text)
+    const float fadeDistance = 200.0f;     // Distance from center where icons start fading out
 
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.1f, 0.75f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.5f, 0.8f, 0.4f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    float centerX = viewport.x * 0.5f;
+    float centerY = viewport.y * 0.5f;
+
+    // Draw the QuickBar background (thin translucent strip)
+    float bgWidth = viewport.x * 0.6f;
+    float bgX = (viewport.x - bgWidth) * 0.5f;
+    float bgY = centerY - barHeight * 0.5f - 8.0f;
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.03f, 0.03f, 0.08f, 0.7f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.3f, 0.5f, 0.8f, 0.3f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(barPaddingX, barPaddingY));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 
     ImGuiWindowFlags barFlags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking |
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs;
 
-    ImGui::SetNextWindowPos(ImVec2(barX, barY));
-    ImGui::SetNextWindowSize(ImVec2(barWidth, barHeight + 30));
+    ImGui::SetNextWindowPos(ImVec2(bgX, bgY));
+    ImGui::SetNextWindowSize(ImVec2(bgWidth, barHeight + 16.0f));
 
     ImGui::Begin("QuickBar", nullptr, barFlags);
 
-    // Category label
-    ImGui::SetCursorPosX(barPaddingX);
-
-    // Draw item icons
-    float startX = barPaddingX;
-    // If items overflow, scroll to keep selection visible
-    float totalWidth = (iconSize + iconPadding) * itemCount - iconPadding;
-    float visibleWidth = barWidth - barPaddingX * 2;
-    float scrollOffset = 0;
-    if (totalWidth > visibleWidth) {
-        float selCenter = (iconSize + iconPadding) * state.selectionIndex + iconSize * 0.5f;
-        scrollOffset = selCenter - visibleWidth * 0.5f;
-        if (scrollOffset < 0) scrollOffset = 0;
-        if (scrollOffset > totalWidth - visibleWidth) scrollOffset = totalWidth - visibleWidth;
-    }
-
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 winPos = ImGui::GetWindowPos();
+    float iconY = winPos.y + 8.0f;
 
+    // Draw each item relative to center: selected item at center, others offset
     for (int i = 0; i < itemCount; i++) {
-        float x = startX + (iconSize + iconPadding) * i - scrollOffset;
-        if (x + iconSize < 0 || x > visibleWidth + barPaddingX) continue;
+        int offset = i - state.selectionIndex;
+        bool isSelected = (offset == 0);
 
-        bool isSelected = (i == state.selectionIndex);
-        float drawSize = isSelected ? iconSize * highlightScale : iconSize;
-        float offset = isSelected ? (iconSize - drawSize) * 0.5f : 0;
+        float iconSize = isSelected ? centerIconSize : sideIconSize;
 
-        ImVec2 iconPos(winPos.x + x + offset, winPos.y + barPaddingY + offset);
+        // Calculate position: selected item at center, others spaced out
+        float posX;
+        if (isSelected) {
+            posX = centerX - iconSize * 0.5f;
+        } else {
+            float dist = (float)offset;
+            // Sum up widths to get exact position
+            float px = centerX;
+            if (offset > 0) {
+                px += centerIconSize * 0.5f + iconSpacing;
+                for (int j = 1; j < offset; j++) {
+                    px += sideIconSize + iconSpacing;
+                }
+                posX = px;
+            } else {
+                px -= centerIconSize * 0.5f + iconSpacing;
+                for (int j = -1; j > offset; j--) {
+                    px -= sideIconSize + iconSpacing;
+                }
+                posX = px - sideIconSize;
+            }
+        }
+
+        float posY = iconY + (centerIconSize - iconSize) * 0.5f;
+
+        // Skip if fully off-screen
+        if (posX + iconSize < bgX || posX > bgX + bgWidth) continue;
+
+        // Calculate alpha based on distance from center (fade toward edges)
+        float distFromCenter = fabsf((posX + iconSize * 0.5f) - centerX);
+        float alpha;
+        if (isSelected) {
+            alpha = 1.0f;
+        } else {
+            alpha = 1.0f - (distFromCenter / fadeDistance);
+            if (alpha < 0.0f) alpha = 0.0f;
+            if (alpha > 0.8f) alpha = 0.8f;
+        }
 
         // Highlight outline for selected item
         if (isSelected) {
-            ImVec2 hlMin(iconPos.x - highlightBorder, iconPos.y - highlightBorder);
-            ImVec2 hlMax(iconPos.x + drawSize + highlightBorder, iconPos.y + drawSize + highlightBorder);
-            drawList->AddRect(hlMin, hlMax, IM_COL32(100, 180, 255, 220), 6.0f, 0, 2.5f);
+            float hlBorder = 3.0f;
+            ImVec2 hlMin(posX - hlBorder, posY - hlBorder);
+            ImVec2 hlMax(posX + iconSize + hlBorder, posY + iconSize + hlBorder);
+            drawList->AddRect(hlMin, hlMax, IM_COL32(100, 180, 255, 220), 8.0f, 0, 2.5f);
         }
 
         ImTextureID tex = GetItemTexture(state.currentItems[i], state.openCategory);
         if (tex) {
-            ImGui::SetCursorPos(ImVec2(x + offset, barPaddingY + offset));
-            float alpha = isSelected ? 1.0f : 0.7f;
-            ImGui::Image(tex, ImVec2(drawSize, drawSize), ImVec2(0, 0), ImVec2(1, 1),
+            ImGui::SetCursorPos(ImVec2(posX - winPos.x, posY - winPos.y));
+            ImGui::Image(tex, ImVec2(iconSize, iconSize), ImVec2(0, 0), ImVec2(1, 1),
                          ImVec4(1, 1, 1, alpha), ImVec4(0, 0, 0, 0));
         }
     }
 
-    // Name text below the icons
+    // Name text below the icons (centered)
     if (state.selectionIndex >= 0 && state.selectionIndex < (int)state.currentNames.size()) {
         const char* itemName = state.currentNames[state.selectionIndex];
         ImVec2 textSize = ImGui::CalcTextSize(itemName);
-        float textX = (barWidth - textSize.x) * 0.5f;
-        ImGui::SetCursorPos(ImVec2(textX, barPaddingY + iconSize + 4));
+        float textX = (bgWidth - textSize.x) * 0.5f;
+        ImGui::SetCursorPos(ImVec2(textX, 8.0f + centerIconSize + 6.0f));
         ImGui::TextColored(ImVec4(1, 1, 1, 0.95f), "%s", itemName);
     }
 

@@ -20,7 +20,6 @@ struct QuickBarState {
     int lastUsed[QB_CAT_COUNT];     // Last-used item per category (ItemId or -1)
     int dpadHoldFrames[QB_CAT_COUNT];
     bool dpadWasHeld[QB_CAT_COUNT]; // True if hold threshold was reached
-    float fadeAlpha;                // For fade-out animation
 
     // Items currently visible in the open category
     std::vector<int> currentItems;

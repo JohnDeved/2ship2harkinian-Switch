@@ -1154,7 +1154,7 @@ void BenMenu::AddEnhancements() {
         })
         .Options(CheckboxOptions().Tooltip(
             "When enabled, selecting a song from the QuickBar will play it automatically. "
-            "When disabled, it readies the Ocarina instead.")
+            "When disabled, selecting a song will only set it as the last-used song.")
             .DefaultValue(true));
 
     path.column = SECTION_COLUMN_2;

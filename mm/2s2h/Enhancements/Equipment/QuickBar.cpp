@@ -95,6 +95,9 @@ static const char* GetItemName(int itemId) {
         case ITEM_SEAHORSE:           return "Seahorse";
         case ITEM_CHATEAU:            return "Chateau Romani";
         case ITEM_MUSHROOM:           return "Mystery Milk";
+        case ITEM_BLUE_FIRE:          return "Blue Fire";
+        case ITEM_HYLIAN_LOACH:       return "Hylian Loach";
+        case ITEM_OBABA_DRINK:        return "Obaba's Drink";
         default:                      return "???";
     }
 }
@@ -182,8 +185,6 @@ static bool PlayerHasItem(int itemId) {
     }
     // Masks
     if (itemId >= ITEM_MASK_DEKU && itemId <= ITEM_MASK_GIANT) {
-        // Mask slots start at SLOT_MASK_POSTMAN (0x18)
-        // But the mapping is not 1:1 with item IDs, use the gItemSlots array
         for (int s = SLOT_MASK_POSTMAN; s <= SLOT_MASK_FIERCE_DEITY; s++) {
             if (gSaveContext.save.saveInfo.inventory.items[s] == (u8)itemId) {
                 return true;
@@ -307,26 +308,6 @@ static void PlaySong(int questBit) {
     }
 }
 
-// ─── D-pad direction → category mapping ─────────────────────────────────────
-
-static int DpadDirToCategory(int button) {
-    if (button & BTN_DUP)    return QB_CAT_MASKS;
-    if (button & BTN_DRIGHT) return QB_CAT_TOOLS;
-    if (button & BTN_DLEFT)  return QB_CAT_SONGS;
-    if (button & BTN_DDOWN)  return QB_CAT_BOTTLES;
-    return -1;
-}
-
-static int CategoryToDpadBtn(int cat) {
-    switch (cat) {
-        case QB_CAT_MASKS:   return BTN_DUP;
-        case QB_CAT_TOOLS:   return BTN_DRIGHT;
-        case QB_CAT_SONGS:   return BTN_DLEFT;
-        case QB_CAT_BOTTLES: return BTN_DDOWN;
-        default: return 0;
-    }
-}
-
 // ─── Open / close QuickBar ──────────────────────────────────────────────────
 
 static void OpenQuickBar(QuickBarCategory cat) {
@@ -335,7 +316,6 @@ static void OpenQuickBar(QuickBarCategory cat) {
 
     sState.isOpen = true;
     sState.openCategory = cat;
-    sState.fadeAlpha = 1.0f;
 
     // Try to select the last-used item
     sState.selectionIndex = 0;
@@ -420,7 +400,6 @@ static void QuickBarUpdate() {
 
     Input* input = CONTROLLER1(&gPlayState->state);
     int curButtons = input->cur.button;
-    int pressButtons = input->press.button;
 
     // D-pad directions
     static const int dpadBtns[] = { BTN_DUP, BTN_DRIGHT, BTN_DLEFT, BTN_DDOWN };
@@ -478,13 +457,12 @@ static void QuickBarUpdate() {
             }
         }
 
-        // Consume D-pad input so other systems don't process it
+        // Consume D-pad and right stick input so other systems don't process it
         input->press.button &= ~(BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT);
+        input->cur.button   &= ~(BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT);
+        input->cur.right_stick_x = 0;
+        input->cur.right_stick_y = 0;
     }
-
-    // RT aim: use Active Tool if aimable
-    // (Actual aiming integration is handled by the game's existing systems;
-    //  we just track the Active Tool state for HUD display.)
 }
 
 // ─── Registration ───────────────────────────────────────────────────────────
@@ -498,7 +476,6 @@ void RegisterQuickBar() {
         sState.dpadHoldFrames[i] = 0;
         sState.dpadWasHeld[i] = false;
     }
-    sState.fadeAlpha = 0.0f;
     sState.selectionIndex = 0;
 
     COND_HOOK(OnGameStateUpdate, CVAR, []() {

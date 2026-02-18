@@ -22,6 +22,10 @@ struct FrameUniforms {
     float bloomIntensity;
     float outlineIntensity;
     float vignette;
+    float specularIntensity;
+    float subsurfaceIntensity;
+    float micronormalIntensity;
+    float sharpening;
     float viewportWidth;
     float viewportHeight;
 };
@@ -353,6 +357,50 @@ fragment float4 fragmentShader(ProjectedVertex in [[stage_in]], constant FrameUn
         float outline = smoothstep(0.05, 0.12, outEdge);
         float3 outlineColor = float3(0.15, 0.12, 0.1);
         texel.xyz = mix(texel.xyz, outlineColor, outline * frameUniforms.outlineIntensity);
+    }
+
+    // Shader Effects: Specular Highlight (§3.3 — stylized anime highlight)
+    if (frameUniforms.specularIntensity > 0.0) {
+        float specLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        float sdx = dfdx(specLum);
+        float sdy = dfdy(specLum);
+        float curvature = length(float2(sdx, sdy));
+        float spec = pow(clamp(1.0 - curvature * 8.0, 0.0, 1.0), 64.0);
+        float toonSpec = smoothstep(0.4, 0.6, spec);
+        float specMask = smoothstep(0.3, 0.7, specLum);
+        texel.xyz += float3(1.0) * toonSpec * specMask * frameUniforms.specularIntensity * 0.15;
+        texel.xyz = clamp(texel.xyz, 0.0, 1.0);
+    }
+
+    // Shader Effects: Subsurface Terminator Softness (§3.5 — warm tint at shadow edge)
+    if (frameUniforms.subsurfaceIntensity > 0.0) {
+        float subLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        float terminator = smoothstep(0.2, 0.4, subLum) * (1.0 - smoothstep(0.4, 0.6, subLum));
+        float3 warmShift = float3(0.08, 0.03, -0.02);
+        texel.xyz += warmShift * terminator * frameUniforms.subsurfaceIntensity;
+        texel.xyz = clamp(texel.xyz, 0.0, 1.0);
+    }
+
+    // Shader Effects: Procedural Micro-Normal (§8.2 — specular breakup from luminance gradient)
+    if (frameUniforms.micronormalIntensity > 0.0) {
+        float mnLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        float mnDx = dfdx(mnLum);
+        float mnDy = dfdy(mnLum);
+        float microSpec = abs(mnDx * mnDy) * 500.0;
+        microSpec = clamp(microSpec, 0.0, 1.0);
+        float microHighlight = pow(microSpec, 4.0) * smoothstep(0.4, 0.8, mnLum);
+        texel.xyz += float3(microHighlight * frameUniforms.micronormalIntensity * 0.1);
+        texel.xyz = clamp(texel.xyz, 0.0, 1.0);
+    }
+
+    // Shader Effects: Sharpening (§10.4 — CAS-like per-fragment sharpening)
+    if (frameUniforms.sharpening > 0.0) {
+        float sharpLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        float sharpDx = dfdx(sharpLum);
+        float sharpDy = dfdy(sharpLum);
+        float laplacian = abs(sharpDx) + abs(sharpDy);
+        float3 sharpened = texel.xyz + (texel.xyz - float3(sharpLum)) * laplacian * frameUniforms.sharpening * 4.0;
+        texel.xyz = clamp(sharpened, 0.0, 1.0);
     }
 
     // Shader Effects: Brightness/Contrast (§10 — color grading)

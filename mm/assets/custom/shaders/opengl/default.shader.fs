@@ -63,6 +63,10 @@ uniform float shader_bloom_threshold;
 uniform float shader_bloom_intensity;
 uniform float shader_outline_intensity;
 uniform float shader_vignette;
+uniform float shader_specular_intensity;
+uniform float shader_subsurface_intensity;
+uniform float shader_micronormal_intensity;
+uniform float shader_sharpening;
 uniform float shader_viewport_width;
 uniform float shader_viewport_height;
 
@@ -277,6 +281,54 @@ void main() {
         float outline = smoothstep(0.05, 0.12, outEdge);
         vec3 outlineColor = vec3(0.15, 0.12, 0.1);
         texel.rgb = mix(texel.rgb, outlineColor, outline * shader_outline_intensity);
+    }
+
+    // Shader Effects: Specular Highlight (§3.3 — stylized anime highlight)
+    if (shader_specular_intensity > 0.0) {
+        float specLum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+        float sdx = dFdx(specLum);
+        float sdy = dFdy(specLum);
+        // Use luminance gradient magnitude as pseudo-normal curvature for specular
+        float curvature = length(vec2(sdx, sdy));
+        float spec = pow(clamp(1.0 - curvature * 8.0, 0.0, 1.0), 64.0);
+        float toonSpec = smoothstep(0.4, 0.6, spec);
+        // Apply specular only to brighter areas (metals, wet surfaces)
+        float specMask = smoothstep(0.3, 0.7, specLum);
+        texel.rgb += vec3(1.0) * toonSpec * specMask * shader_specular_intensity * 0.15;
+        texel.rgb = clamp(texel.rgb, 0.0, 1.0);
+    }
+
+    // Shader Effects: Subsurface Terminator Softness (§3.5 — warm tint at shadow edge)
+    if (shader_subsurface_intensity > 0.0) {
+        float subLum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+        // Terminator region: where luminance is at the shadow/light boundary
+        float terminator = smoothstep(0.2, 0.4, subLum) * (1.0 - smoothstep(0.4, 0.6, subLum));
+        vec3 warmShift = vec3(0.08, 0.03, -0.02);
+        texel.rgb += warmShift * terminator * shader_subsurface_intensity;
+        texel.rgb = clamp(texel.rgb, 0.0, 1.0);
+    }
+
+    // Shader Effects: Procedural Micro-Normal (§8.2 — specular breakup from luminance gradient)
+    if (shader_micronormal_intensity > 0.0) {
+        float mnLum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+        float mnDx = dFdx(mnLum);
+        float mnDy = dFdy(mnLum);
+        // Derive tiny specular perturbation from albedo luminance gradient
+        float microSpec = abs(mnDx * mnDy) * 500.0;
+        microSpec = clamp(microSpec, 0.0, 1.0);
+        float microHighlight = pow(microSpec, 4.0) * smoothstep(0.4, 0.8, mnLum);
+        texel.rgb += vec3(microHighlight * shader_micronormal_intensity * 0.1);
+        texel.rgb = clamp(texel.rgb, 0.0, 1.0);
+    }
+
+    // Shader Effects: Sharpening (§10.4 — CAS-like per-fragment sharpening)
+    if (shader_sharpening > 0.0) {
+        float sharpLum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+        float sharpDx = dFdx(sharpLum);
+        float sharpDy = dFdy(sharpLum);
+        float laplacian = abs(sharpDx) + abs(sharpDy);
+        vec3 sharpened = texel.rgb + (texel.rgb - vec3(sharpLum)) * laplacian * shader_sharpening * 4.0;
+        texel.rgb = clamp(sharpened, 0.0, 1.0);
     }
 
     // Shader Effects: Brightness/Contrast (§10 — color grading)

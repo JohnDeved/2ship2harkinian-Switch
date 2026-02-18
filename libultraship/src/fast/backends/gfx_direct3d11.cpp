@@ -738,6 +738,10 @@ void GfxRenderingAPIDX11::StartFrame() {
     mPerFrameCbData.shader_bloom_intensity = cv->GetFloat("gShaderEffects.Bloom.Intensity", 0.0f);
     mPerFrameCbData.shader_outline_intensity = cv->GetFloat("gShaderEffects.Outline.Intensity", 0.0f);
     mPerFrameCbData.shader_vignette = cv->GetFloat("gShaderEffects.Vignette", 0.0f);
+    mPerFrameCbData.shader_specular_intensity = cv->GetFloat("gShaderEffects.Specular.Intensity", 0.0f);
+    mPerFrameCbData.shader_subsurface_intensity = cv->GetFloat("gShaderEffects.Subsurface.Intensity", 0.0f);
+    mPerFrameCbData.shader_micronormal_intensity = cv->GetFloat("gShaderEffects.MicroNormal.Intensity", 0.0f);
+    mPerFrameCbData.shader_sharpening = cv->GetFloat("gShaderEffects.Sharpening", 0.0f);
 }
 
 void GfxRenderingAPIDX11::EndFrame() {

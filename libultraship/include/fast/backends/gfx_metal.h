@@ -123,6 +123,10 @@ struct FrameUniforms {
     simd::float1 bloomIntensity;
     simd::float1 outlineIntensity;
     simd::float1 vignette;
+    simd::float1 specularIntensity;
+    simd::float1 subsurfaceIntensity;
+    simd::float1 micronormalIntensity;
+    simd::float1 sharpening;
     simd::float1 viewportWidth;
     simd::float1 viewportHeight;
 };

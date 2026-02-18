@@ -83,6 +83,10 @@ void GfxRenderingAPIOGL::SetUniforms(ShaderProgram* prg) const {
     glUniform1f(prg->bloomIntensityLocation, mShaderBloomIntensity);
     glUniform1f(prg->outlineIntensityLocation, mShaderOutlineIntensity);
     glUniform1f(prg->vignetteLocation, mShaderVignette);
+    glUniform1f(prg->specularIntensityLocation, mShaderSpecularIntensity);
+    glUniform1f(prg->subsurfaceIntensityLocation, mShaderSubsurfaceIntensity);
+    glUniform1f(prg->micronormalIntensityLocation, mShaderMicronormalIntensity);
+    glUniform1f(prg->sharpeningLocation, mShaderSharpening);
     glUniform1f(prg->viewportWidthLocation, mShaderViewportWidth);
     glUniform1f(prg->viewportHeightLocation, mShaderViewportHeight);
 }
@@ -560,6 +564,10 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->bloomIntensityLocation = glGetUniformLocation(shader_program, "shader_bloom_intensity");
     prg->outlineIntensityLocation = glGetUniformLocation(shader_program, "shader_outline_intensity");
     prg->vignetteLocation = glGetUniformLocation(shader_program, "shader_vignette");
+    prg->specularIntensityLocation = glGetUniformLocation(shader_program, "shader_specular_intensity");
+    prg->subsurfaceIntensityLocation = glGetUniformLocation(shader_program, "shader_subsurface_intensity");
+    prg->micronormalIntensityLocation = glGetUniformLocation(shader_program, "shader_micronormal_intensity");
+    prg->sharpeningLocation = glGetUniformLocation(shader_program, "shader_sharpening");
     prg->viewportWidthLocation = glGetUniformLocation(shader_program, "shader_viewport_width");
     prg->viewportHeightLocation = glGetUniformLocation(shader_program, "shader_viewport_height");
 
@@ -881,6 +889,10 @@ void GfxRenderingAPIOGL::StartFrame() {
     mShaderBloomIntensity = cv->GetFloat("gShaderEffects.Bloom.Intensity", 0.0f);
     mShaderOutlineIntensity = cv->GetFloat("gShaderEffects.Outline.Intensity", 0.0f);
     mShaderVignette = cv->GetFloat("gShaderEffects.Vignette", 0.0f);
+    mShaderSpecularIntensity = cv->GetFloat("gShaderEffects.Specular.Intensity", 0.0f);
+    mShaderSubsurfaceIntensity = cv->GetFloat("gShaderEffects.Subsurface.Intensity", 0.0f);
+    mShaderMicronormalIntensity = cv->GetFloat("gShaderEffects.MicroNormal.Intensity", 0.0f);
+    mShaderSharpening = cv->GetFloat("gShaderEffects.Sharpening", 0.0f);
 
     // Read post-processing CVars
     mPPSsaoIntensity = cv->GetFloat("gShaderEffects.PP.SSAO.Intensity", 0.0f);

@@ -534,6 +534,10 @@ void GfxRenderingAPIMetal::StartFrame() {
     mFrameUniforms.bloomIntensity = cv->GetFloat("gShaderEffects.Bloom.Intensity", 0.0f);
     mFrameUniforms.outlineIntensity = cv->GetFloat("gShaderEffects.Outline.Intensity", 0.0f);
     mFrameUniforms.vignette = cv->GetFloat("gShaderEffects.Vignette", 0.0f);
+    mFrameUniforms.specularIntensity = cv->GetFloat("gShaderEffects.Specular.Intensity", 0.0f);
+    mFrameUniforms.subsurfaceIntensity = cv->GetFloat("gShaderEffects.Subsurface.Intensity", 0.0f);
+    mFrameUniforms.micronormalIntensity = cv->GetFloat("gShaderEffects.MicroNormal.Intensity", 0.0f);
+    mFrameUniforms.sharpening = cv->GetFloat("gShaderEffects.Sharpening", 0.0f);
 
     if (!mFrameUniformBuffer) {
         mFrameUniformBuffer = mDevice->newBuffer(sizeof(FrameUniforms), MTL::ResourceCPUCacheModeDefaultCache);

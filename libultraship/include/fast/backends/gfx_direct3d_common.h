@@ -30,6 +30,10 @@ struct PerFrameCB {
     float shader_bloom_intensity;
     float shader_outline_intensity;
     float shader_vignette;
+    float shader_specular_intensity;
+    float shader_subsurface_intensity;
+    float shader_micronormal_intensity;
+    float shader_sharpening;
     float shader_viewport_width;
     float shader_viewport_height;
     float padding_cb0; // constant buffers must be multiples of 16 bytes in size

@@ -53,6 +53,10 @@ struct ShaderProgram {
     GLint bloomIntensityLocation;
     GLint outlineIntensityLocation;
     GLint vignetteLocation;
+    GLint specularIntensityLocation;
+    GLint subsurfaceIntensityLocation;
+    GLint micronormalIntensityLocation;
+    GLint sharpeningLocation;
     GLint viewportWidthLocation;
     GLint viewportHeightLocation;
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
@@ -212,6 +216,10 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     float mShaderBloomIntensity = 0.0f;
     float mShaderOutlineIntensity = 0.0f;
     float mShaderVignette = 0.0f;
+    float mShaderSpecularIntensity = 0.0f;
+    float mShaderSubsurfaceIntensity = 0.0f;
+    float mShaderMicronormalIntensity = 0.0f;
+    float mShaderSharpening = 0.0f;
     float mShaderViewportWidth = 0.0f;
     float mShaderViewportHeight = 0.0f;
 

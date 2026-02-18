@@ -730,6 +730,42 @@ void BenMenu::AddSettings() {
                      .Min(0.0f)
                      .Max(2.0f)
                      .DefaultValue(0.0f));
+    AddWidget(path, "Specular Highlight: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.Specular.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Stylized anime specular highlight (§3.3). Adds discrete toon highlights "
+                              "to brighter surfaces like metals and wet areas. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Subsurface Softness: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.Subsurface.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Subsurface terminator softness (§3.5). Adds a warm tint at shadow/light "
+                              "boundaries to reduce waxy flatness on skin. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Micro-Normal: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.MicroNormal.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Procedural micro-normal (§8.2). Derives tiny specular perturbations from "
+                              "albedo luminance gradient to break up flat highlights. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Sharpening: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.Sharpening")
+        .Options(FloatSliderOptions()
+                     .Tooltip("CAS-like per-fragment sharpening (§10.4). Enhances detail after TAA or "
+                              "upscaling. Mild values recommended to avoid a crunchy look. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
 
     AddWidget(path, "Post-Processing Effects", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "SSAO Intensity: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)

@@ -1054,7 +1054,7 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Player.ManualJump")
         .Options(CheckboxOptions().Tooltip("Z + A to Jump and B while midair to Jump Attack."));
     AddWidget(path, "Modern Z-Targeting", WIDGET_CVAR_CHECKBOX)
-        .CVar("gEnhancements.Player.RightStickTargetSwitch")
+        .CVar("gEnhancements.Player.ModernZTargeting")
         .Options(CheckboxOptions().Tooltip(
             "Modern targeting like BotW/TotK: initial lock-on picks the target closest to camera center, "
             "right stick left/right switches between nearby targets, "

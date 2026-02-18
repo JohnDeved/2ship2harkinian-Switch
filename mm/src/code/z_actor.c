@@ -4081,7 +4081,7 @@ void Attention_FindActor(PlayState* play, ActorContext* actorCtx, Actor** attent
     actorCtx->attention.bgmEnemy = NULL;
 
     // #region 2S2H [Enhancement] Modern targeting: use camera direction instead of player body rotation
-    if (CVarGetInteger("gEnhancements.Player.RightStickTargetSwitch", 0)) {
+    if (CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0)) {
         Camera* cam = GET_ACTIVE_CAM(play);
         sAttentionPlayerRotY = Math_Vec3f_Yaw(&cam->eye, &cam->at);
     } else {

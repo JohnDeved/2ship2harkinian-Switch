@@ -5084,7 +5084,7 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
                 CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_Z)) {
 
                 // #region 2S2H [Enhancement] Right Stick Target Switch: Z-toggle releases lock-on
-                if (CVarGetInteger("gEnhancements.Player.RightStickTargetSwitch", 0) &&
+                if (CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0) &&
                     this->focusActor != NULL && this == GET_PLAYER(play)) {
                     Player_ReleaseLockOn(this);
                     this->stateFlags1 |= PLAYER_STATE1_LOCK_ON_FORCED_TO_RELEASE;

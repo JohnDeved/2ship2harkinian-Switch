@@ -62,7 +62,8 @@ void RegisterTimeMovesWhenYouMove() {
 
     COND_ID_HOOK(OnActorUpdate, ACTOR_PLAYER, CVAR, [](Actor* actor) {
         Player* player = GET_PLAYER(gPlayState);
-        bool timeShouldMove = (player->stateFlags2 & PLAYER_STATE2_USING_OCARINA) || player->speedXZ != 0.0f;
+        bool timeShouldMove = (player->stateFlags2 & PLAYER_STATE2_USING_OCARINA) || player->speedXZ != 0.0f ||
+                              Play_InCsMode(gPlayState) || (player->stateFlags1 & PLAYER_STATE1_20);
 
         if (timeShouldMove && sStoredTimeOffset != DEFAULT_TIME_OFFSET) {
             gSaveContext.save.timeSpeedOffset = sStoredTimeOffset;

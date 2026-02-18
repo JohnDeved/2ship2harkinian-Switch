@@ -882,6 +882,15 @@ void GfxRenderingAPIOGL::StartFrame() {
     mShaderOutlineIntensity = cv->GetFloat("gShaderEffects.Outline.Intensity", 0.0f);
     mShaderVignette = cv->GetFloat("gShaderEffects.Vignette", 0.0f);
 
+    // Read post-processing CVars
+    mPPSsaoIntensity = cv->GetFloat("gShaderEffects.PP.SSAO.Intensity", 0.0f);
+    mPPSsaoRadius = cv->GetFloat("gShaderEffects.PP.SSAO.Radius", 0.5f);
+    mPPBloomBlurIntensity = cv->GetFloat("gShaderEffects.PP.Bloom.Intensity", 0.0f);
+    mPPBloomBlurThreshold = cv->GetFloat("gShaderEffects.PP.Bloom.Threshold", 0.7f);
+    mPPFogIntensity = cv->GetFloat("gShaderEffects.PP.Fog.Intensity", 0.0f);
+    mPPFogDensity = cv->GetFloat("gShaderEffects.PP.Fog.Density", 0.02f);
+    mPPFogHeightFalloff = cv->GetFloat("gShaderEffects.PP.Fog.HeightFalloff", 0.1f);
+
 #if defined(__SWITCH__)
     // Reset per-iteration VBO batching state.
     // The next DrawTriangles call will orphan the VBO.
@@ -894,6 +903,10 @@ void GfxRenderingAPIOGL::EndFrame() {
 }
 
 void GfxRenderingAPIOGL::FinishRender() {
+    bool anyPostProcess = (mPPSsaoIntensity > 0.0f) || (mPPBloomBlurIntensity > 0.0f) || (mPPFogIntensity > 0.0f);
+    if (anyPostProcess && mGameFbId > 0) {
+        RunPostProcess(mGameFbId);
+    }
 }
 
 int GfxRenderingAPIOGL::CreateFramebuffer() {
@@ -970,6 +983,23 @@ void GfxRenderingAPIOGL::UpdateFramebufferParameters(int fb_id, uint32_t width, 
         } else if (fb.has_depth_buffer && !has_depth_buffer) {
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, 0);
         }
+
+        // Create/update depth texture for post-processing reads (SSAO, fog)
+        if (has_depth_buffer && msaa_level <= 1 && can_extract_depth) {
+            if (fb.depthTex == 0) {
+                glGenTextures(1, &fb.depthTex);
+            }
+            if (fb.width != width || fb.height != height) {
+                glBindTexture(GL_TEXTURE_2D, fb.depthTex);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0,
+                             GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glBindTexture(GL_TEXTURE_2D, 0);
+            }
+        }
     }
 
     fb.width = width;
@@ -987,6 +1017,9 @@ void GfxRenderingAPIOGL::StartDrawToFramebuffer(int fb_id, float noise_scale) {
     }
     glBindFramebuffer(GL_FRAMEBUFFER, fb.fbo);
     mCurrentFrameBuffer = fb_id;
+    if (fb_id != 0) {
+        mGameFbId = fb_id;
+    }
 }
 
 void GfxRenderingAPIOGL::ClearFramebuffer(bool color, bool depth) {
@@ -1184,6 +1217,493 @@ void GfxRenderingAPIOGL::SetSrgbMode() {
 
 ImTextureID GfxRenderingAPIOGL::GetTextureById(int id) {
     return reinterpret_cast<ImTextureID>(id);
+}
+
+// ======================== Post-Processing Pipeline ========================
+
+static const char* kPostVS =
+#ifdef USE_OPENGLES
+    "#version 300 es\n"
+    "precision mediump float;\n"
+#else
+    "#version 130\n"
+#endif
+    "in vec2 aPos;\n"
+    "in vec2 aTexCoord;\n"
+    "out vec2 vUV;\n"
+    "void main() {\n"
+    "    vUV = aTexCoord;\n"
+    "    gl_Position = vec4(aPos, 0.0, 1.0);\n"
+    "}\n";
+
+// SSAO fragment shader (simplified screen-space AO from depth)
+static const char* kSsaoFS =
+#ifdef USE_OPENGLES
+    "#version 300 es\n"
+    "precision mediump float;\n"
+#else
+    "#version 130\n"
+#endif
+    "in vec2 vUV;\n"
+#ifdef USE_OPENGLES
+    "out vec4 fragColor;\n"
+#endif
+    "uniform sampler2D uDepthTex;\n"
+    "uniform float uIntensity;\n"
+    "uniform float uRadius;\n"
+    "uniform vec2 uTexelSize;\n"
+    "\n"
+    "float linearizeDepth(float d) {\n"
+    "    float near = 0.1; float far = 1000.0;\n"
+    "    return (2.0 * near) / (far + near - d * (far - near));\n"
+    "}\n"
+    "\n"
+    "void main() {\n"
+    "    float depth = linearizeDepth(texture(uDepthTex, vUV).r);\n"
+    "    float ao = 0.0;\n"
+    "    int samples = 8;\n"
+    "    float angle = 0.0;\n"
+    "    for (int i = 0; i < samples; i++) {\n"
+    "        angle = float(i) * 6.2831853 / float(samples);\n"
+    "        vec2 offset = vec2(cos(angle), sin(angle)) * uRadius * uTexelSize;\n"
+    "        float sampleDepth = linearizeDepth(texture(uDepthTex, vUV + offset).r);\n"
+    "        float diff = depth - sampleDepth;\n"
+    "        ao += step(0.001, diff) * smoothstep(0.0, 0.05, diff);\n"
+    "    }\n"
+    "    ao = 1.0 - (ao / float(samples)) * uIntensity;\n"
+    "    ao = clamp(ao, 0.75, 1.0);\n"
+#ifdef USE_OPENGLES
+    "    fragColor = vec4(ao, ao, ao, 1.0);\n"
+#else
+    "    gl_FragColor = vec4(ao, ao, ao, 1.0);\n"
+#endif
+    "}\n";
+
+// Bloom extract (bright-pass filter)
+static const char* kBloomExtractFS =
+#ifdef USE_OPENGLES
+    "#version 300 es\n"
+    "precision mediump float;\n"
+#else
+    "#version 130\n"
+#endif
+    "in vec2 vUV;\n"
+#ifdef USE_OPENGLES
+    "out vec4 fragColor;\n"
+#endif
+    "uniform sampler2D uColorTex;\n"
+    "uniform float uThreshold;\n"
+    "void main() {\n"
+    "    vec4 color = texture(uColorTex, vUV);\n"
+    "    float lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));\n"
+    "    float bright = max(0.0, lum - uThreshold);\n"
+    "    vec3 bloom = color.rgb * (bright / max(lum, 0.001));\n"
+#ifdef USE_OPENGLES
+    "    fragColor = vec4(bloom, 1.0);\n"
+#else
+    "    gl_FragColor = vec4(bloom, 1.0);\n"
+#endif
+    "}\n";
+
+// Bloom Gaussian blur (separable, direction set via uniform)
+static const char* kBloomBlurFS =
+#ifdef USE_OPENGLES
+    "#version 300 es\n"
+    "precision mediump float;\n"
+#else
+    "#version 130\n"
+#endif
+    "in vec2 vUV;\n"
+#ifdef USE_OPENGLES
+    "out vec4 fragColor;\n"
+#endif
+    "uniform sampler2D uTex;\n"
+    "uniform vec2 uDirection;\n"
+    "uniform vec2 uTexelSize;\n"
+    "void main() {\n"
+    "    vec3 result = vec3(0.0);\n"
+    "    float weights[5];\n"
+    "    weights[0] = 0.227027; weights[1] = 0.1945946;\n"
+    "    weights[2] = 0.1216216; weights[3] = 0.054054;\n"
+    "    weights[4] = 0.016216;\n"
+    "    result += texture(uTex, vUV).rgb * weights[0];\n"
+    "    for (int i = 1; i < 5; i++) {\n"
+    "        vec2 off = uDirection * uTexelSize * float(i);\n"
+    "        result += texture(uTex, vUV + off).rgb * weights[i];\n"
+    "        result += texture(uTex, vUV - off).rgb * weights[i];\n"
+    "    }\n"
+#ifdef USE_OPENGLES
+    "    fragColor = vec4(result, 1.0);\n"
+#else
+    "    gl_FragColor = vec4(result, 1.0);\n"
+#endif
+    "}\n";
+
+// Bloom compose (additive blend bloom onto scene)
+static const char* kBloomComposeFS =
+#ifdef USE_OPENGLES
+    "#version 300 es\n"
+    "precision mediump float;\n"
+#else
+    "#version 130\n"
+#endif
+    "in vec2 vUV;\n"
+#ifdef USE_OPENGLES
+    "out vec4 fragColor;\n"
+#endif
+    "uniform sampler2D uSceneTex;\n"
+    "uniform sampler2D uBloomTex;\n"
+    "uniform float uIntensity;\n"
+    "void main() {\n"
+    "    vec3 scene = texture(uSceneTex, vUV).rgb;\n"
+    "    vec3 bloom = texture(uBloomTex, vUV).rgb;\n"
+    "    vec3 result = scene + bloom * uIntensity;\n"
+#ifdef USE_OPENGLES
+    "    fragColor = vec4(clamp(result, 0.0, 1.0), 1.0);\n"
+#else
+    "    gl_FragColor = vec4(clamp(result, 0.0, 1.0), 1.0);\n"
+#endif
+    "}\n";
+
+// Height fog fragment shader
+static const char* kFogFS =
+#ifdef USE_OPENGLES
+    "#version 300 es\n"
+    "precision mediump float;\n"
+#else
+    "#version 130\n"
+#endif
+    "in vec2 vUV;\n"
+#ifdef USE_OPENGLES
+    "out vec4 fragColor;\n"
+#endif
+    "uniform sampler2D uColorTex;\n"
+    "uniform sampler2D uDepthTex;\n"
+    "uniform float uIntensity;\n"
+    "uniform float uDensity;\n"
+    "uniform float uHeightFalloff;\n"
+    "uniform vec3 uFogColor;\n"
+    "\n"
+    "float linearizeDepth(float d) {\n"
+    "    float near = 0.1; float far = 1000.0;\n"
+    "    return (2.0 * near) / (far + near - d * (far - near));\n"
+    "}\n"
+    "\n"
+    "void main() {\n"
+    "    vec3 color = texture(uColorTex, vUV).rgb;\n"
+    "    float depth = linearizeDepth(texture(uDepthTex, vUV).r);\n"
+    "    float dist = depth * 100.0;\n"
+    "    float heightFactor = exp(-vUV.y * uHeightFalloff);\n"
+    "    float fogAmount = 1.0 - exp(-dist * uDensity * heightFactor);\n"
+    "    fogAmount = clamp(fogAmount * uIntensity, 0.0, 0.85);\n"
+    "    vec3 result = mix(color, uFogColor, fogAmount);\n"
+#ifdef USE_OPENGLES
+    "    fragColor = vec4(result, 1.0);\n"
+#else
+    "    gl_FragColor = vec4(result, 1.0);\n"
+#endif
+    "}\n";
+
+GLuint GfxRenderingAPIOGL::CompilePostProcessShader(const char* vertSrc, const char* fragSrc) {
+    GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vs, 1, &vertSrc, NULL);
+    glCompileShader(vs);
+
+    GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fs, 1, &fragSrc, NULL);
+    glCompileShader(fs);
+
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glBindAttribLocation(prog, 0, "aPos");
+    glBindAttribLocation(prog, 1, "aTexCoord");
+    glLinkProgram(prog);
+
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    return prog;
+}
+
+void GfxRenderingAPIOGL::InitPostProcess() {
+    if (mPostProcess.initialized) return;
+
+    // Fullscreen quad
+    float quadVerts[] = {
+        // positions   texcoords
+        -1.f, -1.f,    0.f, 0.f,
+         1.f, -1.f,    1.f, 0.f,
+        -1.f,  1.f,    0.f, 1.f,
+         1.f,  1.f,    1.f, 1.f,
+    };
+
+    glGenBuffers(1, &mPostProcess.quadVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, mPostProcess.quadVbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVerts), quadVerts, GL_STATIC_DRAW);
+
+#if defined(__APPLE__) || defined(USE_OPENGLES)
+    glGenVertexArrays(1, &mPostProcess.quadVao);
+    glBindVertexArray(mPostProcess.quadVao);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    glBindVertexArray(0);
+#endif
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    // Compile shaders
+    mPostProcess.ssaoProgram = CompilePostProcessShader(kPostVS, kSsaoFS);
+    mPostProcess.bloomExtractProgram = CompilePostProcessShader(kPostVS, kBloomExtractFS);
+    mPostProcess.bloomBlurProgram = CompilePostProcessShader(kPostVS, kBloomBlurFS);
+    mPostProcess.bloomComposeProgram = CompilePostProcessShader(kPostVS, kBloomComposeFS);
+    mPostProcess.fogProgram = CompilePostProcessShader(kPostVS, kFogFS);
+
+    mPostProcess.initialized = true;
+}
+
+static void EnsureFboTexture(GLuint& fbo, GLuint& tex, uint32_t w, uint32_t h) {
+    if (fbo == 0) {
+        glGenFramebuffers(1, &fbo);
+        glGenTextures(1, &tex);
+    }
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void GfxRenderingAPIOGL::DrawFullscreenQuad() {
+#if defined(__APPLE__) || defined(USE_OPENGLES)
+    glBindVertexArray(mPostProcess.quadVao);
+#else
+    glBindBuffer(GL_ARRAY_BUFFER, mPostProcess.quadVbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+#endif
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+#if defined(__APPLE__) || defined(USE_OPENGLES)
+    glBindVertexArray(0);
+#else
+    glDisableVertexAttribArray(0);
+    glDisableVertexAttribArray(1);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+#endif
+}
+
+void GfxRenderingAPIOGL::RunPostProcess(int gameFbId) {
+    if (gameFbId <= 0 || gameFbId >= (int)mFrameBuffers.size()) return;
+    FramebufferOGL& gameFb = mFrameBuffers[gameFbId];
+    if (gameFb.width == 0 || gameFb.height == 0) return;
+
+    InitPostProcess();
+
+    uint32_t w = gameFb.width;
+    uint32_t h = gameFb.height;
+
+    // Resize post-processing FBOs if needed
+    if (mPostProcess.fbWidth != w || mPostProcess.fbHeight != h) {
+        EnsureFboTexture(mPostProcess.ssaoFbo, mPostProcess.ssaoTex, w, h);
+        uint32_t bw = w / 2, bh = h / 2;
+        EnsureFboTexture(mPostProcess.bloomFbo[0], mPostProcess.bloomTex[0], bw, bh);
+        EnsureFboTexture(mPostProcess.bloomFbo[1], mPostProcess.bloomTex[1], bw, bh);
+        EnsureFboTexture(mPostProcess.compositeFbo, mPostProcess.compositeTex, w, h);
+        mPostProcess.fbWidth = w;
+        mPostProcess.fbHeight = h;
+    }
+
+    // Save GL state
+    GLboolean prevDepthTest;
+    glGetBooleanv(GL_DEPTH_TEST, &prevDepthTest);
+    GLboolean prevScissorTest;
+    glGetBooleanv(GL_SCISSOR_TEST, &prevScissorTest);
+    GLboolean prevBlend;
+    glGetBooleanv(GL_BLEND, &prevBlend);
+    GLint prevFbo;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
+
+    GLuint sceneTex = gameFb.clrbuf;
+    float texelW = 1.0f / (float)w;
+    float texelH = 1.0f / (float)h;
+
+    // Copy depth renderbuffer to depth texture if SSAO or fog is active
+    bool needsDepth = (mPPSsaoIntensity > 0.0f || mPPFogIntensity > 0.0f) && gameFb.depthTex != 0;
+    if (needsDepth) {
+        // Blit depth from game FB renderbuffer to a temporary FBO with depth texture
+        // We use a temporary FBO with the depth texture attached
+        GLuint tmpFbo;
+        glGenFramebuffers(1, &tmpFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, tmpFbo);
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, gameFb.depthTex, 0);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, gameFb.fbo);
+        glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        glDeleteFramebuffers(1, &tmpFbo);
+    }
+
+    // --- SSAO Pass ---
+    if (mPPSsaoIntensity > 0.0f && gameFb.depthTex != 0) {
+        glBindFramebuffer(GL_FRAMEBUFFER, mPostProcess.ssaoFbo);
+        glViewport(0, 0, w, h);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(mPostProcess.ssaoProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, gameFb.depthTex);
+        glUniform1i(glGetUniformLocation(mPostProcess.ssaoProgram, "uDepthTex"), 0);
+        glUniform1f(glGetUniformLocation(mPostProcess.ssaoProgram, "uIntensity"), mPPSsaoIntensity);
+        glUniform1f(glGetUniformLocation(mPostProcess.ssaoProgram, "uRadius"), mPPSsaoRadius);
+        glUniform2f(glGetUniformLocation(mPostProcess.ssaoProgram, "uTexelSize"), texelW, texelH);
+
+        DrawFullscreenQuad();
+
+        // Multiply SSAO onto scene: render scene * AO into composite
+        glBindFramebuffer(GL_FRAMEBUFFER, mPostProcess.compositeFbo);
+        glViewport(0, 0, w, h);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // Simple multiply: use bloom compose shader with scene as base, SSAO as "bloom" at intensity=-1
+        // Actually, we need a different approach. Let's use blending:
+        // First, copy scene to composite
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, gameFb.fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mPostProcess.compositeFbo);
+        glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+        // Then multiply with SSAO using blend
+        glBindFramebuffer(GL_FRAMEBUFFER, mPostProcess.compositeFbo);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_DST_COLOR, GL_ZERO); // Multiply blend
+
+        glUseProgram(mPostProcess.bloomComposeProgram); // Reuse as passthrough
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, mPostProcess.ssaoTex);
+        glUniform1i(glGetUniformLocation(mPostProcess.bloomComposeProgram, "uSceneTex"), 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, mPostProcess.ssaoTex); // dummy
+        glUniform1i(glGetUniformLocation(mPostProcess.bloomComposeProgram, "uBloomTex"), 1);
+        glUniform1f(glGetUniformLocation(mPostProcess.bloomComposeProgram, "uIntensity"), 0.0f);
+
+        DrawFullscreenQuad();
+        glDisable(GL_BLEND);
+
+        // Copy composite back to game FB
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, mPostProcess.compositeFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, gameFb.fbo);
+        glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    // --- Bloom Pass ---
+    if (mPPBloomBlurIntensity > 0.0f) {
+        uint32_t bw = w / 2, bh = h / 2;
+
+        // Extract bright pixels
+        glBindFramebuffer(GL_FRAMEBUFFER, mPostProcess.bloomFbo[0]);
+        glViewport(0, 0, bw, bh);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(mPostProcess.bloomExtractProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneTex);
+        glUniform1i(glGetUniformLocation(mPostProcess.bloomExtractProgram, "uColorTex"), 0);
+        glUniform1f(glGetUniformLocation(mPostProcess.bloomExtractProgram, "uThreshold"), mPPBloomBlurThreshold);
+
+        DrawFullscreenQuad();
+
+        // Horizontal blur
+        glBindFramebuffer(GL_FRAMEBUFFER, mPostProcess.bloomFbo[1]);
+        glViewport(0, 0, bw, bh);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(mPostProcess.bloomBlurProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, mPostProcess.bloomTex[0]);
+        glUniform1i(glGetUniformLocation(mPostProcess.bloomBlurProgram, "uTex"), 0);
+        glUniform2f(glGetUniformLocation(mPostProcess.bloomBlurProgram, "uDirection"), 1.0f, 0.0f);
+        glUniform2f(glGetUniformLocation(mPostProcess.bloomBlurProgram, "uTexelSize"), 1.0f / (float)bw, 1.0f / (float)bh);
+
+        DrawFullscreenQuad();
+
+        // Vertical blur
+        glBindFramebuffer(GL_FRAMEBUFFER, mPostProcess.bloomFbo[0]);
+        glViewport(0, 0, bw, bh);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, mPostProcess.bloomTex[1]);
+        glUniform2f(glGetUniformLocation(mPostProcess.bloomBlurProgram, "uDirection"), 0.0f, 1.0f);
+
+        DrawFullscreenQuad();
+
+        // Compose bloom onto scene
+        glBindFramebuffer(GL_FRAMEBUFFER, mPostProcess.compositeFbo);
+        glViewport(0, 0, w, h);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(mPostProcess.bloomComposeProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneTex);
+        glUniform1i(glGetUniformLocation(mPostProcess.bloomComposeProgram, "uSceneTex"), 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, mPostProcess.bloomTex[0]);
+        glUniform1i(glGetUniformLocation(mPostProcess.bloomComposeProgram, "uBloomTex"), 1);
+        glUniform1f(glGetUniformLocation(mPostProcess.bloomComposeProgram, "uIntensity"), mPPBloomBlurIntensity);
+
+        DrawFullscreenQuad();
+
+        // Copy composite back to game FB
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, mPostProcess.compositeFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, gameFb.fbo);
+        glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    // --- Height Fog Pass ---
+    if (mPPFogIntensity > 0.0f && gameFb.depthTex != 0) {
+        glBindFramebuffer(GL_FRAMEBUFFER, mPostProcess.compositeFbo);
+        glViewport(0, 0, w, h);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(mPostProcess.fogProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneTex);
+        glUniform1i(glGetUniformLocation(mPostProcess.fogProgram, "uColorTex"), 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, gameFb.depthTex);
+        glUniform1i(glGetUniformLocation(mPostProcess.fogProgram, "uDepthTex"), 1);
+        glUniform1f(glGetUniformLocation(mPostProcess.fogProgram, "uIntensity"), mPPFogIntensity);
+        glUniform1f(glGetUniformLocation(mPostProcess.fogProgram, "uDensity"), mPPFogDensity);
+        glUniform1f(glGetUniformLocation(mPostProcess.fogProgram, "uHeightFalloff"), mPPFogHeightFalloff);
+        glUniform3f(glGetUniformLocation(mPostProcess.fogProgram, "uFogColor"), 0.7f, 0.75f, 0.8f);
+
+        DrawFullscreenQuad();
+
+        // Copy composite back to game FB
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, mPostProcess.compositeFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, gameFb.fbo);
+        glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    // Restore GL state
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
+    if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (prevScissorTest) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+    if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+
+    // Restore game shader state
+    if (mCurrentShaderProgram) {
+        glUseProgram(mCurrentShaderProgram->openglProgramId);
+    }
 }
 } // namespace Fast
 #endif

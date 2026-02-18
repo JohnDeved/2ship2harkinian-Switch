@@ -67,6 +67,36 @@ struct FramebufferOGL {
     bool invertY;
 
     GLuint fbo, clrbuf, clrbufMsaa, rbo;
+    GLuint depthTex = 0; // Depth texture for post-processing reads
+};
+
+// Post-processing pipeline resources
+struct PostProcessOGL {
+    bool initialized = false;
+    GLuint quadVao = 0;
+    GLuint quadVbo = 0;
+
+    // SSAO pass
+    GLuint ssaoProgram = 0;
+    GLuint ssaoFbo = 0;
+    GLuint ssaoTex = 0;
+
+    // Bloom passes (downsample + blur)
+    GLuint bloomExtractProgram = 0;
+    GLuint bloomBlurProgram = 0;
+    GLuint bloomComposeProgram = 0;
+    GLuint bloomFbo[2] = {};
+    GLuint bloomTex[2] = {};
+
+    // Height fog pass
+    GLuint fogProgram = 0;
+
+    // Intermediate framebuffer for compositing
+    GLuint compositeFbo = 0;
+    GLuint compositeTex = 0;
+
+    uint32_t fbWidth = 0;
+    uint32_t fbHeight = 0;
 };
 
 // Hash for shader program pool key (same approach as Metal backend)
@@ -184,6 +214,24 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     float mShaderVignette = 0.0f;
     float mShaderViewportWidth = 0.0f;
     float mShaderViewportHeight = 0.0f;
+
+    // Post-processing CVars
+    float mPPSsaoIntensity = 0.0f;
+    float mPPSsaoRadius = 0.5f;
+    float mPPBloomBlurIntensity = 0.0f;
+    float mPPBloomBlurThreshold = 0.7f;
+    float mPPFogIntensity = 0.0f;
+    float mPPFogDensity = 0.02f;
+    float mPPFogHeightFalloff = 0.1f;
+
+    // Post-processing resources
+    PostProcessOGL mPostProcess;
+    int mGameFbId = 0; // Tracks which FB the game renders to
+
+    void InitPostProcess();
+    void RunPostProcess(int gameFbId);
+    GLuint CompilePostProcessShader(const char* vertSrc, const char* fragSrc);
+    void DrawFullscreenQuad();
 
     GLint mMaxMsaaLevel = 1;
     GLuint mPixelDepthRb = 0;

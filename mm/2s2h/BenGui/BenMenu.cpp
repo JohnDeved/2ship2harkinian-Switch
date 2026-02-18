@@ -731,6 +731,65 @@ void BenMenu::AddSettings() {
                      .Max(2.0f)
                      .DefaultValue(0.0f));
 
+    AddWidget(path, "Post-Processing Effects", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "SSAO Intensity: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.PP.SSAO.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Screen-space ambient occlusion (§5.2). Adds contact shadows at "
+                              "edges and crevices for depth. Clamped to avoid dirtying textures. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(2.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "SSAO Radius: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.PP.SSAO.Radius")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Sample radius for SSAO. Larger = broader shadows, smaller = tighter contact.")
+                     .IsPercentage()
+                     .Min(0.1f)
+                     .Max(2.0f)
+                     .DefaultValue(0.5f));
+    AddWidget(path, "Bloom Blur: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.PP.Bloom.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Multi-pass Gaussian bloom (§10.3). Bright areas glow with soft blur. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(2.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Bloom Threshold: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.PP.Bloom.Threshold")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Luminance threshold for bloom. Only pixels brighter than this glow.")
+                     .IsPercentage()
+                     .Min(0.3f)
+                     .Max(1.0f)
+                     .DefaultValue(0.7f));
+    AddWidget(path, "Height Fog: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.PP.Fog.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Height-based atmospheric fog (§7.1). Distance + height-driven fog for depth. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(2.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Fog Density: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.PP.Fog.Density")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Fog density per unit distance. Higher = thicker fog.")
+                     .IsPercentage()
+                     .Min(0.005f)
+                     .Max(0.1f)
+                     .DefaultValue(0.02f));
+    AddWidget(path, "Fog Height Falloff: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.PP.Fog.HeightFalloff")
+        .Options(FloatSliderOptions()
+                     .Tooltip("How quickly fog thins with height. Lower = fog sits lower to ground.")
+                     .IsPercentage()
+                     .Min(0.01f)
+                     .Max(1.0f)
+                     .DefaultValue(0.1f));
+
     path.sidebarName = "Controls";
     AddSidebarEntry("Settings", "Controls", 1);
     AddWidget(path, "Popout Bindings Window", WIDGET_WINDOW_BUTTON)

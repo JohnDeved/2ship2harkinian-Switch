@@ -55,91 +55,9 @@ void QuickBarOverlayWindow::Draw() {
     QuickBarState& state = GetQuickBarState();
     ImVec2 viewport = ImGui::GetIO().DisplaySize;
 
-    // ─── D-pad HUD (matches native Dpad Equips rendering exactly) ──────────────
-    // Native: gDPadTex at (271,55) 32x32 on 320x240 canvas
-    // Icons: 16x16 at RIGHT(295,63), LEFT(263,63), DOWN(279,79), UP(279,47)
-    {
-        ImGuiWindowFlags dpadFlags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
-                                     ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking |
-                                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
-                                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
-                                     ImGuiWindowFlags_NoBackground;
-
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-
-        // Scale from N64 320x240 canvas to actual viewport
-        float scaleX = viewport.x / 320.0f;
-        float scaleY = viewport.y / 240.0f;
-
-        // D-pad background position/size matching native gDPadTex
-        float dpadBgX = 271.0f * scaleX;
-        float dpadBgY = 55.0f * scaleY;
-        float dpadBgW = 32.0f * scaleX;
-        float dpadBgH = 32.0f * scaleY;
-
-        // Window covers the full D-pad area (icons extend beyond the 32x32 bg)
-        float winLeft = 263.0f * scaleX - 2;
-        float winTop = 47.0f * scaleY - 2;
-        float winRight = (295.0f + 16.0f) * scaleX + 2;
-        float winBottom = (79.0f + 16.0f) * scaleY + 2;
-
-        ImGui::SetNextWindowPos(ImVec2(winLeft, winTop), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(winRight - winLeft, winBottom - winTop));
-        ImGui::Begin("QuickBarDpad", nullptr, dpadFlags);
-
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-
-        // Draw D-pad cross background (dark semi-transparent, matching native style)
-        // Vertical bar
-        float crossW = 14.0f * scaleX;
-        float crossH = dpadBgH;
-        float crossCX = dpadBgX + dpadBgW * 0.5f;
-        float crossCY = dpadBgY + dpadBgH * 0.5f;
-        dl->AddRectFilled(ImVec2(crossCX - crossW * 0.5f, crossCY - crossH * 0.5f - 4 * scaleY),
-                          ImVec2(crossCX + crossW * 0.5f, crossCY + crossH * 0.5f + 4 * scaleY),
-                          IM_COL32(0, 0, 0, 120), 2.0f);
-        // Horizontal bar
-        dl->AddRectFilled(ImVec2(crossCX - crossH * 0.5f - 4 * scaleX, crossCY - crossW * 0.5f),
-                          ImVec2(crossCX + crossH * 0.5f + 4 * scaleX, crossCY + crossW * 0.5f),
-                          IM_COL32(0, 0, 0, 120), 2.0f);
-
-        // Draw item icons at exact native N64 coordinates
-        struct DpadSlot {
-            float nx, ny;  // N64 coordinates
-            int itemId;
-            QuickBarCategory cat;
-        };
-
-        DpadSlot slots[4] = {
-            { 279.0f, 47.0f, state.lastUsed[QB_CAT_MASKS], QB_CAT_MASKS },     // UP
-            { 295.0f, 63.0f, state.lastUsed[QB_CAT_TOOLS], QB_CAT_TOOLS },     // RIGHT
-            { 279.0f, 79.0f, state.lastUsed[QB_CAT_BOTTLES], QB_CAT_BOTTLES },  // DOWN
-            { 263.0f, 63.0f, ITEM_OCARINA_OF_TIME, QB_CAT_SONGS }               // LEFT (always ocarina)
-        };
-
-        float iconW = 16.0f * scaleX;
-        float iconH = 16.0f * scaleY;
-
-        for (int i = 0; i < 4; i++) {
-            int itemId = slots[i].itemId;
-            if (itemId < 0) continue;
-
-            ImTextureID tex = GetItemTexture(itemId, slots[i].cat);
-            if (tex) {
-                float ix = slots[i].nx * scaleX;
-                float iy = slots[i].ny * scaleY;
-                // Convert from screen coords to window-local coords
-                ImGui::SetCursorPos(ImVec2(ix - winLeft, iy - winTop));
-                ImGui::Image(tex, ImVec2(iconW, iconH), ImVec2(0, 0), ImVec2(1, 1),
-                             ImVec4(1, 1, 1, 0.9f), ImVec4(0, 0, 0, 0));
-            }
-        }
-
-        ImGui::End();
-        ImGui::PopStyleVar(3);
-    }
+    // ─── D-pad HUD is rendered by the native system (z_parameter.c) ────────────
+    // QuickBar populates the DPAD equip slots via SyncDpadFromQuickBar()
+    // and z_parameter.c draws the D-pad when QuickBar is enabled.
 
     // ─── QuickBar overlay (BotW-style centered carousel) ────────────────────
     if (!state.isOpen || state.currentItems.empty()) return;

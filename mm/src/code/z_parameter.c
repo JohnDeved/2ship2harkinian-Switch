@@ -5898,7 +5898,7 @@ void Interface_DrawItemButtons(PlayState* play) {
     gDPSetCombineMode(OVERLAY_DISP++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
 
     // #region 2S2H [Dpad]
-    if (CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0)) {
+    if (CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0) || CVarGetInteger("gEnhancements.Equipment.QuickBar", 0)) {
         s16 dpadAlpha =
             MAX(MAX(MAX(interfaceCtx->shipInterface.dpad.dRightAlpha, interfaceCtx->shipInterface.dpad.dLeftAlpha),
                     interfaceCtx->shipInterface.dpad.dDownAlpha),
@@ -9291,7 +9291,7 @@ void Interface_Draw(PlayState* play) {
         Interface_DrawCButtonIcons(play);
 
         // #region 2S2H [Dpad]
-        if (CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0)) {
+        if (CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0) || CVarGetInteger("gEnhancements.Equipment.QuickBar", 0)) {
             Interface_DrawDButtonIcons(play);
         }
         // #endregion

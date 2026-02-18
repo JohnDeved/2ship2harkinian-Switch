@@ -11,6 +11,7 @@ extern "C" {
 #include "z64save.h"
 void Player_UseItem(PlayState* play, Player* thisx, ItemId item);
 void Interface_LoadItemIconImpl(PlayState* play, u8 btn);
+void Interface_Dpad_LoadItemIconImpl(PlayState* play, u8 btn);
 }
 
 #define CVAR_NAME "gEnhancements.Equipment.QuickBar"
@@ -192,6 +193,53 @@ static int GetSlotForItem(int itemId) {
         case ITEM_PICTOGRAPH_BOX: return SLOT_PICTOGRAPH_BOX;
         case ITEM_SWORD_GREAT_FAIRY: return SLOT_SWORD_GREAT_FAIRY;
         default: return SLOT_NONE;
+    }
+}
+
+static int GetSlotForAnyItem(int itemId) {
+    // Tools
+    int slot = GetSlotForItem(itemId);
+    if (slot != SLOT_NONE) return slot;
+    // Ocarina
+    if (itemId == ITEM_OCARINA_OF_TIME) return SLOT_OCARINA;
+    // Masks
+    if (itemId >= ITEM_MASK_DEKU && itemId <= ITEM_MASK_GIANT) {
+        for (int s = SLOT_MASK_POSTMAN; s <= SLOT_MASK_FIERCE_DEITY; s++) {
+            if (gSaveContext.save.saveInfo.inventory.items[s] == (u8)itemId) return s;
+        }
+    }
+    // Bottles
+    for (int s = SLOT_BOTTLE_1; s <= SLOT_BOTTLE_6; s++) {
+        if (gSaveContext.save.saveInfo.inventory.items[s] == (u8)itemId) return s;
+    }
+    return SLOT_NONE;
+}
+
+// Sync DPAD equip slots with QuickBar last-used items so the native
+// Dpad HUD rendering shows QuickBar items instead of DpadEquips items
+static void SyncDpadFromQuickBar() {
+    if (gPlayState == nullptr) return;
+    struct { QuickBarCategory cat; int dpadSlot; int defaultItem; } mapping[4] = {
+        { QB_CAT_MASKS,   EQUIP_SLOT_D_UP,    -1 },
+        { QB_CAT_TOOLS,   EQUIP_SLOT_D_RIGHT,  -1 },
+        { QB_CAT_BOTTLES, EQUIP_SLOT_D_DOWN,   -1 },
+        { QB_CAT_SONGS,   EQUIP_SLOT_D_LEFT,   ITEM_OCARINA_OF_TIME },
+    };
+    for (int i = 0; i < 4; i++) {
+        int itemId = mapping[i].defaultItem >= 0 ? mapping[i].defaultItem : sState.lastUsed[mapping[i].cat];
+        int dSlot = mapping[i].dpadSlot;
+        if (itemId >= 0) {
+            DPAD_SET_CUR_FORM_BTN_ITEM(dSlot, itemId);
+            int invSlot = GetSlotForAnyItem(itemId);
+            if (invSlot != SLOT_NONE) {
+                DPAD_SET_CUR_FORM_BTN_SLOT(dSlot, invSlot);
+            }
+            gSaveContext.shipSaveContext.dpad.status[dSlot] = BTN_ENABLED;
+            Interface_Dpad_LoadItemIconImpl(gPlayState, dSlot);
+        } else {
+            DPAD_SET_CUR_FORM_BTN_ITEM(dSlot, ITEM_NONE);
+            gSaveContext.shipSaveContext.dpad.status[dSlot] = BTN_DISABLED;
+        }
     }
 }
 
@@ -471,10 +519,10 @@ static void QuickBarPreMain() {
         input->cur.right_stick_y = 0;
 
         // Also zero left stick to freeze player movement
-        input->cur.x = 0;
-        input->cur.y = 0;
-        input->rel.x = 0;
-        input->rel.y = 0;
+        input->cur.stick_x = 0;
+        input->cur.stick_y = 0;
+        input->rel.stick_x = 0;
+        input->rel.stick_y = 0;
 
         // Enforce slow-motion every frame (game may try to reset R_UPDATE_RATE)
         if (sSavedUpdateRate > 0) {
@@ -572,6 +620,9 @@ static void QuickBarUpdate() {
         input->cur.button   &= ~(BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT);
         // Right stick already consumed in PreMain
     }
+
+    // Sync DPAD equip slots so native rendering shows QuickBar items
+    SyncDpadFromQuickBar();
 }
 
 // ─── Registration ───────────────────────────────────────────────────────────

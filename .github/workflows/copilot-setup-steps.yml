@@ -33,17 +33,15 @@ jobs:
             ccache
 
       - name: Set up ccache
-        env:
-          CCACHE_DIR: /home/runner/.ccache
         run: |
+          export CCACHE_DIR=/home/runner/.ccache
           echo "/usr/lib/ccache" >> "$GITHUB_PATH"
           ccache --zero-stats
           ccache --max-size=500M
 
       - name: Build and install SDL2 from source
-        env:
-          SDL2_VERSION: "2.30.3"
         run: |
+          SDL2_VERSION="2.30.3"
           wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-${SDL2_VERSION}.tar.gz"
           tar -xzf "SDL2-${SDL2_VERSION}.tar.gz"
           cd "SDL2-${SDL2_VERSION}"
@@ -53,9 +51,8 @@ jobs:
           sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
 
       - name: Build and install tinyxml2 from source
-        env:
-          TINYXML2_VERSION: "10.0.0"
         run: |
+          TINYXML2_VERSION="10.0.0"
           sudo apt-get remove -y libtinyxml2-dev
           wget -q "https://github.com/leethomason/tinyxml2/archive/refs/tags/${TINYXML2_VERSION}.tar.gz"
           tar -xzf "${TINYXML2_VERSION}.tar.gz"
@@ -67,13 +64,12 @@ jobs:
           sudo ldconfig
 
       - name: Pre-configure cmake build
-        env:
-          CCACHE_DIR: /home/runner/.ccache
-          CCACHE_COMPILERCHECK: content
-          CCACHE_SLOPPINESS: include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
-          CCACHE_BASEDIR: /home/runner/work/2ship2harkinian-Switch/2ship2harkinian-Switch
-          CCACHE_NOHASHDIR: "1"
         run: |
+          export CCACHE_DIR=/home/runner/.ccache
+          export CCACHE_COMPILERCHECK=content
+          export CCACHE_SLOPPINESS=include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
+          export CCACHE_BASEDIR=/home/runner/work/2ship2harkinian-Switch/2ship2harkinian-Switch
+          export CCACHE_NOHASHDIR="1"
           cmake --no-warn-unused-cli \
             -H. -Bbuild-cmake \
             -GNinja \
@@ -82,6 +78,6 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
       - name: Show ccache stats
-        env:
-          CCACHE_DIR: /home/runner/.ccache
-        run: ccache --show-stats
+        run: |
+          export CCACHE_DIR=/home/runner/.ccache
+          ccache --show-stats

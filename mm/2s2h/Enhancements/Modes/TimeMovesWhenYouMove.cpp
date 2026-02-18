@@ -63,19 +63,14 @@ void RegisterTimeMovesWhenYouMove() {
     COND_ID_HOOK(OnActorUpdate, ACTOR_PLAYER, CVAR, [](Actor* actor) {
         Player* player = GET_PLAYER(gPlayState);
 
-        // Detect movement from "Move while aiming" (first-person walk): that feature directly
-        // modifies actor.world.pos without updating speedXZ, so check stick input instead.
-        bool isMovingInFirstPerson = false;
-        if ((player->stateFlags1 & PLAYER_STATE1_100000) &&
-            CVarGetInteger("gEnhancements.Camera.FirstPerson.MoveInFirstPerson", 0) &&
-            CVarGetInteger("gEnhancements.Camera.FirstPerson.RightStickEnabled", 0)) {
-            Input* input = CONTROLLER1(&gPlayState->state);
-            isMovingInFirstPerson = (input->rel.stick_x != 0) || (input->rel.stick_y != 0);
-        }
+        // Detect actual position changes (covers "Move while aiming" and any other feature that
+        // directly modifies actor.world.pos without updating speedXZ).
+        bool positionChanged = (player->actor.world.pos.x != player->actor.prevPos.x) ||
+                               (player->actor.world.pos.z != player->actor.prevPos.z);
 
         bool timeShouldMove = (player->stateFlags2 & PLAYER_STATE2_USING_OCARINA) || player->speedXZ != 0.0f ||
                               Play_InCsMode(gPlayState) || (player->stateFlags1 & PLAYER_STATE1_20) ||
-                              isMovingInFirstPerson;
+                              positionChanged;
 
         if (timeShouldMove && sStoredTimeOffset != DEFAULT_TIME_OFFSET) {
             gSaveContext.save.timeSpeedOffset = sStoredTimeOffset;

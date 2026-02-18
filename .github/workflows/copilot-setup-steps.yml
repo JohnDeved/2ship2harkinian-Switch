@@ -23,6 +23,8 @@ jobs:
       CCACHE_MAXSIZE: 500M
       CCACHE_COMPILERCHECK: content
       CCACHE_SLOPPINESS: include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
+      SDL2_VERSION: "2.30.3"
+      TINYXML2_VERSION: "10.0.0"
 
     steps:
       - name: Checkout code
@@ -40,19 +42,15 @@ jobs:
 
       - name: Set up ccache
         run: |
-          sudo ln -sf "$(which ccache)" /usr/local/bin/gcc
-          sudo ln -sf "$(which ccache)" /usr/local/bin/g++
-          sudo ln -sf "$(which ccache)" /usr/local/bin/cc
-          sudo ln -sf "$(which ccache)" /usr/local/bin/c++
+          echo "/usr/lib/ccache" >> "$GITHUB_PATH"
           ccache --zero-stats
           ccache --max-size=$CCACHE_MAXSIZE
 
       - name: Build and install SDL2 from source
         run: |
-          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
-          wget -q https://github.com/libsdl-org/SDL/releases/download/release-2.30.3/SDL2-2.30.3.tar.gz
-          tar -xzf SDL2-2.30.3.tar.gz
-          cd SDL2-2.30.3
+          wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-${SDL2_VERSION}.tar.gz"
+          tar -xzf "SDL2-${SDL2_VERSION}.tar.gz"
+          cd "SDL2-${SDL2_VERSION}"
           ./configure --enable-hidapi-libusb
           make -j $(nproc)
           sudo make install
@@ -60,11 +58,10 @@ jobs:
 
       - name: Build and install tinyxml2 from source
         run: |
-          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
           sudo apt-get remove -y libtinyxml2-dev
-          wget -q https://github.com/leethomason/tinyxml2/archive/refs/tags/10.0.0.tar.gz
-          tar -xzf 10.0.0.tar.gz
-          cd tinyxml2-10.0.0
+          wget -q "https://github.com/leethomason/tinyxml2/archive/refs/tags/${TINYXML2_VERSION}.tar.gz"
+          tar -xzf "${TINYXML2_VERSION}.tar.gz"
+          cd "tinyxml2-${TINYXML2_VERSION}"
           mkdir -p build && cd build
           cmake ..
           make -j $(nproc)
@@ -72,7 +69,6 @@ jobs:
 
       - name: Pre-configure cmake build
         run: |
-          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
           cmake --no-warn-unused-cli \
             -H. -Bbuild-cmake \
             -GNinja \

@@ -1053,6 +1053,10 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Manual Jump", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ManualJump")
         .Options(CheckboxOptions().Tooltip("Z + A to Jump and B while midair to Jump Attack."));
+    AddWidget(path, "Right Stick Target Switching", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.RightStickTargetSwitch")
+        .Options(CheckboxOptions().Tooltip(
+            "While Z-targeting, push the right stick left or right to switch between nearby targets."));
     AddWidget(path, "Dpad Equips", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Dpad.DpadEquips")
         .Options(CheckboxOptions().Tooltip("Allows you to equip items to your D-pad."));

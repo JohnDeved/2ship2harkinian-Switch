@@ -14,6 +14,8 @@ extern Vec3f Camera_CalcUpVec(s16 pitch, s16 yaw, s16 roll);
 }
 
 #define CAMERA_DEBUG_DEFAULT_PORT 1
+#define CAMERA_ROTATION_SMOOTH_FACTOR 0.3f
+#define CAMERA_MOVEMENT_SMOOTH_FACTOR 0.25f
 
 // Static Data Used For Free Camera
 static bool sDebugCamRefreshParams = true;
@@ -171,7 +173,7 @@ void Camera_DebugCam(Camera* camera) {
                       (CVarGetFloat("gEnhancements.Camera.RightStick.CameraSensitivity.Y", 1.0f)) *
                       -GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_Y);
 
-    f32 smoothFactor = 0.3f;
+    f32 smoothFactor = CAMERA_ROTATION_SMOOTH_FACTOR;
     sSmoothedYaw = Camera_ScaledStepToCeilF(targetYaw, sSmoothedYaw, smoothFactor, 0.1f);
     sSmoothedPitch = Camera_ScaledStepToCeilF(targetPitch, sSmoothedPitch, smoothFactor, 0.1f);
 
@@ -207,7 +209,7 @@ void Camera_DebugCam(Camera* camera) {
     f32 targetMoveZ = -sCamPlayState->state.input[controllerPort].cur.stick_y * camSpeed;
 
     // Smooth step towards target for fluid acceleration/deceleration
-    f32 moveSmoothFactor = 0.25f;
+    f32 moveSmoothFactor = CAMERA_MOVEMENT_SMOOTH_FACTOR;
     sSmoothedMoveX = Camera_ScaledStepToCeilF(targetMoveX, sSmoothedMoveX, moveSmoothFactor, 0.01f);
     sSmoothedMoveY = Camera_ScaledStepToCeilF(targetMoveY, sSmoothedMoveY, moveSmoothFactor, 0.01f);
     sSmoothedMoveZ = Camera_ScaledStepToCeilF(targetMoveZ, sSmoothedMoveZ, moveSmoothFactor, 0.01f);

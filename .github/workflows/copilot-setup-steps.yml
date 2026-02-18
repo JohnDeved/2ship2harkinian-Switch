@@ -1,0 +1,82 @@
+name: "Copilot Setup Steps"
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
+  copilot-setup-steps:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    env:
+      CCACHE_DIR: /home/runner/.ccache
+      CCACHE_MAXSIZE: 500M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
+      SDL2_VERSION: "2.30.3"
+      TINYXML2_VERSION: "10.0.0"
+      CCACHE_BASEDIR: /home/runner/work/2ship2harkinian-Switch/2ship2harkinian-Switch
+      CCACHE_NOHASHDIR: 1
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            $(cat .github/workflows/apt-deps.txt) \
+            libzip-dev zipcmp zipmerge ziptool \
+            ccache
+
+      - name: Set up ccache
+        run: |
+          echo "/usr/lib/ccache" >> "$GITHUB_PATH"
+          ccache --zero-stats
+          ccache --max-size=$CCACHE_MAXSIZE
+
+      - name: Build and install SDL2 from source
+        run: |
+          wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-${SDL2_VERSION}.tar.gz"
+          tar -xzf "SDL2-${SDL2_VERSION}.tar.gz"
+          cd "SDL2-${SDL2_VERSION}"
+          ./configure --enable-hidapi-libusb
+          make -j $(nproc)
+          sudo make install
+          sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
+
+      - name: Build and install tinyxml2 from source
+        run: |
+          sudo apt-get remove -y libtinyxml2-dev
+          wget -q "https://github.com/leethomason/tinyxml2/archive/refs/tags/${TINYXML2_VERSION}.tar.gz"
+          tar -xzf "${TINYXML2_VERSION}.tar.gz"
+          cd "tinyxml2-${TINYXML2_VERSION}"
+          mkdir -p build && cd build
+          cmake ..
+          make -j $(nproc)
+          sudo make install
+
+      - name: Pre-configure cmake build
+        run: |
+          cmake --no-warn-unused-cli \
+            -H. -Bbuild-cmake \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE:STRING=Release \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache
+
+      - name: Show ccache stats
+        run: ccache --show-stats

@@ -1056,9 +1056,32 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Modern Z-Targeting", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting")
         .Options(CheckboxOptions().Tooltip(
-            "Modern targeting like BotW/TotK: initial lock-on picks the target closest to camera center, "
-            "right stick left/right switches between nearby targets, "
-            "and pressing Z while locked on releases the lock."));
+            "Enables modern Zelda-style targeting enhancements (BotW/TotK). "
+            "Toggle the individual features below."));
+    AddWidget(path, "  Camera-Based Lock-On", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.ModernZTargeting.CameraBasedLock")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Initial lock-on picks the target closest to the camera center instead of the player's facing direction.")
+            .DefaultValue(true));
+    AddWidget(path, "  Right Stick Target Switch", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.ModernZTargeting.RightStickSwitch")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Push the right stick left/right while locked on to switch between nearby targets.")
+            .DefaultValue(true));
+    AddWidget(path, "  Z-Toggle Release", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.ModernZTargeting.ZToggleRelease")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Pressing Z while locked on releases the lock instead of switching targets.")
+            .DefaultValue(true));
     AddWidget(path, "Dpad Equips", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Dpad.DpadEquips")
         .Options(CheckboxOptions().Tooltip("Allows you to equip items to your D-pad."));
@@ -2196,6 +2219,11 @@ void BenMenu::InitElement() {
                return CVarGetInteger("gEnhancements.Minigames.BoatArcheryInvincible", 0);
            },
             "Koume is Invincible" } },
+        { DISABLE_FOR_MODERN_ZTARGETING_OFF,
+          { [](disabledInfo& info) -> bool {
+               return !CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0);
+           },
+            "Modern Z-Targeting is Disabled" } },
     };
 }
 

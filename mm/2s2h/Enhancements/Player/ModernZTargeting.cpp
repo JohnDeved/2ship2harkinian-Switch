@@ -7,7 +7,9 @@ extern "C" {
 }
 
 #define CVAR_NAME "gEnhancements.Player.ModernZTargeting"
+#define CVAR_RSTICK_NAME "gEnhancements.Player.ModernZTargeting.RightStickSwitch"
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
+#define CVAR_RSTICK CVarGetInteger(CVAR_RSTICK_NAME, 1)
 
 // Threshold for right stick X to trigger a target switch (raw stick range is roughly -128..127)
 #define STICK_THRESHOLD 20
@@ -54,7 +56,7 @@ static bool IsActorTargetable(PlayState* play, Player* player, Actor* actor) {
 }
 
 void RegisterModernZTargeting() {
-    COND_HOOK(OnGameStateUpdate, CVAR, []() {
+    COND_HOOK(OnGameStateUpdate, (CVAR && CVAR_RSTICK), []() {
         if (gPlayState == nullptr) {
             return;
         }
@@ -180,4 +182,4 @@ void RegisterModernZTargeting() {
     });
 }
 
-static RegisterShipInitFunc initFunc(RegisterModernZTargeting, { CVAR_NAME });
+static RegisterShipInitFunc initFunc(RegisterModernZTargeting, { CVAR_NAME, CVAR_RSTICK_NAME });

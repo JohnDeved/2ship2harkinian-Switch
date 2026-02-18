@@ -29,7 +29,7 @@ QuickBarState& GetQuickBarState() {
 }
 
 bool IsQuickBarEnabled() {
-    return CVAR != 0;
+    return CVAR != 0 && !CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0);
 }
 
 // ─── Item name tables ───────────────────────────────────────────────────────
@@ -414,6 +414,9 @@ static void TapRecall(QuickBarCategory cat) {
 static void QuickBarUpdate() {
     if (gPlayState == nullptr) return;
     if (Play_InCsMode(gPlayState)) return;
+
+    // Don't process if Dpad Equips is active (both features use D-pad)
+    if (CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0)) return;
 
     Input* input = CONTROLLER1(&gPlayState->state);
     int curButtons = input->cur.button;

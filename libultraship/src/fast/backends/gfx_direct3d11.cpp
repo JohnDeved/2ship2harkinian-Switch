@@ -717,6 +717,14 @@ void GfxRenderingAPIDX11::StartFrame() {
         // No high values, as noise starts to look ugly
         mPerFrameCbData.noise_frame = 0;
     }
+
+    // Read shader effect CVars
+    auto cv = Ship::Context::GetInstance()->GetConsoleVariables();
+    mPerFrameCbData.shader_cel_enabled = cv->GetInteger("gShaderEffects.CelShading.Enabled", 0);
+    mPerFrameCbData.shader_cel_bands = cv->GetInteger("gShaderEffects.CelShading.Bands", 3);
+    mPerFrameCbData.shader_cel_softness = cv->GetFloat("gShaderEffects.CelShading.Softness", 0.3f);
+    mPerFrameCbData.shader_tonemapping_enabled = cv->GetInteger("gShaderEffects.ToneMapping.Enabled", 0);
+    mPerFrameCbData.shader_color_temp = cv->GetFloat("gShaderEffects.ColorTemperature", 0.0f);
 }
 
 void GfxRenderingAPIDX11::EndFrame() {

@@ -108,6 +108,11 @@ struct FramebufferMetal {
 struct FrameUniforms {
     simd::int1 frameCount;
     simd::float1 noiseScale;
+    simd::int1 celEnabled;
+    simd::int1 celBands;
+    simd::float1 celSoftness;
+    simd::int1 tonemappingEnabled;
+    simd::float1 colorTemp;
 };
 
 struct CoordUniforms {

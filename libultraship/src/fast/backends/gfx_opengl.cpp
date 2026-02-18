@@ -68,6 +68,11 @@ static void VertexArraySetAttribs(ShaderProgram* prg) {
 void GfxRenderingAPIOGL::SetUniforms(ShaderProgram* prg) const {
     glUniform1i(prg->frameCountLocation, mFrameCount);
     glUniform1f(prg->noiseScaleLocation, mCurrentNoiseScale);
+    glUniform1i(prg->celEnabledLocation, mShaderCelEnabled);
+    glUniform1i(prg->celBandsLocation, mShaderCelBands);
+    glUniform1f(prg->celSoftnessLocation, mShaderCelSoftness);
+    glUniform1i(prg->tonemappingEnabledLocation, mShaderTonemappingEnabled);
+    glUniform1f(prg->colorTempLocation, mShaderColorTemp);
 }
 
 void GfxRenderingAPIOGL::SetPerDrawUniforms() {
@@ -528,6 +533,11 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->texture_width_location = glGetUniformLocation(shader_program, "texture_width");
     prg->texture_height_location = glGetUniformLocation(shader_program, "texture_height");
     prg->texture_filtering_location = glGetUniformLocation(shader_program, "texture_filtering");
+    prg->celEnabledLocation = glGetUniformLocation(shader_program, "shader_cel_enabled");
+    prg->celBandsLocation = glGetUniformLocation(shader_program, "shader_cel_bands");
+    prg->celSoftnessLocation = glGetUniformLocation(shader_program, "shader_cel_softness");
+    prg->tonemappingEnabledLocation = glGetUniformLocation(shader_program, "shader_tonemapping_enabled");
+    prg->colorTempLocation = glGetUniformLocation(shader_program, "shader_color_temp");
 
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     // Create a per-shader VAO: bind the shared VBO and configure attribs once.
@@ -827,6 +837,15 @@ void GfxRenderingAPIOGL::OnResize() {
 
 void GfxRenderingAPIOGL::StartFrame() {
     mFrameCount++;
+
+    // Read shader effect CVars
+    auto cv = Ship::Context::GetInstance()->GetConsoleVariables();
+    mShaderCelEnabled = cv->GetInteger("gShaderEffects.CelShading.Enabled", 0);
+    mShaderCelBands = cv->GetInteger("gShaderEffects.CelShading.Bands", 3);
+    mShaderCelSoftness = cv->GetFloat("gShaderEffects.CelShading.Softness", 0.3f);
+    mShaderTonemappingEnabled = cv->GetInteger("gShaderEffects.ToneMapping.Enabled", 0);
+    mShaderColorTemp = cv->GetFloat("gShaderEffects.ColorTemperature", 0.0f);
+
 #if defined(__SWITCH__)
     // Reset per-iteration VBO batching state.
     // The next DrawTriangles call will orphan the VBO.

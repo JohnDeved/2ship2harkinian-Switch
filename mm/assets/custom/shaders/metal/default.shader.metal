@@ -7,6 +7,11 @@ using namespace metal;
 struct FrameUniforms {
     int frameCount;
     float noiseScale;
+    int celEnabled;
+    int celBands;
+    float celSoftness;
+    int tonemappingEnabled;
+    float colorTemp;
 };
 
 struct Vertex {
@@ -269,6 +274,33 @@ fragment float4 fragmentShader(ProjectedVertex in [[stage_in]], constant FrameUn
         float2 coords = screenSpace.xy * noise_scale;
         texel.w *= round(saturate(random(float3(floor(coords), noise_frame)) + texel.w - 0.5));
     @end
+
+    // Shader Effects: Cel Shading
+    if (frameUniforms.celEnabled != 0) {
+        float celLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        if (celLum > 0.001) {
+            float numBands = float(frameUniforms.celBands);
+            float scaled = celLum * numBands;
+            float bandIndex = floor(scaled);
+            float t = fract(scaled);
+            float halfSoft = frameUniforms.celSoftness * 0.5;
+            float edge = smoothstep(0.5 - halfSoft, 0.5 + halfSoft, t);
+            float bandedLum = (bandIndex + edge) / numBands;
+            texel.xyz *= bandedLum / celLum;
+        }
+    }
+
+    // Shader Effects: Color Temperature
+    if (frameUniforms.colorTemp != 0.0) {
+        float tempScale = frameUniforms.colorTemp * 0.1;
+        texel.xyz = clamp(texel.xyz + float3(tempScale, 0.0, -tempScale) * texel.xyz, 0.0, 1.0);
+    }
+
+    // Shader Effects: Tone Mapping (ACES approximation)
+    if (frameUniforms.tonemappingEnabled != 0) {
+        float3 x = texel.xyz;
+        texel.xyz = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+    }
 
     @if(o_alpha)
         @if(o_alpha_threshold)

@@ -48,6 +48,12 @@ uniform int texture_width[2];
 uniform int texture_height[2];
 uniform int texture_filtering[2];
 
+uniform int shader_cel_enabled;
+uniform int shader_cel_bands;
+uniform float shader_cel_softness;
+uniform int shader_tonemapping_enabled;
+uniform float shader_color_temp;
+
 #define TEX_OFFSET(off) @{texture}(tex, texCoord - off / texSize)
 #define WRAP(x, low, high) mod((x)-(low), (high)-(low)) + (low)
 
@@ -192,6 +198,33 @@ void main() {
         vec3 new_texel = vGrayscaleColor.rgb * intensity;
         texel.rgb = mix(texel.rgb, new_texel, vGrayscaleColor.a);
     @end
+
+    // Shader Effects: Cel Shading
+    if (shader_cel_enabled != 0) {
+        float celLum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+        if (celLum > 0.001) {
+            float numBands = float(shader_cel_bands);
+            float scaled = celLum * numBands;
+            float bandIndex = floor(scaled);
+            float t = fract(scaled);
+            float halfSoft = shader_cel_softness * 0.5;
+            float edge = smoothstep(0.5 - halfSoft, 0.5 + halfSoft, t);
+            float bandedLum = (bandIndex + edge) / numBands;
+            texel.rgb *= bandedLum / celLum;
+        }
+    }
+
+    // Shader Effects: Color Temperature
+    if (shader_color_temp != 0.0) {
+        float tempScale = shader_color_temp * 0.1;
+        texel.rgb = clamp(texel.rgb + vec3(tempScale, 0.0, -tempScale) * texel.rgb, 0.0, 1.0);
+    }
+
+    // Shader Effects: Tone Mapping (ACES approximation)
+    if (shader_tonemapping_enabled != 0) {
+        vec3 x = texel.rgb;
+        texel.rgb = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+    }
 
     @if(o_alpha)
         @if(o_alpha_threshold)

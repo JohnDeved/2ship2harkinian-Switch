@@ -15,7 +15,12 @@ namespace Fast {
 struct PerFrameCB {
     uint32_t noise_frame;
     float noise_scale;
-    uint32_t padding[2]; // constant buffers must be multiples of 16 bytes in size
+    int32_t shader_cel_enabled;
+    int32_t shader_cel_bands;
+    float shader_cel_softness;
+    int32_t shader_tonemapping_enabled;
+    float shader_color_temp;
+    uint32_t padding; // constant buffers must be multiples of 16 bytes in size
 };
 
 struct PerDrawCB {

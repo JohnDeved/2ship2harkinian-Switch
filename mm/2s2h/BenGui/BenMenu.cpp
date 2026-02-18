@@ -608,6 +608,44 @@ void BenMenu::AddSettings() {
     path.column = SECTION_COLUMN_2;
     AddWidget(path, "Advanced Graphics Options", WIDGET_SEPARATOR_TEXT);
 
+    AddWidget(path, "Shader Effects", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Cel Shading", WIDGET_CVAR_CHECKBOX)
+        .CVar("gShaderEffects.CelShading.Enabled")
+        .Options(CheckboxOptions().Tooltip(
+            "Enables cel/toon shading effect that quantizes lighting into discrete bands, "
+            "giving the game a stylized cartoon look while preserving original textures."));
+    AddWidget(path, "Cel Shading Bands: %d", WIDGET_CVAR_SLIDER_INT)
+        .CVar("gShaderEffects.CelShading.Bands")
+        .Options(IntSliderOptions()
+                     .Tooltip("Number of color bands for cel shading. Lower values create a more stylized look, "
+                              "higher values are more subtle.")
+                     .Min(2)
+                     .Max(8)
+                     .DefaultValue(3));
+    AddWidget(path, "Cel Shading Softness: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.CelShading.Softness")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Controls the softness of transitions between cel shading bands. "
+                              "0%% gives hard edges, 100%% gives very smooth transitions.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.3f));
+    AddWidget(path, "Tone Mapping (ACES)", WIDGET_CVAR_CHECKBOX)
+        .CVar("gShaderEffects.ToneMapping.Enabled")
+        .Options(CheckboxOptions().Tooltip(
+            "Enables ACES filmic tone mapping for more cinematic color response. "
+            "Preserves midtone contrast while preventing harsh clipping in bright areas."));
+    AddWidget(path, "Color Temperature: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.ColorTemperature")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjusts overall color temperature. Negative values shift cooler (blue), "
+                              "positive values shift warmer (orange/red). 0%% is neutral.")
+                     .IsPercentage()
+                     .Min(-1.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
+
     path.sidebarName = "Controls";
     AddSidebarEntry("Settings", "Controls", 1);
     AddWidget(path, "Popout Bindings Window", WIDGET_WINDOW_BUTTON)

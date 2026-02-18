@@ -38,6 +38,11 @@ struct ShaderProgram {
     GLint texture_width_location;
     GLint texture_height_location;
     GLint texture_filtering_location;
+    GLint celEnabledLocation;
+    GLint celBandsLocation;
+    GLint celSoftnessLocation;
+    GLint tonemappingEnabledLocation;
+    GLint colorTempLocation;
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     GLuint vao; // Per-shader VAO: configured once, bound on shader switch
 #endif
@@ -149,6 +154,12 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     size_t mCurrentFrameBuffer = 0;
     float mCurrentNoiseScale = 0.0f;
     FilteringMode mCurrentFilterMode = FILTER_THREE_POINT;
+
+    int mShaderCelEnabled = 0;
+    int mShaderCelBands = 3;
+    float mShaderCelSoftness = 0.3f;
+    int mShaderTonemappingEnabled = 0;
+    float mShaderColorTemp = 0.0f;
 
     GLint mMaxMsaaLevel = 1;
     GLuint mPixelDepthRb = 0;

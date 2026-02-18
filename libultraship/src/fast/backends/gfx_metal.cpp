@@ -514,6 +514,14 @@ void GfxRenderingAPIMetal::StartFrame() {
         mFrameUniforms.frameCount = 0;
     }
 
+    // Read shader effect CVars
+    auto cv = Ship::Context::GetInstance()->GetConsoleVariables();
+    mFrameUniforms.celEnabled = cv->GetInteger("gShaderEffects.CelShading.Enabled", 0);
+    mFrameUniforms.celBands = cv->GetInteger("gShaderEffects.CelShading.Bands", 3);
+    mFrameUniforms.celSoftness = cv->GetFloat("gShaderEffects.CelShading.Softness", 0.3f);
+    mFrameUniforms.tonemappingEnabled = cv->GetInteger("gShaderEffects.ToneMapping.Enabled", 0);
+    mFrameUniforms.colorTemp = cv->GetFloat("gShaderEffects.ColorTemperature", 0.0f);
+
     if (!mFrameUniformBuffer) {
         mFrameUniformBuffer = mDevice->newBuffer(sizeof(FrameUniforms), MTL::ResourceCPUCacheModeDefaultCache);
     }

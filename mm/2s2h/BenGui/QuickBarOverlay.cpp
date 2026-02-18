@@ -183,7 +183,7 @@ void QuickBarOverlayWindow::Draw() {
         if (posX + iconSize < bgX || posX > bgX + bgWidth) continue;
 
         // Calculate alpha based on distance from center (fade toward edges)
-        float distFromCenter = fabsf((posX + iconSize * 0.5f) - centerX);
+        float distFromCenter = std::fabs((posX + iconSize * 0.5f) - centerX);
         float alpha;
         if (isSelected) {
             alpha = 1.0f;

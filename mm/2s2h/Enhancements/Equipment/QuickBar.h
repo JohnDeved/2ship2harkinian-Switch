@@ -29,5 +29,6 @@ struct QuickBarState {
 
 QuickBarState& GetQuickBarState();
 bool IsQuickBarEnabled();
+const char* QuickBar_GetItemName(int itemId);
 
 #endif // QUICKBAR_H

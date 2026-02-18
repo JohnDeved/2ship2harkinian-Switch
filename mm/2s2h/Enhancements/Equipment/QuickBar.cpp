@@ -99,6 +99,10 @@ static const char* GetItemName(int itemId) {
     }
 }
 
+const char* QuickBar_GetItemName(int itemId) {
+    return GetItemName(itemId);
+}
+
 // Song names by quest bit index
 static const char* GetSongName(int questBit) {
     switch (questBit) {
@@ -193,7 +197,7 @@ static bool PlayerHasItem(int itemId) {
 static void BuildToolList(std::vector<int>& items, std::vector<const char*>& names) {
     items.clear();
     names.clear();
-    for (int i = 0; i < (int)(sizeof(sToolItems) / sizeof(sToolItems[0])); i++) {
+    for (int i = 0; i < (int)ARRAY_COUNT(sToolItems); i++) {
         int item = sToolItems[i];
         if (PlayerHasItem(item)) {
             items.push_back(item);
@@ -205,7 +209,7 @@ static void BuildToolList(std::vector<int>& items, std::vector<const char*>& nam
 static void BuildMaskList(std::vector<int>& items, std::vector<const char*>& names) {
     items.clear();
     names.clear();
-    for (int i = 0; i < (int)(sizeof(sMaskItems) / sizeof(sMaskItems[0])); i++) {
+    for (int i = 0; i < (int)ARRAY_COUNT(sMaskItems); i++) {
         int item = sMaskItems[i];
         if (PlayerHasItem(item)) {
             items.push_back(item);
@@ -217,14 +221,14 @@ static void BuildMaskList(std::vector<int>& items, std::vector<const char*>& nam
 static void BuildSongList(std::vector<int>& items, std::vector<const char*>& names) {
     items.clear();
     names.clear();
-    for (int i = 0; i < (int)(sizeof(sSongQuests) / sizeof(sSongQuests[0])); i++) {
+    for (int i = 0; i < (int)ARRAY_COUNT(sSongQuests); i++) {
         int q = sSongQuests[i];
         if (CHECK_QUEST_ITEM(q)) {
             items.push_back(q);
             names.push_back(GetSongName(q));
         }
     }
-    // Also check lullaby intro
+    // Include intro version only if player hasn't learned the full Goron Lullaby
     if (CHECK_QUEST_ITEM(QUEST_SONG_LULLABY_INTRO) && !CHECK_QUEST_ITEM(QUEST_SONG_LULLABY)) {
         items.push_back(QUEST_SONG_LULLABY_INTRO);
         names.push_back(GetSongName(QUEST_SONG_LULLABY_INTRO));

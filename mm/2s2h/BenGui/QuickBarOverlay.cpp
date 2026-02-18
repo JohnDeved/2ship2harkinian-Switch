@@ -85,25 +85,8 @@ void QuickBarOverlayWindow::Draw() {
             ImGui::SameLine(0, 6);
         }
 
-        // Try to find the name from the tools or bottles
-        const char* name = "???";
-        // Check tools
-        static const int sToolItemIds[] = {
-            ITEM_BOW, ITEM_ARROW_FIRE, ITEM_ARROW_ICE, ITEM_ARROW_LIGHT,
-            ITEM_HOOKSHOT, ITEM_BOMB, ITEM_BOMBCHU, ITEM_DEKU_STICK,
-            ITEM_DEKU_NUT, ITEM_MAGIC_BEANS, ITEM_POWDER_KEG,
-            ITEM_LENS_OF_TRUTH, ITEM_PICTOGRAPH_BOX, ITEM_SWORD_GREAT_FAIRY
-        };
-        for (int i = 0; i < (int)(sizeof(sToolItemIds) / sizeof(sToolItemIds[0])); i++) {
-            if (sToolItemIds[i] == state.activeToolItem) {
-                // Use the item name from the QuickBar names (reuse logic)
-                break;
-            }
-        }
-        // Simple name lookup via gItemIcons index
-        // Just show a short label
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4);
-        ImGui::TextColored(ImVec4(1, 1, 1, 0.9f), "Active");
+        ImGui::TextColored(ImVec4(1, 1, 1, 0.9f), "%s", QuickBar_GetItemName(state.activeToolItem));
 
         ImGui::End();
         ImGui::PopStyleVar(3);

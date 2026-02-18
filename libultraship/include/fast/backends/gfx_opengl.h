@@ -46,6 +46,15 @@ struct ShaderProgram {
     GLint brightnessLocation;
     GLint contrastLocation;
     GLint filmGrainLocation;
+    GLint shadowTintIntensityLocation;
+    GLint shadowTintMixLocation;
+    GLint rimIntensityLocation;
+    GLint bloomThresholdLocation;
+    GLint bloomIntensityLocation;
+    GLint outlineIntensityLocation;
+    GLint vignetteLocation;
+    GLint viewportWidthLocation;
+    GLint viewportHeightLocation;
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     GLuint vao; // Per-shader VAO: configured once, bound on shader switch
 #endif
@@ -166,6 +175,15 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     float mShaderBrightness = 0.0f;
     float mShaderContrast = 0.0f;
     float mShaderFilmGrain = 0.0f;
+    float mShaderShadowTintIntensity = 0.0f;
+    float mShaderShadowTintMix = 0.3f;
+    float mShaderRimIntensity = 0.0f;
+    float mShaderBloomThreshold = 0.7f;
+    float mShaderBloomIntensity = 0.0f;
+    float mShaderOutlineIntensity = 0.0f;
+    float mShaderVignette = 0.0f;
+    float mShaderViewportWidth = 0.0f;
+    float mShaderViewportHeight = 0.0f;
 
     GLint mMaxMsaaLevel = 1;
     GLuint mPixelDepthRb = 0;

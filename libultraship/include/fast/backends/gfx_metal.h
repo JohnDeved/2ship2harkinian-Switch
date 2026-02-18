@@ -116,6 +116,15 @@ struct FrameUniforms {
     simd::float1 brightness;
     simd::float1 contrast;
     simd::float1 filmGrain;
+    simd::float1 shadowTintIntensity;
+    simd::float1 shadowTintMix;
+    simd::float1 rimIntensity;
+    simd::float1 bloomThreshold;
+    simd::float1 bloomIntensity;
+    simd::float1 outlineIntensity;
+    simd::float1 vignette;
+    simd::float1 viewportWidth;
+    simd::float1 viewportHeight;
 };
 
 struct CoordUniforms {

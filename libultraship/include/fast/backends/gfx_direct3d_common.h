@@ -23,8 +23,16 @@ struct PerFrameCB {
     float shader_brightness;
     float shader_contrast;
     float shader_film_grain;
-    float padding_cb0_0; // constant buffers must be multiples of 16 bytes in size
-    float padding_cb0_1;
+    float shader_shadow_tint_intensity;
+    float shader_shadow_tint_mix;
+    float shader_rim_intensity;
+    float shader_bloom_threshold;
+    float shader_bloom_intensity;
+    float shader_outline_intensity;
+    float shader_vignette;
+    float shader_viewport_width;
+    float shader_viewport_height;
+    float padding_cb0; // constant buffers must be multiples of 16 bytes in size
 };
 
 struct PerDrawCB {

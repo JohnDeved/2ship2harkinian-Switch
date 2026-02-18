@@ -76,6 +76,15 @@ void GfxRenderingAPIOGL::SetUniforms(ShaderProgram* prg) const {
     glUniform1f(prg->brightnessLocation, mShaderBrightness);
     glUniform1f(prg->contrastLocation, mShaderContrast);
     glUniform1f(prg->filmGrainLocation, mShaderFilmGrain);
+    glUniform1f(prg->shadowTintIntensityLocation, mShaderShadowTintIntensity);
+    glUniform1f(prg->shadowTintMixLocation, mShaderShadowTintMix);
+    glUniform1f(prg->rimIntensityLocation, mShaderRimIntensity);
+    glUniform1f(prg->bloomThresholdLocation, mShaderBloomThreshold);
+    glUniform1f(prg->bloomIntensityLocation, mShaderBloomIntensity);
+    glUniform1f(prg->outlineIntensityLocation, mShaderOutlineIntensity);
+    glUniform1f(prg->vignetteLocation, mShaderVignette);
+    glUniform1f(prg->viewportWidthLocation, mShaderViewportWidth);
+    glUniform1f(prg->viewportHeightLocation, mShaderViewportHeight);
 }
 
 void GfxRenderingAPIOGL::SetPerDrawUniforms() {
@@ -544,6 +553,15 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->brightnessLocation = glGetUniformLocation(shader_program, "shader_brightness");
     prg->contrastLocation = glGetUniformLocation(shader_program, "shader_contrast");
     prg->filmGrainLocation = glGetUniformLocation(shader_program, "shader_film_grain");
+    prg->shadowTintIntensityLocation = glGetUniformLocation(shader_program, "shader_shadow_tint_intensity");
+    prg->shadowTintMixLocation = glGetUniformLocation(shader_program, "shader_shadow_tint_mix");
+    prg->rimIntensityLocation = glGetUniformLocation(shader_program, "shader_rim_intensity");
+    prg->bloomThresholdLocation = glGetUniformLocation(shader_program, "shader_bloom_threshold");
+    prg->bloomIntensityLocation = glGetUniformLocation(shader_program, "shader_bloom_intensity");
+    prg->outlineIntensityLocation = glGetUniformLocation(shader_program, "shader_outline_intensity");
+    prg->vignetteLocation = glGetUniformLocation(shader_program, "shader_vignette");
+    prg->viewportWidthLocation = glGetUniformLocation(shader_program, "shader_viewport_width");
+    prg->viewportHeightLocation = glGetUniformLocation(shader_program, "shader_viewport_height");
 
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     // Create a per-shader VAO: bind the shared VBO and configure attribs once.
@@ -671,6 +689,8 @@ void GfxRenderingAPIOGL::SetZmodeDecal(bool zmode_decal) {
 
 void GfxRenderingAPIOGL::SetViewport(int x, int y, int width, int height) {
     glViewport(x, y, width, height);
+    mShaderViewportWidth = static_cast<float>(width);
+    mShaderViewportHeight = static_cast<float>(height);
 }
 
 void GfxRenderingAPIOGL::SetScissor(int x, int y, int width, int height) {
@@ -854,6 +874,13 @@ void GfxRenderingAPIOGL::StartFrame() {
     mShaderBrightness = cv->GetFloat("gShaderEffects.Brightness", 0.0f);
     mShaderContrast = cv->GetFloat("gShaderEffects.Contrast", 0.0f);
     mShaderFilmGrain = cv->GetFloat("gShaderEffects.FilmGrain", 0.0f);
+    mShaderShadowTintIntensity = cv->GetFloat("gShaderEffects.ShadowTint.Intensity", 0.0f);
+    mShaderShadowTintMix = cv->GetFloat("gShaderEffects.ShadowTint.Mix", 0.3f);
+    mShaderRimIntensity = cv->GetFloat("gShaderEffects.RimLight.Intensity", 0.0f);
+    mShaderBloomThreshold = cv->GetFloat("gShaderEffects.Bloom.Threshold", 0.7f);
+    mShaderBloomIntensity = cv->GetFloat("gShaderEffects.Bloom.Intensity", 0.0f);
+    mShaderOutlineIntensity = cv->GetFloat("gShaderEffects.Outline.Intensity", 0.0f);
+    mShaderVignette = cv->GetFloat("gShaderEffects.Vignette", 0.0f);
 
 #if defined(__SWITCH__)
     // Reset per-iteration VBO batching state.

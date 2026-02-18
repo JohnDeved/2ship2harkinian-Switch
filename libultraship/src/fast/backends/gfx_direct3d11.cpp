@@ -555,6 +555,9 @@ void GfxRenderingAPIDX11::SetViewport(int x, int y, int width, int height) {
     viewport.MaxDepth = 1.0f;
 
     mContext->RSSetViewports(1, &viewport);
+
+    mPerFrameCbData.shader_viewport_width = static_cast<float>(width);
+    mPerFrameCbData.shader_viewport_height = static_cast<float>(height);
 }
 
 void GfxRenderingAPIDX11::SetScissor(int x, int y, int width, int height) {
@@ -728,6 +731,13 @@ void GfxRenderingAPIDX11::StartFrame() {
     mPerFrameCbData.shader_brightness = cv->GetFloat("gShaderEffects.Brightness", 0.0f);
     mPerFrameCbData.shader_contrast = cv->GetFloat("gShaderEffects.Contrast", 0.0f);
     mPerFrameCbData.shader_film_grain = cv->GetFloat("gShaderEffects.FilmGrain", 0.0f);
+    mPerFrameCbData.shader_shadow_tint_intensity = cv->GetFloat("gShaderEffects.ShadowTint.Intensity", 0.0f);
+    mPerFrameCbData.shader_shadow_tint_mix = cv->GetFloat("gShaderEffects.ShadowTint.Mix", 0.3f);
+    mPerFrameCbData.shader_rim_intensity = cv->GetFloat("gShaderEffects.RimLight.Intensity", 0.0f);
+    mPerFrameCbData.shader_bloom_threshold = cv->GetFloat("gShaderEffects.Bloom.Threshold", 0.7f);
+    mPerFrameCbData.shader_bloom_intensity = cv->GetFloat("gShaderEffects.Bloom.Intensity", 0.0f);
+    mPerFrameCbData.shader_outline_intensity = cv->GetFloat("gShaderEffects.Outline.Intensity", 0.0f);
+    mPerFrameCbData.shader_vignette = cv->GetFloat("gShaderEffects.Vignette", 0.0f);
 }
 
 void GfxRenderingAPIDX11::EndFrame() {

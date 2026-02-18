@@ -15,6 +15,15 @@ struct FrameUniforms {
     float brightness;
     float contrast;
     float filmGrain;
+    float shadowTintIntensity;
+    float shadowTintMix;
+    float rimIntensity;
+    float bloomThreshold;
+    float bloomIntensity;
+    float outlineIntensity;
+    float vignette;
+    float viewportWidth;
+    float viewportHeight;
 };
 
 struct Vertex {
@@ -278,7 +287,7 @@ fragment float4 fragmentShader(ProjectedVertex in [[stage_in]], constant FrameUn
         texel.w *= round(saturate(random(float3(floor(coords), noise_frame)) + texel.w - 0.5));
     @end
 
-    // Shader Effects: Cel Shading
+    // Shader Effects: Cel Shading (§3.1 — toon ramp with soft transitions)
     if (frameUniforms.celEnabled != 0) {
         float celLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
         if (celLum > 0.001) {
@@ -293,29 +302,79 @@ fragment float4 fragmentShader(ProjectedVertex in [[stage_in]], constant FrameUn
         }
     }
 
-    // Shader Effects: Color Temperature
+    // Shader Effects: Shadow Colorization (§3.2 — cool/warm tinted shadows)
+    if (frameUniforms.shadowTintIntensity > 0.0) {
+        float shadowLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        float3 coolTint = float3(0.7, 0.8, 1.0);
+        float3 warmTint = float3(1.0, 0.85, 0.7);
+        float3 tint = mix(coolTint, warmTint, frameUniforms.shadowTintMix);
+        float shadowFactor = 1.0 - smoothstep(0.15, 0.5, shadowLum);
+        texel.xyz = mix(texel.xyz, texel.xyz * tint, shadowFactor * frameUniforms.shadowTintIntensity);
+    }
+
+    // Shader Effects: Rim Light (§3.4 — screen-space edge glow)
+    if (frameUniforms.rimIntensity > 0.0) {
+        float rimLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        float dx = dfdx(rimLum);
+        float dy = dfdy(rimLum);
+        float edgeMag = length(float2(dx, dy));
+        float rim = smoothstep(0.02, 0.15, edgeMag);
+        float3 rimColor = float3(0.85, 0.9, 1.0);
+        texel.xyz += rim * rimColor * frameUniforms.rimIntensity * 0.4;
+        texel.xyz = clamp(texel.xyz, 0.0, 1.0);
+    }
+
+    // Shader Effects: Color Temperature (§11 — day/night mood)
     if (frameUniforms.colorTemp != 0.0) {
         float tempScale = frameUniforms.colorTemp * 0.1;
         texel.xyz = clamp(texel.xyz + float3(tempScale, 0.0, -tempScale) * texel.xyz, 0.0, 1.0);
     }
 
-    // Shader Effects: Tone Mapping (ACES approximation)
+    // Shader Effects: Tone Mapping — ACES approximation (§10.1)
     if (frameUniforms.tonemappingEnabled != 0) {
         float3 x = texel.xyz;
         texel.xyz = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
     }
 
-    // Shader Effects: Brightness/Contrast
+    // Shader Effects: Bloom/Glow (§10.3 — per-pixel bright glow)
+    if (frameUniforms.bloomIntensity > 0.0) {
+        float bloomLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        float bloom = max(0.0, bloomLum - frameUniforms.bloomThreshold);
+        texel.xyz += texel.xyz * bloom * frameUniforms.bloomIntensity;
+        texel.xyz = clamp(texel.xyz, 0.0, 1.0);
+    }
+
+    // Shader Effects: Edge Outlines (§6.1 — screen-space color-edge detection)
+    if (frameUniforms.outlineIntensity > 0.0) {
+        float outLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        float odx = dfdx(outLum);
+        float ody = dfdy(outLum);
+        float outEdge = length(float2(odx, ody));
+        float outline = smoothstep(0.05, 0.12, outEdge);
+        float3 outlineColor = float3(0.15, 0.12, 0.1);
+        texel.xyz = mix(texel.xyz, outlineColor, outline * frameUniforms.outlineIntensity);
+    }
+
+    // Shader Effects: Brightness/Contrast (§10 — color grading)
     if (frameUniforms.brightness != 0.0 || frameUniforms.contrast != 0.0) {
         texel.xyz = clamp((texel.xyz - 0.5) * (1.0 + frameUniforms.contrast) + 0.5, 0.0, 1.0);
         texel.xyz = clamp(texel.xyz + frameUniforms.brightness, 0.0, 1.0);
     }
 
-    // Shader Effects: Film Grain
+    // Shader Effects: Film Grain (§10.5 — subtle noise overlay)
     if (frameUniforms.filmGrain > 0.0) {
         float grain = random(float3(floor(in.position.xy), frameUniforms.frameCount)) * 2.0 - 1.0;
         // 0.15 scales the grain to a subtle perceptual range at full strength
         texel.xyz = clamp(texel.xyz + float3(grain, grain, grain) * frameUniforms.filmGrain * 0.15, 0.0, 1.0);
+    }
+
+    // Shader Effects: Vignette (§10.5 — screen edge darkening)
+    if (frameUniforms.vignette > 0.0 && frameUniforms.viewportWidth > 0.0 && frameUniforms.viewportHeight > 0.0) {
+        float2 uv = in.position.xy / float2(frameUniforms.viewportWidth, frameUniforms.viewportHeight);
+        float2 vigCoord = uv * 2.0 - 1.0;
+        float vigDist = dot(vigCoord, vigCoord);
+        float vigFactor = 1.0 - vigDist * frameUniforms.vignette * 0.5;
+        texel.xyz *= clamp(vigFactor, 0.0, 1.0);
     }
 
     @if(o_alpha)

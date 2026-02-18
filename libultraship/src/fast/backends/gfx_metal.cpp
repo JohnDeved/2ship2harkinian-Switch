@@ -393,6 +393,9 @@ void GfxRenderingAPIMetal::SetViewport(int x, int y, int width, int height) {
     fb.mViewport->zfar = 1;
 
     fb.mCommandEncoder->setViewport(*fb.mViewport);
+
+    mFrameUniforms.viewportWidth = static_cast<float>(width);
+    mFrameUniforms.viewportHeight = static_cast<float>(height);
 }
 
 void GfxRenderingAPIMetal::SetScissor(int x, int y, int width, int height) {
@@ -524,6 +527,13 @@ void GfxRenderingAPIMetal::StartFrame() {
     mFrameUniforms.brightness = cv->GetFloat("gShaderEffects.Brightness", 0.0f);
     mFrameUniforms.contrast = cv->GetFloat("gShaderEffects.Contrast", 0.0f);
     mFrameUniforms.filmGrain = cv->GetFloat("gShaderEffects.FilmGrain", 0.0f);
+    mFrameUniforms.shadowTintIntensity = cv->GetFloat("gShaderEffects.ShadowTint.Intensity", 0.0f);
+    mFrameUniforms.shadowTintMix = cv->GetFloat("gShaderEffects.ShadowTint.Mix", 0.3f);
+    mFrameUniforms.rimIntensity = cv->GetFloat("gShaderEffects.RimLight.Intensity", 0.0f);
+    mFrameUniforms.bloomThreshold = cv->GetFloat("gShaderEffects.Bloom.Threshold", 0.7f);
+    mFrameUniforms.bloomIntensity = cv->GetFloat("gShaderEffects.Bloom.Intensity", 0.0f);
+    mFrameUniforms.outlineIntensity = cv->GetFloat("gShaderEffects.Outline.Intensity", 0.0f);
+    mFrameUniforms.vignette = cv->GetFloat("gShaderEffects.Vignette", 0.0f);
 
     if (!mFrameUniformBuffer) {
         mFrameUniformBuffer = mDevice->newBuffer(sizeof(FrameUniforms), MTL::ResourceCPUCacheModeDefaultCache);

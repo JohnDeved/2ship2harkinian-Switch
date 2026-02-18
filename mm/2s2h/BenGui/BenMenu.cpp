@@ -612,35 +612,88 @@ void BenMenu::AddSettings() {
     AddWidget(path, "Cel Shading", WIDGET_CVAR_CHECKBOX)
         .CVar("gShaderEffects.CelShading.Enabled")
         .Options(CheckboxOptions().Tooltip(
-            "Enables cel/toon shading effect that quantizes lighting into discrete bands, "
-            "giving the game a stylized cartoon look while preserving original textures."));
+            "Enables cel/toon shading (§3.1). Quantizes luminance into discrete bands with soft "
+            "transitions, giving the game a stylized cartoon look while preserving original textures."));
     AddWidget(path, "Cel Shading Bands: %d", WIDGET_CVAR_SLIDER_INT)
         .CVar("gShaderEffects.CelShading.Bands")
         .Options(IntSliderOptions()
-                     .Tooltip("Number of color bands for cel shading. Lower values create a more stylized look, "
-                              "higher values are more subtle.")
+                     .Tooltip("Number of color bands for cel shading. Lower = more stylized, higher = more subtle.")
                      .Min(2)
                      .Max(8)
                      .DefaultValue(3));
     AddWidget(path, "Cel Shading Softness: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
         .CVar("gShaderEffects.CelShading.Softness")
         .Options(FloatSliderOptions()
-                     .Tooltip("Controls the softness of transitions between cel shading bands. "
-                              "0%% gives hard edges, 100%% gives very smooth transitions.")
+                     .Tooltip("Softness of transitions between cel shading bands. "
+                              "0%% = hard edges, 100%% = very smooth transitions.")
                      .IsPercentage()
                      .Min(0.0f)
                      .Max(1.0f)
                      .DefaultValue(0.3f));
+    AddWidget(path, "Shadow Tint: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.ShadowTint.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Shadow colorization intensity (§3.2). Tints dark areas with cool (blue) or "
+                              "warm (orange) tones instead of pure black shadows. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Shadow Tint Mix: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.ShadowTint.Mix")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Cool/warm balance for shadow tint. 0%% = cool blue (moonlight/night), "
+                              "100%% = warm orange (lantern/indoor). 30%% is default.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.3f));
+    AddWidget(path, "Rim Light: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.RimLight.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Rim light intensity (§3.4). Adds a subtle glow at color edges for "
+                              "silhouette separation and modern readability. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
     AddWidget(path, "Tone Mapping (ACES)", WIDGET_CVAR_CHECKBOX)
         .CVar("gShaderEffects.ToneMapping.Enabled")
         .Options(CheckboxOptions().Tooltip(
-            "Enables ACES filmic tone mapping for more cinematic color response. "
-            "Preserves midtone contrast while preventing harsh clipping in bright areas."));
+            "Enables ACES filmic tone mapping (§10.1). Cinematic color response that "
+            "preserves midtone contrast while preventing harsh clipping in bright areas."));
+    AddWidget(path, "Bloom Intensity: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.Bloom.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Bloom/glow intensity (§10.3). Brightens areas above the threshold for "
+                              "a soft glow on emissives and specular peaks. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(2.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Bloom Threshold: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.Bloom.Threshold")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Luminance threshold for bloom. Only pixels brighter than this glow. "
+                              "Higher = more selective, lower = broader glow.")
+                     .IsPercentage()
+                     .Min(0.3f)
+                     .Max(1.0f)
+                     .DefaultValue(0.7f));
+    AddWidget(path, "Edge Outlines: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.Outline.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Edge outline intensity (§6.1). Detects color discontinuities to draw "
+                              "subtle dark outlines for readability. Uses warm brown tones. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
     AddWidget(path, "Color Temperature: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
         .CVar("gShaderEffects.ColorTemperature")
         .Options(FloatSliderOptions()
-                     .Tooltip("Adjusts overall color temperature. Negative values shift cooler (blue), "
-                              "positive values shift warmer (orange/red). 0%% is neutral.")
+                     .Tooltip("Color temperature shift (§11). Negative = cooler blue (night), "
+                              "positive = warmer orange (indoor). 0%% is neutral.")
                      .IsPercentage()
                      .Min(-1.0f)
                      .Max(1.0f)
@@ -648,7 +701,7 @@ void BenMenu::AddSettings() {
     AddWidget(path, "Brightness: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
         .CVar("gShaderEffects.Brightness")
         .Options(FloatSliderOptions()
-                     .Tooltip("Adjusts overall screen brightness. 0%% is default.")
+                     .Tooltip("Overall brightness adjustment. 0%% is default.")
                      .IsPercentage()
                      .Min(-0.5f)
                      .Max(0.5f)
@@ -656,8 +709,7 @@ void BenMenu::AddSettings() {
     AddWidget(path, "Contrast: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
         .CVar("gShaderEffects.Contrast")
         .Options(FloatSliderOptions()
-                     .Tooltip("Adjusts overall contrast. 0%% is default. Positive values increase contrast, "
-                              "negative values decrease it.")
+                     .Tooltip("Overall contrast adjustment. Positive = more contrast, negative = less.")
                      .IsPercentage()
                      .Min(-1.0f)
                      .Max(1.0f)
@@ -665,10 +717,18 @@ void BenMenu::AddSettings() {
     AddWidget(path, "Film Grain: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
         .CVar("gShaderEffects.FilmGrain")
         .Options(FloatSliderOptions()
-                     .Tooltip("Adds a subtle film grain noise overlay for a cinematic look. 0%% disables the effect.")
+                     .Tooltip("Subtle film grain noise overlay (§10.5) for a cinematic look. 0%% disables.")
                      .IsPercentage()
                      .Min(0.0f)
                      .Max(1.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Vignette: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.Vignette")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Screen edge darkening (§10.5). Subtle vignette draws focus to center. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(2.0f)
                      .DefaultValue(0.0f));
 
     path.sidebarName = "Controls";

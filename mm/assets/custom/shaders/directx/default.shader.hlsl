@@ -74,8 +74,16 @@ cbuffer PerFrameCB : register(b0) {
     float shader_brightness;
     float shader_contrast;
     float shader_film_grain;
-    float padding_cb0_0;
-    float padding_cb0_1;
+    float shader_shadow_tint_intensity;
+    float shader_shadow_tint_mix;
+    float shader_rim_intensity;
+    float shader_bloom_threshold;
+    float shader_bloom_intensity;
+    float shader_outline_intensity;
+    float shader_vignette;
+    float shader_viewport_width;
+    float shader_viewport_height;
+    float padding_cb0;
 }
 
 float random(in float3 value) {
@@ -320,7 +328,7 @@ float4 PSMain(PSInput input, float4 screenSpace : SV_Position) : SV_TARGET {
         texel.a *= round(saturate(random(float3(floor(coords), noise_frame)) + texel.a - 0.5));
     @end
 
-    // Shader Effects: Cel Shading
+    // Shader Effects: Cel Shading (§3.1 — toon ramp with soft transitions)
     if (shader_cel_enabled != 0) {
         float celLum = dot(texel.rgb, float3(0.299, 0.587, 0.114));
         if (celLum > 0.001) {
@@ -335,29 +343,79 @@ float4 PSMain(PSInput input, float4 screenSpace : SV_Position) : SV_TARGET {
         }
     }
 
-    // Shader Effects: Color Temperature
+    // Shader Effects: Shadow Colorization (§3.2 — cool/warm tinted shadows)
+    if (shader_shadow_tint_intensity > 0.0) {
+        float shadowLum = dot(texel.rgb, float3(0.299, 0.587, 0.114));
+        float3 coolTint = float3(0.7, 0.8, 1.0);
+        float3 warmTint = float3(1.0, 0.85, 0.7);
+        float3 tint = lerp(coolTint, warmTint, shader_shadow_tint_mix);
+        float shadowFactor = 1.0 - smoothstep(0.15, 0.5, shadowLum);
+        texel.rgb = lerp(texel.rgb, texel.rgb * tint, shadowFactor * shader_shadow_tint_intensity);
+    }
+
+    // Shader Effects: Rim Light (§3.4 — screen-space edge glow)
+    if (shader_rim_intensity > 0.0) {
+        float rimLum = dot(texel.rgb, float3(0.299, 0.587, 0.114));
+        float dx = ddx(rimLum);
+        float dy = ddy(rimLum);
+        float edgeMag = length(float2(dx, dy));
+        float rim = smoothstep(0.02, 0.15, edgeMag);
+        float3 rimColor = float3(0.85, 0.9, 1.0);
+        texel.rgb += rim * rimColor * shader_rim_intensity * 0.4;
+        texel.rgb = clamp(texel.rgb, 0.0, 1.0);
+    }
+
+    // Shader Effects: Color Temperature (§11 — day/night mood)
     if (shader_color_temp != 0.0) {
         float tempScale = shader_color_temp * 0.1;
         texel.rgb = clamp(texel.rgb + float3(tempScale, 0.0, -tempScale) * texel.rgb, 0.0, 1.0);
     }
 
-    // Shader Effects: Tone Mapping (ACES approximation)
+    // Shader Effects: Tone Mapping — ACES approximation (§10.1)
     if (shader_tonemapping_enabled != 0) {
         float3 x = texel.rgb;
         texel.rgb = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
     }
 
-    // Shader Effects: Brightness/Contrast
+    // Shader Effects: Bloom/Glow (§10.3 — per-pixel bright glow)
+    if (shader_bloom_intensity > 0.0) {
+        float bloomLum = dot(texel.rgb, float3(0.299, 0.587, 0.114));
+        float bloom = max(0.0, bloomLum - shader_bloom_threshold);
+        texel.rgb += texel.rgb * bloom * shader_bloom_intensity;
+        texel.rgb = clamp(texel.rgb, 0.0, 1.0);
+    }
+
+    // Shader Effects: Edge Outlines (§6.1 — screen-space color-edge detection)
+    if (shader_outline_intensity > 0.0) {
+        float outLum = dot(texel.rgb, float3(0.299, 0.587, 0.114));
+        float odx = ddx(outLum);
+        float ody = ddy(outLum);
+        float outEdge = length(float2(odx, ody));
+        float outline = smoothstep(0.05, 0.12, outEdge);
+        float3 outlineColor = float3(0.15, 0.12, 0.1);
+        texel.rgb = lerp(texel.rgb, outlineColor, outline * shader_outline_intensity);
+    }
+
+    // Shader Effects: Brightness/Contrast (§10 — color grading)
     if (shader_brightness != 0.0 || shader_contrast != 0.0) {
         texel.rgb = clamp((texel.rgb - 0.5) * (1.0 + shader_contrast) + 0.5, 0.0, 1.0);
         texel.rgb = clamp(texel.rgb + shader_brightness, 0.0, 1.0);
     }
 
-    // Shader Effects: Film Grain
+    // Shader Effects: Film Grain (§10.5 — subtle noise overlay)
     if (shader_film_grain > 0.0) {
         float grain = random(float3(floor(screenSpace.xy), noise_frame)) * 2.0 - 1.0;
         // 0.15 scales the grain to a subtle perceptual range at full strength
         texel.rgb = clamp(texel.rgb + float3(grain, grain, grain) * shader_film_grain * 0.15, 0.0, 1.0);
+    }
+
+    // Shader Effects: Vignette (§10.5 — screen edge darkening)
+    if (shader_vignette > 0.0 && shader_viewport_width > 0.0 && shader_viewport_height > 0.0) {
+        float2 uv = screenSpace.xy / float2(shader_viewport_width, shader_viewport_height);
+        float2 vigCoord = uv * 2.0 - 1.0;
+        float vigDist = dot(vigCoord, vigCoord);
+        float vigFactor = 1.0 - vigDist * shader_vignette * 0.5;
+        texel.rgb *= clamp(vigFactor, 0.0, 1.0);
     }
 
     @if(o_alpha)

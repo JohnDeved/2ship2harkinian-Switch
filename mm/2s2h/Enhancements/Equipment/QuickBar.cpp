@@ -8,8 +8,9 @@ extern "C" {
 #include "variables.h"
 #include "functions.h"
 #include "z64ocarina.h"
-#include "z64environment.h"
+#include "z64save.h"
 void Player_UseItem(PlayState* play, Player* thisx, ItemId item);
+void Interface_LoadItemIconImpl(PlayState* play, u8 btn);
 }
 
 #define CVAR_NAME "gEnhancements.Equipment.QuickBar"
@@ -29,15 +30,16 @@ static bool sStickReleased = true;
 static s8 sSavedRightStickX = 0;
 static s8 sSavedRightStickY = 0;
 
-// Deferred action system: some actions need to happen on the next frame
-// (e.g., item use after QuickBar closes, song playback after ocarina is pulled out)
-struct DeferredAction {
+// Saved R_UPDATE_RATE before QuickBar opened (for restoring game speed)
+static s32 sSavedUpdateRate = 0;
+
+// Deferred song playback (needs many frames for the ocarina state machine to initialize)
+struct DeferredSong {
     bool pending;
-    int itemId;
-    QuickBarCategory category;
+    int songId;       // OcarinaSongId for AudioOcarina_SetPlaybackSong
     int delayFrames;  // Frames to wait before executing
 };
-static DeferredAction sDeferredAction = {};
+static DeferredSong sDeferredSong = {};
 
 QuickBarState& GetQuickBarState() {
     return sState;
@@ -316,34 +318,22 @@ static int QuestBitToSongId(int questBit) {
     }
 }
 
-static void PlaySong(int questBit) {
-    if (gPlayState == nullptr) return;
-    // Pull out ocarina and auto-play the song through the game's normal pipeline.
-    // This ensures all song effects trigger properly (warps, cutscenes, etc.)
-    UseItemOnPlayer(ITEM_OCARINA_OF_TIME);
-    int songId = QuestBitToSongId(questBit);
-    if (songId >= 0) {
-        AudioOcarina_SetInstrument(OCARINA_INSTRUMENT_DEFAULT);
-        AudioOcarina_SetPlaybackSong(songId + 1, 1);
-    }
-}
-
-// ─── Time-stop control (uses the engine's proper time stop mechanism) ────────
+// ─── Time-stop control (uses R_UPDATE_RATE for visible slow-motion) ─────────
 
 static void EnterTimeStop() {
     if (gPlayState == nullptr) return;
-    // Use the engine's own time-stop flag (same mechanism as cutscenes/ocarina)
-    Environment_StopTime();
-    // Also zero R_TIME_SPEED as a backup
+    // Save the current game speed divisor so we can restore it later
+    sSavedUpdateRate = R_UPDATE_RATE;
+    // Double the rate to halve the game speed (visible slow motion)
+    R_UPDATE_RATE = sSavedUpdateRate * 2;
+    // Also stop the day/night clock (same as TimeStop cheat)
     R_TIME_SPEED = 0;
-    gPlayState->envCtx.sceneTimeSpeed = 0;
 }
 
 static void ExitTimeStop() {
     if (gPlayState == nullptr) return;
-    Environment_StartTime();
-    // Restore scene time speed from the environment context
-    // (the scene will set the proper speed on next load)
+    // Restore original game speed
+    R_UPDATE_RATE = sSavedUpdateRate;
 }
 
 // ─── Open / close QuickBar ──────────────────────────────────────────────────
@@ -381,28 +371,46 @@ static void CloseQuickBar(bool confirm) {
         sState.lastUsed[sState.openCategory] = selectedItem;
 
         switch (sState.openCategory) {
-            case QB_CAT_TOOLS:
+            case QB_CAT_TOOLS: {
                 SetActiveTool(selectedItem);
-                // Defer the item use to next frame (player state needs to settle after time-stop exit)
-                sDeferredAction = { true, selectedItem, QB_CAT_TOOLS, 1 };
+                // Equip the tool to C-Left button slot so the player can use it
+                int slot = GetSlotForItem(selectedItem);
+                if (slot != SLOT_NONE) {
+                    SET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_C_LEFT, selectedItem);
+                    SET_CUR_FORM_BTN_SLOT(EQUIP_SLOT_C_LEFT, slot);
+                    Interface_LoadItemIconImpl(gPlayState, EQUIP_SLOT_C_LEFT);
+                }
                 break;
+            }
             case QB_CAT_MASKS:
-                // Defer mask equip to next frame
-                sDeferredAction = { true, selectedItem, QB_CAT_MASKS, 1 };
+                // Masks: use Player_UseItem which toggles equip on/off
+                UseItemOnPlayer(selectedItem);
                 break;
             case QB_CAT_SONGS:
                 if (CVarGetInteger("gEnhancements.Equipment.QuickBar.AutoPlaySongs", 1)) {
-                    // Pull out ocarina now, defer song playback by several frames
-                    // to give the ocarina state machine time to initialize
+                    // Pull out ocarina, then defer song auto-play by 30 frames
+                    // to give the ocarina state machine time to fully initialize
                     UseItemOnPlayer(ITEM_OCARINA_OF_TIME);
-                    sDeferredAction = { true, selectedItem, QB_CAT_SONGS, 10 };
+                    int songId = QuestBitToSongId(selectedItem);
+                    if (songId >= 0) {
+                        sDeferredSong = { true, songId, 30 };
+                    }
                 }
                 break;
-            case QB_CAT_BOTTLES:
+            case QB_CAT_BOTTLES: {
                 SetActiveTool(selectedItem);
-                // Defer bottle use to next frame
-                sDeferredAction = { true, selectedItem, QB_CAT_BOTTLES, 1 };
+                // Equip the bottle to C-Left button slot
+                // Find the bottle slot containing this item
+                for (int s = SLOT_BOTTLE_1; s <= SLOT_BOTTLE_6; s++) {
+                    if (gSaveContext.save.saveInfo.inventory.items[s] == (u8)selectedItem) {
+                        SET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_C_LEFT, selectedItem);
+                        SET_CUR_FORM_BTN_SLOT(EQUIP_SLOT_C_LEFT, s);
+                        Interface_LoadItemIconImpl(gPlayState, EQUIP_SLOT_C_LEFT);
+                        break;
+                    }
+                }
                 break;
+            }
             default:
                 break;
         }
@@ -460,10 +468,17 @@ static void QuickBarPreMain() {
         input->cur.right_stick_x = 0;
         input->cur.right_stick_y = 0;
 
-        // Enforce time-stop every frame (prevents game from resetting it)
-        Environment_StopTime();
+        // Also zero left stick to freeze player movement
+        input->cur.x = 0;
+        input->cur.y = 0;
+        input->rel.x = 0;
+        input->rel.y = 0;
+
+        // Enforce slow-motion every frame (game may try to reset R_UPDATE_RATE)
+        if (sSavedUpdateRate > 0) {
+            R_UPDATE_RATE = sSavedUpdateRate * 2;
+        }
         R_TIME_SPEED = 0;
-        gPlayState->envCtx.sceneTimeSpeed = 0;
     } else {
         sSavedRightStickX = 0;
         sSavedRightStickY = 0;
@@ -475,23 +490,14 @@ static void QuickBarPreMain() {
 static void QuickBarUpdate() {
     if (gPlayState == nullptr) return;
 
-    // Process deferred actions (items/songs to use after QuickBar closes)
-    if (sDeferredAction.pending) {
-        if (sDeferredAction.delayFrames > 0) {
-            sDeferredAction.delayFrames--;
+    // Process deferred song playback (needs ocarina state machine to initialize)
+    if (sDeferredSong.pending) {
+        if (sDeferredSong.delayFrames > 0) {
+            sDeferredSong.delayFrames--;
         } else {
-            sDeferredAction.pending = false;
-            if (sDeferredAction.category == QB_CAT_SONGS) {
-                // Song playback: the ocarina should be active by now
-                int songId = QuestBitToSongId(sDeferredAction.itemId);
-                if (songId >= 0) {
-                    AudioOcarina_SetInstrument(OCARINA_INSTRUMENT_DEFAULT);
-                    AudioOcarina_SetPlaybackSong(songId + 1, 1);
-                }
-            } else {
-                // Tools, bottles, masks: use the item
-                UseItemOnPlayer(sDeferredAction.itemId);
-            }
+            sDeferredSong.pending = false;
+            AudioOcarina_SetInstrument(OCARINA_INSTRUMENT_DEFAULT);
+            AudioOcarina_SetPlaybackSong(sDeferredSong.songId + 1, 1);
         }
     }
 

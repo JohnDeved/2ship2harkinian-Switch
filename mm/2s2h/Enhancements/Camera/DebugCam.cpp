@@ -18,6 +18,13 @@ extern Vec3f Camera_CalcUpVec(s16 pitch, s16 yaw, s16 roll);
 // Static Data Used For Free Camera
 static bool sDebugCamRefreshParams = true;
 
+// Smoothed input state for smooth controller movement
+static f32 sSmoothedYaw = 0.0f;
+static f32 sSmoothedPitch = 0.0f;
+static f32 sSmoothedMoveX = 0.0f;
+static f32 sSmoothedMoveY = 0.0f;
+static f32 sSmoothedMoveZ = 0.0f;
+
 Vec3f Camera_RotatePointAroundAxis(Vec3f* point, Vec3f* axis, s16 angle) {
     f32 q0 = Math_CosS(angle / 2);
     f32 q1 = Math_SinS(angle / 2) * axis->x;
@@ -116,6 +123,12 @@ void Camera_DebugCam(Camera* camera) {
         // Move camera focus to eye
         Vec3f unit = OLib_Vec3fDistNormalize(eye, at);
         Math_Vec3f_Sum(eye, &unit, at);
+        // Reset smoothed inputs on camera init
+        sSmoothedYaw = 0.0f;
+        sSmoothedPitch = 0.0f;
+        sSmoothedMoveX = 0.0f;
+        sSmoothedMoveY = 0.0f;
+        sSmoothedMoveZ = 0.0f;
         sDebugCamRefreshParams = false;
     }
 
@@ -149,15 +162,21 @@ void Camera_DebugCam(Camera* camera) {
                                             transitionSpeed / (ABS(distTarget - camera->dist) + transitionSpeed), 0.0f);
 
     /*
-        Set Camera Pitch and Yaw
+        Set Camera Pitch and Yaw (smoothed)
      */
-    f32 yawDiff = -sCamPlayState->state.input[controllerPort].cur.right_stick_x * 10.0f *
-                  (CVarGetFloat("gEnhancements.Camera.RightStick.CameraSensitivity.X", 1.0f));
-    f32 pitchDiff = sCamPlayState->state.input[controllerPort].cur.right_stick_y * 10.0f *
-                    (CVarGetFloat("gEnhancements.Camera.RightStick.CameraSensitivity.Y", 1.0f));
+    f32 targetYaw = -sCamPlayState->state.input[controllerPort].cur.right_stick_x * 10.0f *
+                    (CVarGetFloat("gEnhancements.Camera.RightStick.CameraSensitivity.X", 1.0f)) *
+                    GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_X);
+    f32 targetPitch = sCamPlayState->state.input[controllerPort].cur.right_stick_y * 10.0f *
+                      (CVarGetFloat("gEnhancements.Camera.RightStick.CameraSensitivity.Y", 1.0f)) *
+                      -GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_Y);
 
-    yawDiff *= GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_X);
-    pitchDiff *= -GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_Y);
+    f32 smoothFactor = 0.3f;
+    sSmoothedYaw = Camera_ScaledStepToCeilF(targetYaw, sSmoothedYaw, smoothFactor, 0.1f);
+    sSmoothedPitch = Camera_ScaledStepToCeilF(targetPitch, sSmoothedPitch, smoothFactor, 0.1f);
+
+    f32 yawDiff = sSmoothedYaw;
+    f32 pitchDiff = sSmoothedPitch;
 
     // Setup new camera angle based on the calculations from right stick inputs
     if (CVarGetInteger("gEnhancements.Camera.DebugCam.6DOF", 0)) {
@@ -177,16 +196,27 @@ void Camera_DebugCam(Camera* camera) {
         camera->roll = Camera_ScaledStepToCeilS(0, camera->roll, 0.1f, 5);
     }
     /*
-        Camera Movement
+        Camera Movement (smoothed)
      */
 
-    // Movement differences from the point of view of the camera. Use max stick value for buttons scale
+    // Target movement from controller inputs
+    f32 targetMoveX = sCamPlayState->state.input[controllerPort].cur.stick_x * camSpeed;
+    f32 targetMoveY = (CHECK_BTN_ANY(sCamPlayState->state.input[controllerPort].cur.button, BTN_Z) -
+                       CHECK_BTN_ANY(sCamPlayState->state.input[controllerPort].cur.button, BTN_R)) *
+                      120.0f * camSpeed;
+    f32 targetMoveZ = -sCamPlayState->state.input[controllerPort].cur.stick_y * camSpeed;
+
+    // Smooth step towards target for fluid acceleration/deceleration
+    f32 moveSmoothFactor = 0.25f;
+    sSmoothedMoveX = Camera_ScaledStepToCeilF(targetMoveX, sSmoothedMoveX, moveSmoothFactor, 0.01f);
+    sSmoothedMoveY = Camera_ScaledStepToCeilF(targetMoveY, sSmoothedMoveY, moveSmoothFactor, 0.01f);
+    sSmoothedMoveZ = Camera_ScaledStepToCeilF(targetMoveZ, sSmoothedMoveZ, moveSmoothFactor, 0.01f);
+
+    // Movement differences from the point of view of the camera
     Vec3f posDiff;
-    posDiff.x = sCamPlayState->state.input[controllerPort].cur.stick_x * camSpeed;
-    posDiff.y = (CHECK_BTN_ANY(sCamPlayState->state.input[controllerPort].cur.button, BTN_Z) -
-                 CHECK_BTN_ANY(sCamPlayState->state.input[controllerPort].cur.button, BTN_R)) *
-                120.0f * camSpeed;
-    posDiff.z = -sCamPlayState->state.input[controllerPort].cur.stick_y * camSpeed;
+    posDiff.x = sSmoothedMoveX;
+    posDiff.y = sSmoothedMoveY;
+    posDiff.z = sSmoothedMoveZ;
 
     // Adjust movement to camera's current direction
     Vec3f camPosDiff = { 0.0f, 0.0f, 0.0f };

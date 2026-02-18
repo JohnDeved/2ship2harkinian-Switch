@@ -882,7 +882,16 @@ void BenMenu::AddEnhancements() {
                 info.activeDisables.push_back(DISABLE_FOR_FREE_LOOK_ON);
             }
         })
-        .Options(CheckboxOptions().Tooltip("Enables debug camera control."));
+        .Options(CheckboxOptions().Tooltip("Enables a free camera detached from the player.\n\n"
+                                          "Controls:\n"
+                                          "  Left Stick: Move forward/back & strafe\n"
+                                          "  Right Stick: Look around (pitch/yaw)\n"
+                                          "  Z: Move up\n"
+                                          "  R: Move down\n"
+                                          "  D-Pad Up/Down: Adjust focal distance\n"
+                                          "  A/B/L: Speed boost (3x)\n\n"
+                                          "Uses Port 1 by default. If using Port 1,\n"
+                                          "player inputs are disabled while active."));
     AddWidget(path, "Invert Camera X Axis", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Camera.RightStick.InvertXAxis")
         .PreFunc([](WidgetInfo& info) {
@@ -932,7 +941,8 @@ void BenMenu::AddEnhancements() {
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_DEBUG_CAM_OFF).active; })
         .Options(CheckboxOptions().Tooltip(
             "This allows for all six degrees of movement with the camera, NOTE: Yaw will work "
-            "differently in this system, instead rotating around the focal point, rather than a polar axis."));
+            "differently in this system, instead rotating around the focal point, rather than a polar axis.\n\n"
+            "D-Pad Left/Right: Roll camera"));
     AddWidget(path, "Camera Speed: %.0f", WIDGET_CVAR_SLIDER_FLOAT)
         .CVar("gEnhancements.Camera.DebugCam.CameraSpeed")
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_DEBUG_CAM_OFF).active; })

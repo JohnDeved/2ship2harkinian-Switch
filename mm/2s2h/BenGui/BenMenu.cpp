@@ -1056,7 +1056,8 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Right Stick Target Switching", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.RightStickTargetSwitch")
         .Options(CheckboxOptions().Tooltip(
-            "While Z-targeting, push the right stick left or right to switch between nearby targets."));
+            "Modern targeting: push right stick left/right to switch targets. "
+            "Pressing Z while locked on releases the lock."));
     AddWidget(path, "Dpad Equips", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Dpad.DpadEquips")
         .Options(CheckboxOptions().Tooltip("Allows you to equip items to your D-pad."));

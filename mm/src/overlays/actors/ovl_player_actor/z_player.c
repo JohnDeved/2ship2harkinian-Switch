@@ -5083,6 +5083,14 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
                 ((this->heldItemAction != PLAYER_IA_FISHING_ROD) || (this->unk_B28 == 0)) &&
                 CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_Z)) {
 
+                // #region 2S2H [Enhancement] Right Stick Target Switch: Z-toggle releases lock-on
+                if (CVarGetInteger("gEnhancements.Player.RightStickTargetSwitch", 0) &&
+                    this->focusActor != NULL && this == GET_PLAYER(play)) {
+                    Player_ReleaseLockOn(this);
+                    this->stateFlags1 |= PLAYER_STATE1_LOCK_ON_FORCED_TO_RELEASE;
+                } else {
+                // #endregion
+
                 if (this == GET_PLAYER(play)) {
                     // The next lock-on actor defaults to the actor Tatl is hovering over.
                     // This may change to the arrow hover actor below.
@@ -5133,6 +5141,8 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
                         Player_SetParallel(this);
                     }
                 }
+
+                } // #endregion 2S2H Right Stick Target Switch
             }
 
             if (this->focusActor != NULL) {

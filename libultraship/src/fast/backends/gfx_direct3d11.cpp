@@ -742,6 +742,14 @@ void GfxRenderingAPIDX11::StartFrame() {
     mPerFrameCbData.shader_subsurface_intensity = cv->GetFloat("gShaderEffects.Subsurface.Intensity", 0.0f);
     mPerFrameCbData.shader_micronormal_intensity = cv->GetFloat("gShaderEffects.MicroNormal.Intensity", 0.0f);
     mPerFrameCbData.shader_sharpening = cv->GetFloat("gShaderEffects.Sharpening", 0.0f);
+    mPerFrameCbData.shader_hemi_ambient_intensity = cv->GetFloat("gShaderEffects.HemiAmbient.Intensity", 0.0f);
+    mPerFrameCbData.shader_hemi_ambient_sky_r = cv->GetFloat("gShaderEffects.HemiAmbient.SkyR", 0.6f);
+    mPerFrameCbData.shader_hemi_ambient_sky_g = cv->GetFloat("gShaderEffects.HemiAmbient.SkyG", 0.7f);
+    mPerFrameCbData.shader_hemi_ambient_sky_b = cv->GetFloat("gShaderEffects.HemiAmbient.SkyB", 1.0f);
+    mPerFrameCbData.shader_hemi_ambient_ground_r = cv->GetFloat("gShaderEffects.HemiAmbient.GroundR", 0.4f);
+    mPerFrameCbData.shader_hemi_ambient_ground_g = cv->GetFloat("gShaderEffects.HemiAmbient.GroundG", 0.3f);
+    mPerFrameCbData.shader_hemi_ambient_ground_b = cv->GetFloat("gShaderEffects.HemiAmbient.GroundB", 0.2f);
+    mPerFrameCbData.shader_saturation = cv->GetFloat("gShaderEffects.Saturation", 0.0f);
 }
 
 void GfxRenderingAPIDX11::EndFrame() {

@@ -67,6 +67,14 @@ uniform float shader_specular_intensity;
 uniform float shader_subsurface_intensity;
 uniform float shader_micronormal_intensity;
 uniform float shader_sharpening;
+uniform float shader_hemi_ambient_intensity;
+uniform float shader_hemi_ambient_sky_r;
+uniform float shader_hemi_ambient_sky_g;
+uniform float shader_hemi_ambient_sky_b;
+uniform float shader_hemi_ambient_ground_r;
+uniform float shader_hemi_ambient_ground_g;
+uniform float shader_hemi_ambient_ground_b;
+uniform float shader_saturation;
 uniform float shader_viewport_width;
 uniform float shader_viewport_height;
 
@@ -329,6 +337,25 @@ void main() {
         float laplacian = abs(sharpDx) + abs(sharpDy);
         vec3 sharpened = texel.rgb + (texel.rgb - vec3(sharpLum)) * laplacian * shader_sharpening * 4.0;
         texel.rgb = clamp(sharpened, 0.0, 1.0);
+    }
+
+    // Shader Effects: Hemisphere Ambient (§5.1 — sky/ground ambient light)
+    if (shader_hemi_ambient_intensity > 0.0 && shader_viewport_height > 0.0) {
+        float screenY = gl_FragCoord.y / shader_viewport_height;
+        vec3 skyColor = vec3(shader_hemi_ambient_sky_r, shader_hemi_ambient_sky_g, shader_hemi_ambient_sky_b);
+        vec3 groundColor = vec3(shader_hemi_ambient_ground_r, shader_hemi_ambient_ground_g, shader_hemi_ambient_ground_b);
+        vec3 ambientColor = mix(groundColor, skyColor, screenY);
+        float ambientLum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+        float ambientFactor = 1.0 - smoothstep(0.0, 0.5, ambientLum);
+        texel.rgb = mix(texel.rgb, texel.rgb * ambientColor, ambientFactor * shader_hemi_ambient_intensity * 0.5);
+        texel.rgb = clamp(texel.rgb, 0.0, 1.0);
+    }
+
+    // Shader Effects: Saturation (§10.2 — color grading)
+    if (shader_saturation != 0.0) {
+        float satLum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+        texel.rgb = mix(vec3(satLum), texel.rgb, 1.0 + shader_saturation);
+        texel.rgb = clamp(texel.rgb, 0.0, 1.0);
     }
 
     // Shader Effects: Brightness/Contrast (§10 — color grading)

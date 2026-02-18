@@ -766,6 +766,72 @@ void BenMenu::AddSettings() {
                      .Min(0.0f)
                      .Max(1.0f)
                      .DefaultValue(0.0f));
+    AddWidget(path, "Hemisphere Ambient: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.HemiAmbient.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Hemisphere ambient lighting (§5.1). Tints upper surfaces with sky color "
+                              "and lower with ground bounce for a grounded feel. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Hemi Sky Red: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.HemiAmbient.SkyR")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Red component of sky ambient color.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.6f));
+    AddWidget(path, "Hemi Sky Green: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.HemiAmbient.SkyG")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Green component of sky ambient color.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.7f));
+    AddWidget(path, "Hemi Sky Blue: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.HemiAmbient.SkyB")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Blue component of sky ambient color.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(1.0f));
+    AddWidget(path, "Hemi Ground Red: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.HemiAmbient.GroundR")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Red component of ground bounce color.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.4f));
+    AddWidget(path, "Hemi Ground Green: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.HemiAmbient.GroundG")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Green component of ground bounce color.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.3f));
+    AddWidget(path, "Hemi Ground Blue: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.HemiAmbient.GroundB")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Blue component of ground bounce color.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.2f));
+    AddWidget(path, "Saturation: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.Saturation")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Color saturation adjustment (§10.2). Positive = more vivid, negative = "
+                              "desaturated. 0%% is neutral.")
+                     .IsPercentage()
+                     .Min(-1.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
 
     AddWidget(path, "Post-Processing Effects", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "SSAO Intensity: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
@@ -825,6 +891,31 @@ void BenMenu::AddSettings() {
                      .Min(0.01f)
                      .Max(1.0f)
                      .DefaultValue(0.1f));
+    AddWidget(path, "Light Shafts: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.PP.LightShaft.Intensity")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Volumetric light shafts (§7.2). Radial blur from sun position for "
+                              "sunbeams through alleys and trees. 0%% disables.")
+                     .IsPercentage()
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.0f));
+    AddWidget(path, "Light Shaft Decay: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.PP.LightShaft.Decay")
+        .Options(FloatSliderOptions()
+                     .Tooltip("How quickly light shaft intensity fades with distance from sun.")
+                     .IsPercentage()
+                     .Min(0.9f)
+                     .Max(1.0f)
+                     .DefaultValue(0.96f));
+    AddWidget(path, "Light Shaft Density: %.0f%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gShaderEffects.PP.LightShaft.Density")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Sampling density for light shafts. Higher = longer rays.")
+                     .IsPercentage()
+                     .Min(0.1f)
+                     .Max(1.5f)
+                     .DefaultValue(0.5f));
 
     path.sidebarName = "Controls";
     AddSidebarEntry("Settings", "Controls", 1);

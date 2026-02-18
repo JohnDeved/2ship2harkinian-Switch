@@ -87,6 +87,14 @@ void GfxRenderingAPIOGL::SetUniforms(ShaderProgram* prg) const {
     glUniform1f(prg->subsurfaceIntensityLocation, mShaderSubsurfaceIntensity);
     glUniform1f(prg->micronormalIntensityLocation, mShaderMicronormalIntensity);
     glUniform1f(prg->sharpeningLocation, mShaderSharpening);
+    glUniform1f(prg->hemiAmbientIntensityLocation, mShaderHemiAmbientIntensity);
+    glUniform1f(prg->hemiAmbientSkyRLocation, mShaderHemiAmbientSkyR);
+    glUniform1f(prg->hemiAmbientSkyGLocation, mShaderHemiAmbientSkyG);
+    glUniform1f(prg->hemiAmbientSkyBLocation, mShaderHemiAmbientSkyB);
+    glUniform1f(prg->hemiAmbientGroundRLocation, mShaderHemiAmbientGroundR);
+    glUniform1f(prg->hemiAmbientGroundGLocation, mShaderHemiAmbientGroundG);
+    glUniform1f(prg->hemiAmbientGroundBLocation, mShaderHemiAmbientGroundB);
+    glUniform1f(prg->saturationLocation, mShaderSaturation);
     glUniform1f(prg->viewportWidthLocation, mShaderViewportWidth);
     glUniform1f(prg->viewportHeightLocation, mShaderViewportHeight);
 }
@@ -568,6 +576,14 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->subsurfaceIntensityLocation = glGetUniformLocation(shader_program, "shader_subsurface_intensity");
     prg->micronormalIntensityLocation = glGetUniformLocation(shader_program, "shader_micronormal_intensity");
     prg->sharpeningLocation = glGetUniformLocation(shader_program, "shader_sharpening");
+    prg->hemiAmbientIntensityLocation = glGetUniformLocation(shader_program, "shader_hemi_ambient_intensity");
+    prg->hemiAmbientSkyRLocation = glGetUniformLocation(shader_program, "shader_hemi_ambient_sky_r");
+    prg->hemiAmbientSkyGLocation = glGetUniformLocation(shader_program, "shader_hemi_ambient_sky_g");
+    prg->hemiAmbientSkyBLocation = glGetUniformLocation(shader_program, "shader_hemi_ambient_sky_b");
+    prg->hemiAmbientGroundRLocation = glGetUniformLocation(shader_program, "shader_hemi_ambient_ground_r");
+    prg->hemiAmbientGroundGLocation = glGetUniformLocation(shader_program, "shader_hemi_ambient_ground_g");
+    prg->hemiAmbientGroundBLocation = glGetUniformLocation(shader_program, "shader_hemi_ambient_ground_b");
+    prg->saturationLocation = glGetUniformLocation(shader_program, "shader_saturation");
     prg->viewportWidthLocation = glGetUniformLocation(shader_program, "shader_viewport_width");
     prg->viewportHeightLocation = glGetUniformLocation(shader_program, "shader_viewport_height");
 
@@ -893,6 +909,14 @@ void GfxRenderingAPIOGL::StartFrame() {
     mShaderSubsurfaceIntensity = cv->GetFloat("gShaderEffects.Subsurface.Intensity", 0.0f);
     mShaderMicronormalIntensity = cv->GetFloat("gShaderEffects.MicroNormal.Intensity", 0.0f);
     mShaderSharpening = cv->GetFloat("gShaderEffects.Sharpening", 0.0f);
+    mShaderHemiAmbientIntensity = cv->GetFloat("gShaderEffects.HemiAmbient.Intensity", 0.0f);
+    mShaderHemiAmbientSkyR = cv->GetFloat("gShaderEffects.HemiAmbient.SkyR", 0.6f);
+    mShaderHemiAmbientSkyG = cv->GetFloat("gShaderEffects.HemiAmbient.SkyG", 0.7f);
+    mShaderHemiAmbientSkyB = cv->GetFloat("gShaderEffects.HemiAmbient.SkyB", 1.0f);
+    mShaderHemiAmbientGroundR = cv->GetFloat("gShaderEffects.HemiAmbient.GroundR", 0.4f);
+    mShaderHemiAmbientGroundG = cv->GetFloat("gShaderEffects.HemiAmbient.GroundG", 0.3f);
+    mShaderHemiAmbientGroundB = cv->GetFloat("gShaderEffects.HemiAmbient.GroundB", 0.2f);
+    mShaderSaturation = cv->GetFloat("gShaderEffects.Saturation", 0.0f);
 
     // Read post-processing CVars
     mPPSsaoIntensity = cv->GetFloat("gShaderEffects.PP.SSAO.Intensity", 0.0f);
@@ -902,6 +926,9 @@ void GfxRenderingAPIOGL::StartFrame() {
     mPPFogIntensity = cv->GetFloat("gShaderEffects.PP.Fog.Intensity", 0.0f);
     mPPFogDensity = cv->GetFloat("gShaderEffects.PP.Fog.Density", 0.02f);
     mPPFogHeightFalloff = cv->GetFloat("gShaderEffects.PP.Fog.HeightFalloff", 0.1f);
+    mPPLightShaftIntensity = cv->GetFloat("gShaderEffects.PP.LightShaft.Intensity", 0.0f);
+    mPPLightShaftDecay = cv->GetFloat("gShaderEffects.PP.LightShaft.Decay", 0.96f);
+    mPPLightShaftDensity = cv->GetFloat("gShaderEffects.PP.LightShaft.Density", 0.5f);
 
 #if defined(__SWITCH__)
     // Reset per-iteration VBO batching state.
@@ -915,7 +942,7 @@ void GfxRenderingAPIOGL::EndFrame() {
 }
 
 void GfxRenderingAPIOGL::FinishRender() {
-    bool anyPostProcess = (mPPSsaoIntensity > 0.0f) || (mPPBloomBlurIntensity > 0.0f) || (mPPFogIntensity > 0.0f);
+    bool anyPostProcess = (mPPSsaoIntensity > 0.0f) || (mPPBloomBlurIntensity > 0.0f) || (mPPFogIntensity > 0.0f) || (mPPLightShaftIntensity > 0.0f);
     if (anyPostProcess && mGameFbId > 0) {
         RunPostProcess(mGameFbId);
     }
@@ -1416,6 +1443,45 @@ static const char* kFogFS =
 #endif
     "}\n";
 
+// Volumetric light shaft fragment shader (§7.2 — radial blur toward sun)
+static const char* kLightShaftFS =
+#ifdef USE_OPENGLES
+    "#version 300 es\n"
+    "precision mediump float;\n"
+#else
+    "#version 130\n"
+#endif
+    "in vec2 vUV;\n"
+#ifdef USE_OPENGLES
+    "out vec4 fragColor;\n"
+#endif
+    "uniform sampler2D uColorTex;\n"
+    "uniform float uIntensity;\n"
+    "uniform float uDecay;\n"
+    "uniform float uDensity;\n"
+    "uniform vec2 uSunPos;\n"
+    "\n"
+    "void main() {\n"
+    "    vec2 texCoord = vUV;\n"
+    "    vec2 delta = (texCoord - uSunPos) * (1.0 / 32.0) * uDensity;\n"
+    "    float illumination = 1.0;\n"
+    "    vec3 accum = vec3(0.0);\n"
+    "    for (int i = 0; i < 32; i++) {\n"
+    "        texCoord -= delta;\n"
+    "        vec3 samp = texture(uColorTex, clamp(texCoord, 0.0, 1.0)).rgb;\n"
+    "        samp *= illumination;\n"
+    "        accum += samp;\n"
+    "        illumination *= uDecay;\n"
+    "    }\n"
+    "    vec3 scene = texture(uColorTex, vUV).rgb;\n"
+    "    vec3 result = scene + accum * uIntensity * (1.0 / 32.0);\n"
+#ifdef USE_OPENGLES
+    "    fragColor = vec4(clamp(result, 0.0, 1.0), 1.0);\n"
+#else
+    "    gl_FragColor = vec4(clamp(result, 0.0, 1.0), 1.0);\n"
+#endif
+    "}\n";
+
 GLuint GfxRenderingAPIOGL::CompilePostProcessShader(const char* vertSrc, const char* fragSrc) {
     GLuint vs = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vs, 1, &vertSrc, NULL);
@@ -1470,6 +1536,7 @@ void GfxRenderingAPIOGL::InitPostProcess() {
     mPostProcess.bloomBlurProgram = CompilePostProcessShader(kPostVS, kBloomBlurFS);
     mPostProcess.bloomComposeProgram = CompilePostProcessShader(kPostVS, kBloomComposeFS);
     mPostProcess.fogProgram = CompilePostProcessShader(kPostVS, kFogFS);
+    mPostProcess.lightShaftProgram = CompilePostProcessShader(kPostVS, kLightShaftFS);
 
     mPostProcess.initialized = true;
 }
@@ -1697,6 +1764,30 @@ void GfxRenderingAPIOGL::RunPostProcess(int gameFbId) {
         glUniform1f(glGetUniformLocation(mPostProcess.fogProgram, "uDensity"), mPPFogDensity);
         glUniform1f(glGetUniformLocation(mPostProcess.fogProgram, "uHeightFalloff"), mPPFogHeightFalloff);
         glUniform3f(glGetUniformLocation(mPostProcess.fogProgram, "uFogColor"), 0.7f, 0.75f, 0.8f);
+
+        DrawFullscreenQuad();
+
+        // Copy composite back to game FB
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, mPostProcess.compositeFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, gameFb.fbo);
+        glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    // --- Volumetric Light Shaft Pass (§7.2) ---
+    if (mPPLightShaftIntensity > 0.0f) {
+        glBindFramebuffer(GL_FRAMEBUFFER, mPostProcess.compositeFbo);
+        glViewport(0, 0, w, h);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(mPostProcess.lightShaftProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneTex);
+        glUniform1i(glGetUniformLocation(mPostProcess.lightShaftProgram, "uColorTex"), 0);
+        glUniform1f(glGetUniformLocation(mPostProcess.lightShaftProgram, "uIntensity"), mPPLightShaftIntensity);
+        glUniform1f(glGetUniformLocation(mPostProcess.lightShaftProgram, "uDecay"), mPPLightShaftDecay);
+        glUniform1f(glGetUniformLocation(mPostProcess.lightShaftProgram, "uDensity"), mPPLightShaftDensity);
+        // Sun position defaults to upper-center of screen
+        glUniform2f(glGetUniformLocation(mPostProcess.lightShaftProgram, "uSunPos"), 0.5f, 0.8f);
 
         DrawFullscreenQuad();
 

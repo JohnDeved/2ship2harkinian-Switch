@@ -57,6 +57,14 @@ struct ShaderProgram {
     GLint subsurfaceIntensityLocation;
     GLint micronormalIntensityLocation;
     GLint sharpeningLocation;
+    GLint hemiAmbientIntensityLocation;
+    GLint hemiAmbientSkyRLocation;
+    GLint hemiAmbientSkyGLocation;
+    GLint hemiAmbientSkyBLocation;
+    GLint hemiAmbientGroundRLocation;
+    GLint hemiAmbientGroundGLocation;
+    GLint hemiAmbientGroundBLocation;
+    GLint saturationLocation;
     GLint viewportWidthLocation;
     GLint viewportHeightLocation;
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
@@ -94,6 +102,9 @@ struct PostProcessOGL {
 
     // Height fog pass
     GLuint fogProgram = 0;
+
+    // Light shaft pass
+    GLuint lightShaftProgram = 0;
 
     // Intermediate framebuffer for compositing
     GLuint compositeFbo = 0;
@@ -220,6 +231,14 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     float mShaderSubsurfaceIntensity = 0.0f;
     float mShaderMicronormalIntensity = 0.0f;
     float mShaderSharpening = 0.0f;
+    float mShaderHemiAmbientIntensity = 0.0f;
+    float mShaderHemiAmbientSkyR = 0.6f;
+    float mShaderHemiAmbientSkyG = 0.7f;
+    float mShaderHemiAmbientSkyB = 1.0f;
+    float mShaderHemiAmbientGroundR = 0.4f;
+    float mShaderHemiAmbientGroundG = 0.3f;
+    float mShaderHemiAmbientGroundB = 0.2f;
+    float mShaderSaturation = 0.0f;
     float mShaderViewportWidth = 0.0f;
     float mShaderViewportHeight = 0.0f;
 
@@ -231,6 +250,9 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     float mPPFogIntensity = 0.0f;
     float mPPFogDensity = 0.02f;
     float mPPFogHeightFalloff = 0.1f;
+    float mPPLightShaftIntensity = 0.0f;
+    float mPPLightShaftDecay = 0.96f;
+    float mPPLightShaftDensity = 0.5f;
 
     // Post-processing resources
     PostProcessOGL mPostProcess;

@@ -127,6 +127,14 @@ struct FrameUniforms {
     simd::float1 subsurfaceIntensity;
     simd::float1 micronormalIntensity;
     simd::float1 sharpening;
+    simd::float1 hemiAmbientIntensity;
+    simd::float1 hemiAmbientSkyR;
+    simd::float1 hemiAmbientSkyG;
+    simd::float1 hemiAmbientSkyB;
+    simd::float1 hemiAmbientGroundR;
+    simd::float1 hemiAmbientGroundG;
+    simd::float1 hemiAmbientGroundB;
+    simd::float1 saturation;
     simd::float1 viewportWidth;
     simd::float1 viewportHeight;
 };

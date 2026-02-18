@@ -26,6 +26,14 @@ struct FrameUniforms {
     float subsurfaceIntensity;
     float micronormalIntensity;
     float sharpening;
+    float hemiAmbientIntensity;
+    float hemiAmbientSkyR;
+    float hemiAmbientSkyG;
+    float hemiAmbientSkyB;
+    float hemiAmbientGroundR;
+    float hemiAmbientGroundG;
+    float hemiAmbientGroundB;
+    float saturation;
     float viewportWidth;
     float viewportHeight;
 };
@@ -401,6 +409,25 @@ fragment float4 fragmentShader(ProjectedVertex in [[stage_in]], constant FrameUn
         float laplacian = abs(sharpDx) + abs(sharpDy);
         float3 sharpened = texel.xyz + (texel.xyz - float3(sharpLum)) * laplacian * frameUniforms.sharpening * 4.0;
         texel.xyz = clamp(sharpened, 0.0, 1.0);
+    }
+
+    // Shader Effects: Hemisphere Ambient (§5.1 — sky/ground ambient light)
+    if (frameUniforms.hemiAmbientIntensity > 0.0 && frameUniforms.viewportHeight > 0.0) {
+        float screenY = in.position.y / frameUniforms.viewportHeight;
+        float3 skyColor = float3(frameUniforms.hemiAmbientSkyR, frameUniforms.hemiAmbientSkyG, frameUniforms.hemiAmbientSkyB);
+        float3 groundColor = float3(frameUniforms.hemiAmbientGroundR, frameUniforms.hemiAmbientGroundG, frameUniforms.hemiAmbientGroundB);
+        float3 ambientColor = mix(groundColor, skyColor, screenY);
+        float ambientLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        float ambientFactor = 1.0 - smoothstep(0.0, 0.5, ambientLum);
+        texel.xyz = mix(texel.xyz, texel.xyz * ambientColor, ambientFactor * frameUniforms.hemiAmbientIntensity * 0.5);
+        texel.xyz = clamp(texel.xyz, 0.0, 1.0);
+    }
+
+    // Shader Effects: Saturation (§10.2 — color grading)
+    if (frameUniforms.saturation != 0.0) {
+        float satLum = dot(texel.xyz, float3(0.299, 0.587, 0.114));
+        texel.xyz = mix(float3(satLum), texel.xyz, 1.0 + frameUniforms.saturation);
+        texel.xyz = clamp(texel.xyz, 0.0, 1.0);
     }
 
     // Shader Effects: Brightness/Contrast (§10 — color grading)

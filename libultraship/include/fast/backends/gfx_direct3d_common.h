@@ -34,9 +34,17 @@ struct PerFrameCB {
     float shader_subsurface_intensity;
     float shader_micronormal_intensity;
     float shader_sharpening;
+    float shader_hemi_ambient_intensity;
+    float shader_hemi_ambient_sky_r;
+    float shader_hemi_ambient_sky_g;
+    float shader_hemi_ambient_sky_b;
+    float shader_hemi_ambient_ground_r;
+    float shader_hemi_ambient_ground_g;
+    float shader_hemi_ambient_ground_b;
+    float shader_saturation;
     float shader_viewport_width;
     float shader_viewport_height;
-    float padding_cb0; // constant buffers must be multiples of 16 bytes in size
+    float padding_cb0; // 32 fields × 4B = 128B (multiple of 16)
 };
 
 struct PerDrawCB {

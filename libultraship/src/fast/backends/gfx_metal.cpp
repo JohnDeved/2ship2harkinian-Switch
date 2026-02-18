@@ -538,6 +538,14 @@ void GfxRenderingAPIMetal::StartFrame() {
     mFrameUniforms.subsurfaceIntensity = cv->GetFloat("gShaderEffects.Subsurface.Intensity", 0.0f);
     mFrameUniforms.micronormalIntensity = cv->GetFloat("gShaderEffects.MicroNormal.Intensity", 0.0f);
     mFrameUniforms.sharpening = cv->GetFloat("gShaderEffects.Sharpening", 0.0f);
+    mFrameUniforms.hemiAmbientIntensity = cv->GetFloat("gShaderEffects.HemiAmbient.Intensity", 0.0f);
+    mFrameUniforms.hemiAmbientSkyR = cv->GetFloat("gShaderEffects.HemiAmbient.SkyR", 0.6f);
+    mFrameUniforms.hemiAmbientSkyG = cv->GetFloat("gShaderEffects.HemiAmbient.SkyG", 0.7f);
+    mFrameUniforms.hemiAmbientSkyB = cv->GetFloat("gShaderEffects.HemiAmbient.SkyB", 1.0f);
+    mFrameUniforms.hemiAmbientGroundR = cv->GetFloat("gShaderEffects.HemiAmbient.GroundR", 0.4f);
+    mFrameUniforms.hemiAmbientGroundG = cv->GetFloat("gShaderEffects.HemiAmbient.GroundG", 0.3f);
+    mFrameUniforms.hemiAmbientGroundB = cv->GetFloat("gShaderEffects.HemiAmbient.GroundB", 0.2f);
+    mFrameUniforms.saturation = cv->GetFloat("gShaderEffects.Saturation", 0.0f);
 
     if (!mFrameUniformBuffer) {
         mFrameUniformBuffer = mDevice->newBuffer(sizeof(FrameUniforms), MTL::ResourceCPUCacheModeDefaultCache);

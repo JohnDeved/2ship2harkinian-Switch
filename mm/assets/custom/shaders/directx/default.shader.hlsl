@@ -85,8 +85,17 @@ cbuffer PerFrameCB : register(b0) {
     float shader_subsurface_intensity;
     float shader_micronormal_intensity;
     float shader_sharpening;
+    float shader_hemi_ambient_intensity;
+    float shader_hemi_ambient_sky_r;
+    float shader_hemi_ambient_sky_g;
+    float shader_hemi_ambient_sky_b;
+    float shader_hemi_ambient_ground_r;
+    float shader_hemi_ambient_ground_g;
+    float shader_hemi_ambient_ground_b;
+    float shader_saturation;
     float shader_viewport_width;
     float shader_viewport_height;
+    float padding_cb0;
 }
 
 float random(in float3 value) {
@@ -441,6 +450,25 @@ float4 PSMain(PSInput input, float4 screenSpace : SV_Position) : SV_TARGET {
         float laplacian = abs(sharpDx) + abs(sharpDy);
         float3 sharpened = texel.rgb + (texel.rgb - float3(sharpLum, sharpLum, sharpLum)) * laplacian * shader_sharpening * 4.0;
         texel.rgb = clamp(sharpened, 0.0, 1.0);
+    }
+
+    // Shader Effects: Hemisphere Ambient (§5.1 — sky/ground ambient light)
+    if (shader_hemi_ambient_intensity > 0.0 && shader_viewport_height > 0.0) {
+        float screenY = screenSpace.y / shader_viewport_height;
+        float3 skyColor = float3(shader_hemi_ambient_sky_r, shader_hemi_ambient_sky_g, shader_hemi_ambient_sky_b);
+        float3 groundColor = float3(shader_hemi_ambient_ground_r, shader_hemi_ambient_ground_g, shader_hemi_ambient_ground_b);
+        float3 ambientColor = lerp(groundColor, skyColor, screenY);
+        float ambientLum = dot(texel.rgb, float3(0.299, 0.587, 0.114));
+        float ambientFactor = 1.0 - smoothstep(0.0, 0.5, ambientLum);
+        texel.rgb = lerp(texel.rgb, texel.rgb * ambientColor, ambientFactor * shader_hemi_ambient_intensity * 0.5);
+        texel.rgb = clamp(texel.rgb, 0.0, 1.0);
+    }
+
+    // Shader Effects: Saturation (§10.2 — color grading)
+    if (shader_saturation != 0.0) {
+        float satLum = dot(texel.rgb, float3(0.299, 0.587, 0.114));
+        texel.rgb = lerp(float3(satLum, satLum, satLum), texel.rgb, 1.0 + shader_saturation);
+        texel.rgb = clamp(texel.rgb, 0.0, 1.0);
     }
 
     // Shader Effects: Brightness/Contrast (§10 — color grading)

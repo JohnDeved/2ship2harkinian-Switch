@@ -23,7 +23,7 @@ static bool IsActorTargetable(PlayState* play, Player* player, Actor* actor) {
     if (actor == NULL || actor->update == NULL) {
         return false;
     }
-    if ((Player*)actor == player) {
+    if (actor == &player->actor) {
         return false;
     }
     if (!(actor->flags & ACTOR_FLAG_ATTENTION_ENABLED)) {
@@ -165,8 +165,12 @@ void RegisterRightStickTargetSwitch() {
         }
 
         if (bestActor != NULL) {
+            // Replicate the vanilla target-switch logic from Player_UpdateZTargeting:
+            // Clear refindable so the new target is treated as a fresh lock-on.
             bestActor->flags &= ~ACTOR_FLAG_FOCUS_ACTOR_REFINDABLE;
             player->focusActor = bestActor;
+            // 15 frames gives the reticle time to settle onto the new target
+            // (vanilla counts down from 15 to 5, ignoring leash distance during that window).
             player->zTargetActiveTimer = 15;
             player->stateFlags2 &= ~(PLAYER_STATE2_CAN_ACCEPT_TALK_OFFER | PLAYER_STATE2_200000);
 

@@ -1131,6 +1131,17 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "When the Great Fairy's Sword is held, pressing B attacks with it instead of drawing "
             "your equipped sword. The sword can still be put away with A as normal."));
+    AddWidget(path, "BotW-Style QuickBar", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Equipment.QuickBar")
+        .Options(CheckboxOptions().Tooltip(
+            "Enables a BotW-style quick-switch system. Tap D-pad to recall the last-used item in "
+            "that category. Hold D-pad to open a QuickBar and select with the right stick."));
+    AddWidget(path, "  Auto-Play Songs", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Equipment.QuickBar.AutoPlaySongs")
+        .Options(CheckboxOptions().Tooltip(
+            "When enabled, selecting a song from the QuickBar will play it automatically. "
+            "When disabled, it readies the Ocarina instead.")
+            .DefaultValue(true));
 
     path.column = SECTION_COLUMN_2;
     AddWidget(path, "Modes", WIDGET_SEPARATOR_TEXT);

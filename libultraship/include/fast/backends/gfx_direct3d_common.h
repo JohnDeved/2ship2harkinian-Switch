@@ -20,7 +20,7 @@ struct PerFrameCB {
     float shader_cel_softness;
     int32_t shader_tonemapping_enabled;
     float shader_color_temp;
-    uint32_t padding; // constant buffers must be multiples of 16 bytes in size
+    float padding_cb0; // constant buffers must be multiples of 16 bytes in size
 };
 
 struct PerDrawCB {

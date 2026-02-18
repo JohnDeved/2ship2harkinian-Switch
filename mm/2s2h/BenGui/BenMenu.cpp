@@ -1053,11 +1053,12 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Manual Jump", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ManualJump")
         .Options(CheckboxOptions().Tooltip("Z + A to Jump and B while midair to Jump Attack."));
-    AddWidget(path, "Right Stick Target Switching", WIDGET_CVAR_CHECKBOX)
+    AddWidget(path, "Modern Z-Targeting", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.RightStickTargetSwitch")
         .Options(CheckboxOptions().Tooltip(
-            "Modern targeting: push right stick left/right to switch targets. "
-            "Pressing Z while locked on releases the lock."));
+            "Modern targeting like BotW/TotK: initial lock-on picks the target closest to camera center, "
+            "right stick left/right switches between nearby targets, "
+            "and pressing Z while locked on releases the lock."));
     AddWidget(path, "Dpad Equips", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Dpad.DpadEquips")
         .Options(CheckboxOptions().Tooltip("Allows you to equip items to your D-pad."));

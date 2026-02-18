@@ -1,0 +1,84 @@
+name: "Copilot Setup Steps"
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
+  copilot-setup-steps:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    env:
+      CCACHE_DIR: /home/runner/.ccache
+      CCACHE_MAXSIZE: 500M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            $(cat .github/workflows/apt-deps.txt) \
+            libzip-dev zipcmp zipmerge ziptool \
+            ccache
+
+      - name: Set up ccache
+        run: |
+          sudo ln -sf "$(which ccache)" /usr/local/bin/gcc
+          sudo ln -sf "$(which ccache)" /usr/local/bin/g++
+          sudo ln -sf "$(which ccache)" /usr/local/bin/cc
+          sudo ln -sf "$(which ccache)" /usr/local/bin/c++
+          ccache --zero-stats
+          ccache --max-size=$CCACHE_MAXSIZE
+
+      - name: Build and install SDL2 from source
+        run: |
+          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+          wget -q https://github.com/libsdl-org/SDL/releases/download/release-2.30.3/SDL2-2.30.3.tar.gz
+          tar -xzf SDL2-2.30.3.tar.gz
+          cd SDL2-2.30.3
+          ./configure --enable-hidapi-libusb
+          make -j $(nproc)
+          sudo make install
+          sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
+
+      - name: Build and install tinyxml2 from source
+        run: |
+          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+          sudo apt-get remove -y libtinyxml2-dev
+          wget -q https://github.com/leethomason/tinyxml2/archive/refs/tags/10.0.0.tar.gz
+          tar -xzf 10.0.0.tar.gz
+          cd tinyxml2-10.0.0
+          mkdir -p build && cd build
+          cmake ..
+          make -j $(nproc)
+          sudo make install
+
+      - name: Pre-configure cmake build
+        run: |
+          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+          cmake --no-warn-unused-cli \
+            -H. -Bbuild-cmake \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE:STRING=Release \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache
+
+      - name: Show ccache stats
+        run: ccache --show-stats

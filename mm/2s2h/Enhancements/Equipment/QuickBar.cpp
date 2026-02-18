@@ -26,6 +26,10 @@ static QuickBarState sState = {};
 static bool sStickReleased = true;
 static u8 sSavedFramerateDivisor = 0;
 
+// Saved right stick values (captured in PreMain before zeroing for camera)
+static s8 sSavedRightStickX = 0;
+static s8 sSavedRightStickY = 0;
+
 QuickBarState& GetQuickBarState() {
     return sState;
 }
@@ -300,14 +304,34 @@ static int QuestBitToSongId(int questBit) {
     }
 }
 
+// Map song quest bit to OCARINA_MODE_PLAYED_* for direct effect triggering
+static int QuestBitToOcarinaMode(int questBit) {
+    switch (questBit) {
+        case QUEST_SONG_TIME:          return OCARINA_MODE_PLAYED_TIME;
+        case QUEST_SONG_HEALING:       return OCARINA_MODE_PLAYED_HEALING;
+        case QUEST_SONG_EPONA:         return OCARINA_MODE_PLAYED_EPONAS;
+        case QUEST_SONG_SOARING:       return OCARINA_MODE_PLAYED_SOARING;
+        case QUEST_SONG_STORMS:        return OCARINA_MODE_PLAYED_STORMS;
+        case QUEST_SONG_SUN:           return OCARINA_MODE_PLAYED_DOUBLE_TIME;
+        case QUEST_SONG_SARIA:         return OCARINA_MODE_PLAYED_INVERTED_TIME;
+        default: return -1; // Sonata, Lullaby, Bossa Nova, Elegy, Oath - need nearby actor
+    }
+}
+
 static void PlaySong(int questBit) {
     if (gPlayState == nullptr) return;
-    int songId = QuestBitToSongId(questBit);
-    if (songId >= 0) {
-        // Use the ocarina to trigger the song through the game's normal system
+    int mode = QuestBitToOcarinaMode(questBit);
+    if (mode >= 0) {
+        // Songs with direct PLAYED_ modes: trigger effect via message system
+        gPlayState->msgCtx.ocarinaMode = (OcarinaMode)mode;
+    } else {
+        // Songs that need nearby actors (Sonata, Lullaby, etc.): pull out ocarina
         UseItemOnPlayer(ITEM_OCARINA_OF_TIME);
-        AudioOcarina_SetInstrument(OCARINA_INSTRUMENT_DEFAULT);
-        AudioOcarina_SetPlaybackSong(songId + 1, 1);
+        int songId = QuestBitToSongId(questBit);
+        if (songId >= 0) {
+            AudioOcarina_SetInstrument(OCARINA_INSTRUMENT_DEFAULT);
+            AudioOcarina_SetPlaybackSong(songId + 1, 1);
+        }
     }
 }
 
@@ -348,6 +372,7 @@ static void OpenQuickBar(QuickBarCategory cat) {
 
     sStickReleased = true;
     EnterSlowMotion();
+    Audio_PlaySfx(NA_SE_SY_WIN_OPEN);
 }
 
 static void CloseQuickBar(bool confirm) {
@@ -391,19 +416,17 @@ static void TapRecall(QuickBarCategory cat) {
 
     switch (cat) {
         case QB_CAT_TOOLS:
-            // Tap RIGHT: use the active tool directly via Player_UseItem
-            if (sState.activeToolItem >= 0) {
-                UseItemOnPlayer(sState.activeToolItem);
+            // Tap RIGHT: just set the active tool (shown on D-pad HUD)
+            if (lastItem >= 0) {
+                SetActiveTool(lastItem);
             }
             break;
         case QB_CAT_BOTTLES:
-            // Tap DOWN: use last selected bottle
-            if (lastItem >= 0) {
-                UseItemOnPlayer(lastItem);
-            }
+            // Tap DOWN: just set last bottle (shown on D-pad HUD)
+            // Actual use via RB click (future)
             break;
         case QB_CAT_MASKS:
-            // Tap UP: equip last mask
+            // Tap UP: equip last mask (masks are toggle-equip, works fine)
             if (lastItem >= 0) {
                 UseItemOnPlayer(lastItem);
             }
@@ -421,12 +444,24 @@ static void TapRecall(QuickBarCategory cat) {
 
 static void QuickBarPreMain() {
     if (gPlayState == nullptr) return;
-    if (!sState.isOpen) return;
 
-    // Consume right stick BEFORE the camera system reads it
     Input* input = CONTROLLER1(&gPlayState->state);
-    input->cur.right_stick_x = 0;
-    input->cur.right_stick_y = 0;
+
+    if (sState.isOpen) {
+        // Save right stick values BEFORE zeroing so QuickBarUpdate can use them
+        sSavedRightStickX = input->cur.right_stick_x;
+        sSavedRightStickY = input->cur.right_stick_y;
+
+        // Consume right stick BEFORE the camera/FreeLook reads it
+        input->cur.right_stick_x = 0;
+        input->cur.right_stick_y = 0;
+
+        // Enforce slow-motion every frame (prevents game from resetting it)
+        GameState_SetFramerateDivisor(&gPlayState->state, 3);
+    } else {
+        sSavedRightStickX = 0;
+        sSavedRightStickY = 0;
+    }
 }
 
 // ─── Per-frame update ───────────────────────────────────────────────────────
@@ -471,9 +506,9 @@ static void QuickBarUpdate() {
         }
     }
 
-    // QuickBar navigation with right stick
+    // QuickBar navigation with right stick (using saved values from PreMain)
     if (sState.isOpen && !sState.currentItems.empty()) {
-        s32 stickX = input->cur.right_stick_x;
+        s32 stickX = sSavedRightStickX;
 
         if (stickX > -STICK_RELEASE_THRESHOLD && stickX < STICK_RELEASE_THRESHOLD) {
             sStickReleased = true;
@@ -497,11 +532,10 @@ static void QuickBarUpdate() {
             }
         }
 
-        // Consume D-pad and right stick input so other systems don't process it
+        // Consume D-pad input so other systems don't process it
         input->press.button &= ~(BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT);
         input->cur.button   &= ~(BTN_DUP | BTN_DDOWN | BTN_DLEFT | BTN_DRIGHT);
-        input->cur.right_stick_x = 0;
-        input->cur.right_stick_y = 0;
+        // Right stick already consumed in PreMain
     }
 }
 

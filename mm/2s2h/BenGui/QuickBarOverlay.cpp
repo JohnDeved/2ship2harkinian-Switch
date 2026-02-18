@@ -55,35 +55,69 @@ void QuickBarOverlayWindow::Draw() {
     QuickBarState& state = GetQuickBarState();
     ImVec2 viewport = ImGui::GetIO().DisplaySize;
 
-    // ─── Active Tool chip (top-right corner) ────────────────────────────────
-    if (state.activeToolItem >= 0) {
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.12f, 0.75f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.4f, 0.7f, 1.0f, 0.5f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));
-
-        ImGuiWindowFlags chipFlags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+    // ─── D-pad HUD (bottom-right corner showing last-used per category) ─────
+    {
+        ImGuiWindowFlags dpadFlags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking |
                                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
-                                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs;
+                                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                     ImGuiWindowFlags_NoBackground;
 
-        ImGui::SetNextWindowPos(ImVec2(viewport.x - 200, 10), ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 
-        ImGui::Begin("ActiveToolChip", nullptr, chipFlags);
+        float dpadSize = 120.0f;
+        float iconSize = 28.0f;
+        float dpadX = viewport.x - dpadSize - 20.0f;
+        float dpadY = viewport.y - dpadSize - 80.0f;
 
-        ImTextureID tex = GetItemTexture(state.activeToolItem, QB_CAT_TOOLS);
-        if (tex) {
-            ImGui::Image(tex, ImVec2(28, 28));
-            ImGui::SameLine(0, 8);
+        ImGui::SetNextWindowPos(ImVec2(dpadX, dpadY), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(dpadSize, dpadSize));
+        ImGui::Begin("QuickBarDpad", nullptr, dpadFlags);
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        float cx = dpadX + dpadSize * 0.5f;
+        float cy = dpadY + dpadSize * 0.5f;
+        float offset = 36.0f;
+
+        // Draw D-pad cross background
+        ImU32 bgCol = IM_COL32(20, 25, 32, 160);
+        float armW = 30.0f;
+        float armH = 36.0f;
+        // Vertical arm
+        dl->AddRectFilled(ImVec2(cx - armW * 0.5f, cy - armH - 4), ImVec2(cx + armW * 0.5f, cy + armH + 4), bgCol, 4.0f);
+        // Horizontal arm
+        dl->AddRectFilled(ImVec2(cx - armH - 4, cy - armW * 0.5f), ImVec2(cx + armH + 4, cy + armW * 0.5f), bgCol, 4.0f);
+
+        // Draw icons for each direction: UP=Mask, RIGHT=Tool, DOWN=Bottle, LEFT=Ocarina
+        struct DpadSlot {
+            float x, y;
+            int itemId;
+            QuickBarCategory cat;
+        };
+
+        DpadSlot slots[4] = {
+            { cx - iconSize * 0.5f, cy - offset - iconSize * 0.5f, state.lastUsed[QB_CAT_MASKS], QB_CAT_MASKS },    // UP
+            { cx + offset - iconSize * 0.5f, cy - iconSize * 0.5f, state.lastUsed[QB_CAT_TOOLS], QB_CAT_TOOLS },    // RIGHT
+            { cx - iconSize * 0.5f, cy + offset - iconSize * 0.5f, state.lastUsed[QB_CAT_BOTTLES], QB_CAT_BOTTLES }, // DOWN
+            { cx - offset - iconSize * 0.5f, cy - iconSize * 0.5f, ITEM_OCARINA_OF_TIME, QB_CAT_SONGS }             // LEFT (always ocarina)
+        };
+
+        for (int i = 0; i < 4; i++) {
+            int itemId = slots[i].itemId;
+            if (itemId < 0) continue;
+
+            ImTextureID tex = GetItemTexture(itemId, slots[i].cat);
+            if (tex) {
+                ImGui::SetCursorPos(ImVec2(slots[i].x - dpadX, slots[i].y - dpadY));
+                ImGui::Image(tex, ImVec2(iconSize, iconSize), ImVec2(0, 0), ImVec2(1, 1),
+                             ImVec4(1, 1, 1, 0.85f), ImVec4(0, 0, 0, 0));
+            }
         }
-
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6);
-        ImGui::TextColored(ImVec4(1, 1, 1, 0.9f), "%s", QuickBar_GetItemName(state.activeToolItem));
 
         ImGui::End();
         ImGui::PopStyleVar(3);
-        ImGui::PopStyleColor(2);
     }
 
     // ─── QuickBar overlay (BotW-style centered carousel) ────────────────────

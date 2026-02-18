@@ -307,12 +307,14 @@ fragment float4 fragmentShader(ProjectedVertex in [[stage_in]], constant FrameUn
 
     // Shader Effects: Brightness/Contrast
     if (frameUniforms.brightness != 0.0 || frameUniforms.contrast != 0.0) {
-        texel.xyz = clamp((texel.xyz - 0.5) * (1.0 + frameUniforms.contrast) + 0.5 + frameUniforms.brightness, 0.0, 1.0);
+        texel.xyz = clamp((texel.xyz - 0.5) * (1.0 + frameUniforms.contrast) + 0.5, 0.0, 1.0);
+        texel.xyz = clamp(texel.xyz + frameUniforms.brightness, 0.0, 1.0);
     }
 
     // Shader Effects: Film Grain
     if (frameUniforms.filmGrain > 0.0) {
         float grain = random(float3(floor(in.position.xy), frameUniforms.frameCount)) * 2.0 - 1.0;
+        // 0.15 scales the grain to a subtle perceptual range at full strength
         texel.xyz = clamp(texel.xyz + float3(grain, grain, grain) * frameUniforms.filmGrain * 0.15, 0.0, 1.0);
     }
 

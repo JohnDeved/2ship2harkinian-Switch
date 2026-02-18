@@ -349,12 +349,14 @@ float4 PSMain(PSInput input, float4 screenSpace : SV_Position) : SV_TARGET {
 
     // Shader Effects: Brightness/Contrast
     if (shader_brightness != 0.0 || shader_contrast != 0.0) {
-        texel.rgb = clamp((texel.rgb - 0.5) * (1.0 + shader_contrast) + 0.5 + shader_brightness, 0.0, 1.0);
+        texel.rgb = clamp((texel.rgb - 0.5) * (1.0 + shader_contrast) + 0.5, 0.0, 1.0);
+        texel.rgb = clamp(texel.rgb + shader_brightness, 0.0, 1.0);
     }
 
     // Shader Effects: Film Grain
     if (shader_film_grain > 0.0) {
         float grain = random(float3(floor(screenSpace.xy), noise_frame)) * 2.0 - 1.0;
+        // 0.15 scales the grain to a subtle perceptual range at full strength
         texel.rgb = clamp(texel.rgb + float3(grain, grain, grain) * shader_film_grain * 0.15, 0.0, 1.0);
     }
 

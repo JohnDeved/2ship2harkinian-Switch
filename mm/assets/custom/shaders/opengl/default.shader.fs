@@ -231,12 +231,14 @@ void main() {
 
     // Shader Effects: Brightness/Contrast
     if (shader_brightness != 0.0 || shader_contrast != 0.0) {
-        texel.rgb = clamp((texel.rgb - 0.5) * (1.0 + shader_contrast) + 0.5 + shader_brightness, 0.0, 1.0);
+        texel.rgb = clamp((texel.rgb - 0.5) * (1.0 + shader_contrast) + 0.5, 0.0, 1.0);
+        texel.rgb = clamp(texel.rgb + shader_brightness, 0.0, 1.0);
     }
 
     // Shader Effects: Film Grain
     if (shader_film_grain > 0.0) {
         float grain = random(vec3(gl_FragCoord.xy, float(frame_count))) * 2.0 - 1.0;
+        // 0.15 scales the grain to a subtle perceptual range at full strength
         texel.rgb = clamp(texel.rgb + vec3(grain * shader_film_grain * 0.15), 0.0, 1.0);
     }
 

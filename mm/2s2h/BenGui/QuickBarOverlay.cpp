@@ -55,7 +55,7 @@ void QuickBarOverlayWindow::Draw() {
     QuickBarState& state = GetQuickBarState();
     ImVec2 viewport = ImGui::GetIO().DisplaySize;
 
-    // ─── D-pad HUD (bottom-right corner showing last-used per category) ─────
+    // ─── D-pad HUD (matches native Dpad Equips visual position/style) ────────
     {
         ImGuiWindowFlags dpadFlags = ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
                                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking |
@@ -67,30 +67,21 @@ void QuickBarOverlayWindow::Draw() {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 
-        float dpadSize = 120.0f;
-        float iconSize = 28.0f;
-        float dpadX = viewport.x - dpadSize - 20.0f;
-        float dpadY = viewport.y - dpadSize - 80.0f;
+        // Native Dpad Equips renders at N64 coords (279,63) center on 320x240.
+        // Scale to actual viewport to match exact position.
+        float scaleX = viewport.x / 320.0f;
+        float scaleY = viewport.y / 240.0f;
+        float iconSize = 16.0f * scaleX;
+        float dpadW = (295 - 263 + 16) * scaleX;  // Full width of cross
+        float dpadH = (79 - 47 + 16) * scaleY;    // Full height of cross
+        float dpadX = 263.0f * scaleX;
+        float dpadY = 47.0f * scaleY;
 
-        ImGui::SetNextWindowPos(ImVec2(dpadX, dpadY), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(dpadSize, dpadSize));
+        ImGui::SetNextWindowPos(ImVec2(dpadX - 4, dpadY - 4), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(dpadW + 8, dpadH + 8));
         ImGui::Begin("QuickBarDpad", nullptr, dpadFlags);
 
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        float cx = dpadX + dpadSize * 0.5f;
-        float cy = dpadY + dpadSize * 0.5f;
-        float offset = 36.0f;
-
-        // Draw D-pad cross background
-        ImU32 bgCol = IM_COL32(20, 25, 32, 160);
-        float armW = 30.0f;
-        float armH = 36.0f;
-        // Vertical arm
-        dl->AddRectFilled(ImVec2(cx - armW * 0.5f, cy - armH - 4), ImVec2(cx + armW * 0.5f, cy + armH + 4), bgCol, 4.0f);
-        // Horizontal arm
-        dl->AddRectFilled(ImVec2(cx - armH - 4, cy - armW * 0.5f), ImVec2(cx + armH + 4, cy + armW * 0.5f), bgCol, 4.0f);
-
-        // Draw icons for each direction: UP=Mask, RIGHT=Tool, DOWN=Bottle, LEFT=Ocarina
+        // Draw icons at same positions as native Dpad Equips
         struct DpadSlot {
             float x, y;
             int itemId;
@@ -98,10 +89,10 @@ void QuickBarOverlayWindow::Draw() {
         };
 
         DpadSlot slots[4] = {
-            { cx - iconSize * 0.5f, cy - offset - iconSize * 0.5f, state.lastUsed[QB_CAT_MASKS], QB_CAT_MASKS },    // UP
-            { cx + offset - iconSize * 0.5f, cy - iconSize * 0.5f, state.lastUsed[QB_CAT_TOOLS], QB_CAT_TOOLS },    // RIGHT
-            { cx - iconSize * 0.5f, cy + offset - iconSize * 0.5f, state.lastUsed[QB_CAT_BOTTLES], QB_CAT_BOTTLES }, // DOWN
-            { cx - offset - iconSize * 0.5f, cy - iconSize * 0.5f, ITEM_OCARINA_OF_TIME, QB_CAT_SONGS }             // LEFT (always ocarina)
+            { 279.0f * scaleX, 47.0f * scaleY, state.lastUsed[QB_CAT_MASKS], QB_CAT_MASKS },     // UP
+            { 295.0f * scaleX, 63.0f * scaleY, state.lastUsed[QB_CAT_TOOLS], QB_CAT_TOOLS },     // RIGHT
+            { 279.0f * scaleX, 79.0f * scaleY, state.lastUsed[QB_CAT_BOTTLES], QB_CAT_BOTTLES },  // DOWN
+            { 263.0f * scaleX, 63.0f * scaleY, ITEM_OCARINA_OF_TIME, QB_CAT_SONGS }               // LEFT (always ocarina)
         };
 
         for (int i = 0; i < 4; i++) {
@@ -110,7 +101,7 @@ void QuickBarOverlayWindow::Draw() {
 
             ImTextureID tex = GetItemTexture(itemId, slots[i].cat);
             if (tex) {
-                ImGui::SetCursorPos(ImVec2(slots[i].x - dpadX, slots[i].y - dpadY));
+                ImGui::SetCursorPos(ImVec2(slots[i].x - dpadX + 4, slots[i].y - dpadY + 4));
                 ImGui::Image(tex, ImVec2(iconSize, iconSize), ImVec2(0, 0), ImVec2(1, 1),
                              ImVec4(1, 1, 1, 0.85f), ImVec4(0, 0, 0, 0));
             }

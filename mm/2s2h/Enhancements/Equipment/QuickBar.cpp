@@ -9,7 +9,6 @@ extern "C" {
 #include "functions.h"
 #include "z64ocarina.h"
 void Player_UseItem(PlayState* play, Player* thisx, ItemId item);
-void GameState_SetFramerateDivisor(GameState* gameState, s32 divisor);
 }
 
 #define CVAR_NAME "gEnhancements.Equipment.QuickBar"
@@ -24,7 +23,7 @@ static const int STICK_RELEASE_THRESHOLD = 20;
 
 static QuickBarState sState = {};
 static bool sStickReleased = true;
-static u8 sSavedFramerateDivisor = 0;
+static s16 sSavedTimeSpeed = 0;
 
 // Saved right stick values (captured in PreMain before zeroing for camera)
 static s8 sSavedRightStickX = 0;
@@ -304,50 +303,31 @@ static int QuestBitToSongId(int questBit) {
     }
 }
 
-// Map song quest bit to OCARINA_MODE_PLAYED_* for direct effect triggering
-static int QuestBitToOcarinaMode(int questBit) {
-    switch (questBit) {
-        case QUEST_SONG_TIME:          return OCARINA_MODE_PLAYED_TIME;
-        case QUEST_SONG_HEALING:       return OCARINA_MODE_PLAYED_HEALING;
-        case QUEST_SONG_EPONA:         return OCARINA_MODE_PLAYED_EPONAS;
-        case QUEST_SONG_SOARING:       return OCARINA_MODE_PLAYED_SOARING;
-        case QUEST_SONG_STORMS:        return OCARINA_MODE_PLAYED_STORMS;
-        case QUEST_SONG_SUN:           return OCARINA_MODE_PLAYED_DOUBLE_TIME;
-        case QUEST_SONG_SARIA:         return OCARINA_MODE_PLAYED_INVERTED_TIME;
-        default: return -1; // Sonata, Lullaby, Bossa Nova, Elegy, Oath - need nearby actor
-    }
-}
-
 static void PlaySong(int questBit) {
     if (gPlayState == nullptr) return;
-    int mode = QuestBitToOcarinaMode(questBit);
-    if (mode >= 0) {
-        // Songs with direct PLAYED_ modes: trigger effect via message system
-        gPlayState->msgCtx.ocarinaMode = (OcarinaMode)mode;
-    } else {
-        // Songs that need nearby actors (Sonata, Lullaby, etc.): pull out ocarina
-        UseItemOnPlayer(ITEM_OCARINA_OF_TIME);
-        int songId = QuestBitToSongId(questBit);
-        if (songId >= 0) {
-            AudioOcarina_SetInstrument(OCARINA_INSTRUMENT_DEFAULT);
-            AudioOcarina_SetPlaybackSong(songId + 1, 1);
-        }
+    // Pull out ocarina and auto-play the song through the game's normal pipeline.
+    // This ensures all song effects trigger properly (warps, cutscenes, etc.)
+    UseItemOnPlayer(ITEM_OCARINA_OF_TIME);
+    int songId = QuestBitToSongId(questBit);
+    if (songId >= 0) {
+        AudioOcarina_SetInstrument(OCARINA_INSTRUMENT_DEFAULT);
+        AudioOcarina_SetPlaybackSong(songId + 1, 1);
     }
 }
 
-// ─── Slow-motion control ────────────────────────────────────────────────────
+// ─── Time-stop control (like ocarina) ───────────────────────────────────────
 
-static void EnterSlowMotion() {
+static void EnterTimeStop() {
     if (gPlayState == nullptr) return;
-    sSavedFramerateDivisor = gPlayState->state.framerateDivisor;
-    GameState_SetFramerateDivisor(&gPlayState->state, 3);
+    sSavedTimeSpeed = R_TIME_SPEED;
+    R_TIME_SPEED = 0;
+    gPlayState->envCtx.sceneTimeSpeed = 0;
 }
 
-static void ExitSlowMotion() {
+static void ExitTimeStop() {
     if (gPlayState == nullptr) return;
-    u8 restore = (sSavedFramerateDivisor > 0) ? sSavedFramerateDivisor : 1;
-    GameState_SetFramerateDivisor(&gPlayState->state, restore);
-    sSavedFramerateDivisor = 0;
+    R_TIME_SPEED = sSavedTimeSpeed;
+    sSavedTimeSpeed = 0;
 }
 
 // ─── Open / close QuickBar ──────────────────────────────────────────────────
@@ -371,14 +351,14 @@ static void OpenQuickBar(QuickBarCategory cat) {
     }
 
     sStickReleased = true;
-    EnterSlowMotion();
+    EnterTimeStop();
     Audio_PlaySfx(NA_SE_SY_WIN_OPEN);
 }
 
 static void CloseQuickBar(bool confirm) {
     if (!sState.isOpen) return;
 
-    ExitSlowMotion();
+    ExitTimeStop();
 
     if (confirm && !sState.currentItems.empty()) {
         int selectedItem = sState.currentItems[sState.selectionIndex];
@@ -387,6 +367,7 @@ static void CloseQuickBar(bool confirm) {
         switch (sState.openCategory) {
             case QB_CAT_TOOLS:
                 SetActiveTool(selectedItem);
+                UseItemOnPlayer(selectedItem);
                 break;
             case QB_CAT_MASKS:
                 UseItemOnPlayer(selectedItem);
@@ -398,6 +379,7 @@ static void CloseQuickBar(bool confirm) {
                 break;
             case QB_CAT_BOTTLES:
                 SetActiveTool(selectedItem);
+                UseItemOnPlayer(selectedItem);
                 break;
             default:
                 break;
@@ -456,8 +438,9 @@ static void QuickBarPreMain() {
         input->cur.right_stick_x = 0;
         input->cur.right_stick_y = 0;
 
-        // Enforce slow-motion every frame (prevents game from resetting it)
-        GameState_SetFramerateDivisor(&gPlayState->state, 3);
+        // Enforce time-stop every frame (prevents game from resetting it)
+        R_TIME_SPEED = 0;
+        gPlayState->envCtx.sceneTimeSpeed = 0;
     } else {
         sSavedRightStickX = 0;
         sSavedRightStickY = 0;

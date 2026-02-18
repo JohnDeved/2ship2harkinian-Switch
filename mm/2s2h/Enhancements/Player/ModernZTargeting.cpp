@@ -98,7 +98,7 @@ void RegisterModernZTargeting() {
         bool switchRight = rightStickX > 0;
 
         // Use camera yaw to determine screen-space left/right
-        Camera* cam = play->cameraPtrs[play->activeCamera];
+        Camera* cam = play->cameraPtrs[play->activeCamId];
         s16 cameraYaw = Math_Vec3f_Yaw(&cam->eye, &cam->at);
 
         // Current target angle relative to camera

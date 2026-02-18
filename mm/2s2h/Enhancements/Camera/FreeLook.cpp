@@ -20,6 +20,9 @@ extern s32 sCameraInterfaceFlags;
 // Check if bombchu remote control is active
 extern bool IsBombchuFocused();
 
+// Check if debug camera is active (either via CVar or R3 toggle)
+extern bool IsDebugCamActive();
+
 // Static Data Used For Free Camera
 static bool sCanFreeLook = false;
 
@@ -175,23 +178,25 @@ bool Camera_CanFreeLook(Camera* camera) {
 void RegisterCameraFreeLook() {
     COND_VB_SHOULD(VB_USE_CUSTOM_CAMERA, CVarGetInteger("gEnhancements.Camera.FreeLook.Enable", 0), {
         Camera* camera = va_arg(args, Camera*);
-        switch (sCameraSettings[camera->setting].cameraModes[camera->mode].funcId) {
-            case CAM_FUNC_NORMAL0:
-            case CAM_FUNC_NORMAL1:
-            case CAM_FUNC_NORMAL3:
-            case CAM_FUNC_NORMAL4:
-            case CAM_FUNC_JUMP2:
-            case CAM_FUNC_JUMP3:
-            case CAM_FUNC_BATTLE1:
-            case CAM_FUNC_UNIQUE2:
-            case CAM_FUNC_UNIQUE3:
-                if (Camera_CanFreeLook(camera)) {
-                    Camera_FreeLook(camera);
-                    *should = false;
-                }
-                break;
-            default:
-                break;
+        if (!IsDebugCamActive()) {
+            switch (sCameraSettings[camera->setting].cameraModes[camera->mode].funcId) {
+                case CAM_FUNC_NORMAL0:
+                case CAM_FUNC_NORMAL1:
+                case CAM_FUNC_NORMAL3:
+                case CAM_FUNC_NORMAL4:
+                case CAM_FUNC_JUMP2:
+                case CAM_FUNC_JUMP3:
+                case CAM_FUNC_BATTLE1:
+                case CAM_FUNC_UNIQUE2:
+                case CAM_FUNC_UNIQUE3:
+                    if (Camera_CanFreeLook(camera)) {
+                        Camera_FreeLook(camera);
+                        *should = false;
+                    }
+                    break;
+                default:
+                    break;
+            }
         }
     });
 

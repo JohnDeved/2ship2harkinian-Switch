@@ -15,7 +15,7 @@ s32 Player_UpperAction_8(Player* thisx, PlayState* play);
 
 #define CVAR_NAME "gEnhancements.PlayerActions.ArrowCycle"
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
-#define CVAR_DPAD_NAME "gEnhancements.PlayerActions.ArrowCycle.UseDpad"
+#define CVAR_DPAD_NAME "gEnhancements.PlayerActions.ArrowCycleDpad"
 #define CVAR_DPAD CVarGetInteger(CVAR_DPAD_NAME, 0)
 
 // Magic arrow costs based on z_player.c

@@ -1119,7 +1119,7 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "While aiming the bow, use R to cycle between Normal, Fire, Ice and Light arrows."));
     AddWidget(path, "  D-Pad Arrow Cycling", WIDGET_CVAR_CHECKBOX)
-        .CVar("gEnhancements.PlayerActions.ArrowCycle.UseDpad")
+        .CVar("gEnhancements.PlayerActions.ArrowCycleDpad")
         .PreFunc([](WidgetInfo& info) {
             info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_ARROW_CYCLE_OFF).active;
         })

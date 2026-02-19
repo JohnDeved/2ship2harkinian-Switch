@@ -481,13 +481,20 @@ void GfxRenderingAPIDeko3d::ShaderGetInfo(ShaderProgram* prg, uint8_t* numInputs
 // ---------------------------------------------------------------------------
 
 uint32_t GfxRenderingAPIDeko3d::NewTexture() {
-    // Texture descriptor range is [1, MAX_TEX_DESCRIPTORS).
-    // If we run out and there's no recycled descriptor available, fail gracefully.
-    if (mFreeDescriptorIndices.empty() && mNextTextureId >= MAX_TEX_DESCRIPTORS) {
+    // Texture ID/descriptor range is [1, MAX_TEX_DESCRIPTORS).
+    // If no recycled texture slot is available and we reached the limit, fail gracefully.
+    if (mFreeTextureIds.empty() && mNextTextureId >= MAX_TEX_DESCRIPTORS) {
         return 0;
     }
 
-    uint32_t id = mNextTextureId++;
+    uint32_t id = 0;
+    if (!mFreeTextureIds.empty()) {
+        id = mFreeTextureIds.top();
+        mFreeTextureIds.pop();
+    } else {
+        id = mNextTextureId++;
+    }
+
     if (id >= mTextures.size()) {
         mTextures.resize(id + 1);
     }
@@ -576,6 +583,18 @@ void GfxRenderingAPIDeko3d::DeleteTexture(uint32_t texId) {
         mFreeDescriptorIndices.push(mTextures[texId].descriptorIdx);
         mTextures[texId].mem = nullptr;
         mTextures[texId].valid = false;
+
+        // Recycle texture ID slot
+        if (texId != 0) {
+            mFreeTextureIds.push(texId);
+        }
+
+        // Clear currently selected texture slots pointing to the deleted texture
+        for (int i = 0; i < SHADER_MAX_TEXTURES; i++) {
+            if (mCurrentTextureIds[i] == texId) {
+                mCurrentTextureIds[i] = 0;
+            }
+        }
     }
 }
 
@@ -1290,20 +1309,21 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
     for (int n = 0; n < drawData->CmdListsCount; n++) {
         const ImDrawList* cmd_list = drawData->CmdLists[n];
 
-        // Upload vertex data — expand indexed triangles to non-indexed vertices.
-        // ImGui uses indexed drawing where indices reference into a vertex buffer.
-        // deko3d doesn't support base-vertex in indexed draws, so we expand each
-        // indexed triangle into 3 explicit vertices in the VBO.
+        // Upload vertex + index data for indexed draws.
+        // This avoids per-frame CPU expansion of indexed triangles.
         //
         // ImDrawVert: ImVec2 pos, ImVec2 uv, ImU32 col
         // Uber-shader format: aVtxPos(vec4) + aTexCoord0(vec2) + aInput1(vec4)
 
         size_t idxCount = cmd_list->IdxBuffer.Size;
+        size_t vtxCount = cmd_list->VtxBuffer.Size;
 
         // Each vertex: 4 (pos) + 2 (tex) + 4 (color) = 10 floats
         size_t floatsPerVert = 10;
-        // Expanded: one output vertex per index entry
-        size_t uploadBytes = idxCount * floatsPerVert * sizeof(float);
+        size_t vtxBytes = vtxCount * floatsPerVert * sizeof(float);
+        size_t idxBytes = idxCount * sizeof(ImDrawIdx);
+        size_t idxOffsetBytes = (vtxBytes + 3) & ~((size_t)3);
+        size_t uploadBytes = idxOffsetBytes + idxBytes;
 
         if (mVboOffset + uploadBytes > VBO_POOL_SIZE) {
             FlushCommands();
@@ -1314,47 +1334,46 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
         const ImDrawVert* vtxBuf = cmd_list->VtxBuffer.Data;
         const ImDrawIdx* idxBuf = cmd_list->IdxBuffer.Data;
 
-        // Expand indexed vertices into the VBO in command ranges so VtxOffset is honored.
-        for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++) {
-            const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
-            if (pcmd->UserCallback) {
-                continue;
-            }
+        // Convert and upload vertex buffer
+        float* vboDst = (float*)((uint8_t*)mVboMem.getCpuAddr() + mVboOffset);
+        for (size_t i = 0; i < vtxCount; i++) {
+            const ImDrawVert& v = vtxBuf[i];
 
-            for (uint32_t k = 0; k < pcmd->ElemCount; k++) {
-                uint32_t dstIdx = pcmd->IdxOffset + k;
-                uint32_t srcIdx = (uint32_t)idxBuf[dstIdx] + pcmd->VtxOffset;
-                const ImDrawVert& v = vtxBuf[srcIdx];
+            // Convert screen-space position to NDC
+            float ndcX = (v.pos.x - L) / (R - L) * 2.0f - 1.0f;
+            float ndcY = (v.pos.y - T) / (B - T) * 2.0f - 1.0f;
 
-                // Convert screen-space position to NDC
-                float ndcX = (v.pos.x - L) / (R - L) * 2.0f - 1.0f;
-                float ndcY = (v.pos.y - T) / (B - T) * 2.0f - 1.0f;
+            // Position
+            vboDst[0] = ndcX;
+            vboDst[1] = ndcY;
+            vboDst[2] = 0.0f;
+            vboDst[3] = 1.0f;
 
-                float* dst = (float*)((uint8_t*)mVboMem.getCpuAddr() + mVboOffset + dstIdx * floatsPerVert * sizeof(float));
+            // UV
+            vboDst[4] = v.uv.x;
+            vboDst[5] = v.uv.y;
 
-                // Position
-                dst[0] = ndcX;
-                dst[1] = ndcY;
-                dst[2] = 0.0f;
-                dst[3] = 1.0f;
-
-                // UV
-                dst[4] = v.uv.x;
-                dst[5] = v.uv.y;
-
-                // Color (RGBA normalized from packed u32)
-                dst[6] = (float)((v.col >> 0) & 0xFF) / 255.0f;
-                dst[7] = (float)((v.col >> 8) & 0xFF) / 255.0f;
-                dst[8] = (float)((v.col >> 16) & 0xFF) / 255.0f;
-                dst[9] = (float)((v.col >> 24) & 0xFF) / 255.0f;
-            }
+            // Color (RGBA normalized from packed u32)
+            vboDst[6] = (float)((v.col >> 0) & 0xFF) / 255.0f;
+            vboDst[7] = (float)((v.col >> 8) & 0xFF) / 255.0f;
+            vboDst[8] = (float)((v.col >> 16) & 0xFF) / 255.0f;
+            vboDst[9] = (float)((v.col >> 24) & 0xFF) / 255.0f;
+            vboDst += floatsPerVert;
         }
+
+        // Upload index buffer directly after vertices
+        void* idxDst = (uint8_t*)mVboMem.getCpuAddr() + mVboOffset + idxOffsetBytes;
+        memcpy(idxDst, idxBuf, idxBytes);
 
         // Bind vertex buffer
         DkBufExtents vboBuf;
         vboBuf.addr = mVboMem.getGpuAddr() + mVboOffset;
-        vboBuf.size = (uint32_t)uploadBytes;
+        vboBuf.size = (uint32_t)vtxBytes;
         mCmdBuf.bindVtxBuffers(0, dk::detail::ArrayProxy<DkBufExtents const>(1, &vboBuf));
+
+        // Bind index buffer
+        DkIdxFormat idxFormat = sizeof(ImDrawIdx) == 2 ? DkIdxFormat_Uint16 : DkIdxFormat_Uint32;
+        mCmdBuf.bindIdxBuffer(idxFormat, mVboMem.getGpuAddr() + mVboOffset + idxOffsetBytes);
 
         // Set up vertex attributes: pos(4) + texcoord(2) + color(4) mapped to shader locations 0-9
         DkVtxAttribState fullAttribs[10];
@@ -1467,12 +1486,9 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
                                      dk::detail::ArrayProxy<DkResHandle const>(1, &handle));
             }
 
-            // Draw non-indexed triangles from the expanded VBO.
-            // Since we expanded indexed triangles into sequential vertices,
-            // IdxOffset is the base vertex and ElemCount is the vertex count.
-            uint32_t firstVtx = pcmd->IdxOffset;
-            uint32_t elemCount = pcmd->ElemCount;
-            mCmdBuf.draw(DkPrimitive_Triangles, elemCount, 1, firstVtx, 0);
+            // Indexed draw: use command-local firstIndex and vertexOffset from ImGui.
+            mCmdBuf.drawIndexed(DkPrimitive_Triangles, pcmd->ElemCount, 1, pcmd->IdxOffset,
+                                (int32_t)pcmd->VtxOffset, 0);
         }
     }
 

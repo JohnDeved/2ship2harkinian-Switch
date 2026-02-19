@@ -237,6 +237,7 @@ class GfxRenderingAPIDeko3d final : public GfxRenderingAPI {
     };
     std::vector<TextureData> mTextures;
     uint32_t mNextTextureId = 1;
+    std::stack<uint32_t> mFreeTextureIds;     // Recycled texture ID slots
     uint32_t mCurrentTextureIds[SHADER_MAX_TEXTURES]{};
     uint8_t mCurrentTile = 0;
     std::stack<uint32_t> mFreeDescriptorIndices; // Recycled descriptor pool indices

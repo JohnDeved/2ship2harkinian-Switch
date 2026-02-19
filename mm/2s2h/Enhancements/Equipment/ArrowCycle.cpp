@@ -302,14 +302,14 @@ void ArrowCycleMain() {
 
     bool cycled = false;
 
-    if (CHECK_BTN_ANY(input->press.button, BTN_R)) {
-        cycled = TryCycleArrow(gPlayState, player, GetNextArrowType(player->heldItemAction));
-    } else if (CVAR_DPAD) {
+    if (CVAR_DPAD) {
         if (CHECK_BTN_ANY(input->press.button, BTN_DRIGHT)) {
             cycled = TryCycleArrow(gPlayState, player, GetNextArrowType(player->heldItemAction));
         } else if (CHECK_BTN_ANY(input->press.button, BTN_DLEFT)) {
             cycled = TryCycleArrow(gPlayState, player, GetPrevArrowType(player->heldItemAction));
         }
+    } else if (CHECK_BTN_ANY(input->press.button, BTN_R)) {
+        cycled = TryCycleArrow(gPlayState, player, GetNextArrowType(player->heldItemAction));
     }
 
     if (cycled) {
@@ -322,7 +322,7 @@ void ArrowCycleMain() {
 // Registration and Hooks
 void RegisterArrowCycle() {
     COND_VB_SHOULD(VB_SHIELD_FROM_BUTTON_HOLD, CVAR, {
-        if (CanCycleArrows()) {
+        if (!CVAR_DPAD && CanCycleArrows()) {
             Player* player = GET_PLAYER(gPlayState);
             Input* input = CONTROLLER1(&gPlayState->state);
 
@@ -334,7 +334,7 @@ void RegisterArrowCycle() {
     });
 
     COND_VB_SHOULD(VB_EXIT_FIRST_PERSON_MODE_FROM_BUTTON, CVAR, {
-        if (CanCycleArrows()) {
+        if (!CVAR_DPAD && CanCycleArrows()) {
             Player* player = GET_PLAYER(gPlayState);
             Input* input = CONTROLLER1(&gPlayState->state);
 

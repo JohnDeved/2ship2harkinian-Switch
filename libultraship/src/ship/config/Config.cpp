@@ -309,6 +309,9 @@ WindowBackend Config::GetWindowBackend() {
         return WindowBackend::FAST3D_SDL_METAL;
     }
 #endif
+#ifdef ENABLE_DEKO3D
+    return WindowBackend::FAST3D_DEKO3D;
+#endif
     return WindowBackend::FAST3D_SDL_OPENGL;
 }
 

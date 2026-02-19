@@ -9,6 +9,7 @@
 #include "fast/backends/gfx_dxgi.h"
 #include "fast/backends/gfx_opengl.h"
 #include "fast/backends/gfx_metal.h"
+#include "fast/backends/gfx_deko3d.h"
 #include "fast/backends/gfx_direct3d_common.h"
 #include "fast/backends/gfx_direct3d11.h"
 #include "fast/backends/gfx_window_manager_api.h"
@@ -37,7 +38,12 @@ Fast3dWindow::Fast3dWindow(std::shared_ptr<Ship::Gui> gui) : Ship::Window(gui) {
         AddAvailableWindowBackend(Ship::WindowBackend::FAST3D_SDL_METAL);
     }
 #endif
+#ifdef ENABLE_DEKO3D
+    AddAvailableWindowBackend(Ship::WindowBackend::FAST3D_DEKO3D);
+#endif
+#ifdef ENABLE_OPENGL
     AddAvailableWindowBackend(Ship::WindowBackend::FAST3D_SDL_OPENGL);
+#endif
 }
 
 Fast3dWindow::Fast3dWindow(std::vector<std::shared_ptr<Ship::GuiWindow>> guiWindows)
@@ -151,6 +157,12 @@ void Fast3dWindow::InitWindowManager() {
 #ifdef __APPLE__
         case Ship::WindowBackend::FAST3D_SDL_METAL:
             mRenderingApi = new GfxRenderingAPIMetal();
+            mWindowManagerApi = new GfxWindowBackendSDL2();
+            break;
+#endif
+#ifdef ENABLE_DEKO3D
+        case Ship::WindowBackend::FAST3D_DEKO3D:
+            mRenderingApi = new GfxRenderingAPIDeko3d();
             mWindowManagerApi = new GfxWindowBackendSDL2();
             break;
 #endif

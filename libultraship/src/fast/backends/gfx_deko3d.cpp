@@ -481,6 +481,12 @@ void GfxRenderingAPIDeko3d::ShaderGetInfo(ShaderProgram* prg, uint8_t* numInputs
 // ---------------------------------------------------------------------------
 
 uint32_t GfxRenderingAPIDeko3d::NewTexture() {
+    // Texture descriptor range is [1, MAX_TEX_DESCRIPTORS).
+    // If we run out and there's no recycled descriptor available, fail gracefully.
+    if (mFreeDescriptorIndices.empty() && mNextTextureId >= MAX_TEX_DESCRIPTORS) {
+        return 0;
+    }
+
     uint32_t id = mNextTextureId++;
     if (id >= mTextures.size()) {
         mTextures.resize(id + 1);
@@ -493,10 +499,7 @@ uint32_t GfxRenderingAPIDeko3d::NewTexture() {
         mTextures[id].descriptorIdx = mFreeDescriptorIndices.top();
         mFreeDescriptorIndices.pop();
     } else {
-        // Allocate from the texture range [0, MAX_TEX_DESCRIPTORS).
-        // If we exceed the range, wrap to index 0 (overwrites the oldest descriptor).
-        uint32_t descIdx = id < MAX_TEX_DESCRIPTORS ? id : (id % MAX_TEX_DESCRIPTORS);
-        mTextures[id].descriptorIdx = descIdx;
+        mTextures[id].descriptorIdx = id;
     }
     return id;
 }
@@ -578,7 +581,7 @@ void GfxRenderingAPIDeko3d::DeleteTexture(uint32_t texId) {
 
 void GfxRenderingAPIDeko3d::SetSamplerParameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
     uint32_t texId = mCurrentTextureIds[tile];
-    if (texId >= mTextures.size()) {
+    if (texId >= mTextures.size() || !mTextures[texId].valid) {
         return;
     }
 
@@ -1295,7 +1298,6 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
         // ImDrawVert: ImVec2 pos, ImVec2 uv, ImU32 col
         // Uber-shader format: aVtxPos(vec4) + aTexCoord0(vec2) + aInput1(vec4)
 
-        size_t vtxCount = cmd_list->VtxBuffer.Size;
         size_t idxCount = cmd_list->IdxBuffer.Size;
 
         // Each vertex: 4 (pos) + 2 (tex) + 4 (color) = 10 floats
@@ -1309,36 +1311,43 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
             mVboOffset = 0;
         }
 
-        float* vboDst = (float*)((uint8_t*)mVboMem.getCpuAddr() + mVboOffset);
-
         const ImDrawVert* vtxBuf = cmd_list->VtxBuffer.Data;
         const ImDrawIdx* idxBuf = cmd_list->IdxBuffer.Data;
 
-        // Expand all indexed vertices into the VBO
-        for (size_t i = 0; i < idxCount; i++) {
-            const ImDrawVert& v = vtxBuf[idxBuf[i]];
+        // Expand indexed vertices into the VBO in command ranges so VtxOffset is honored.
+        for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++) {
+            const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
+            if (pcmd->UserCallback) {
+                continue;
+            }
 
-            // Convert screen-space position to NDC
-            float ndcX = (v.pos.x - L) / (R - L) * 2.0f - 1.0f;
-            float ndcY = (v.pos.y - T) / (B - T) * 2.0f - 1.0f;
+            for (uint32_t k = 0; k < pcmd->ElemCount; k++) {
+                uint32_t dstIdx = pcmd->IdxOffset + k;
+                uint32_t srcIdx = (uint32_t)idxBuf[dstIdx] + pcmd->VtxOffset;
+                const ImDrawVert& v = vtxBuf[srcIdx];
 
-            // Position
-            vboDst[0] = ndcX;
-            vboDst[1] = ndcY;
-            vboDst[2] = 0.0f;
-            vboDst[3] = 1.0f;
+                // Convert screen-space position to NDC
+                float ndcX = (v.pos.x - L) / (R - L) * 2.0f - 1.0f;
+                float ndcY = (v.pos.y - T) / (B - T) * 2.0f - 1.0f;
 
-            // UV
-            vboDst[4] = v.uv.x;
-            vboDst[5] = v.uv.y;
+                float* dst = (float*)((uint8_t*)mVboMem.getCpuAddr() + mVboOffset + dstIdx * floatsPerVert * sizeof(float));
 
-            // Color (RGBA normalized from packed u32)
-            vboDst[6] = (float)((v.col >> 0) & 0xFF) / 255.0f;
-            vboDst[7] = (float)((v.col >> 8) & 0xFF) / 255.0f;
-            vboDst[8] = (float)((v.col >> 16) & 0xFF) / 255.0f;
-            vboDst[9] = (float)((v.col >> 24) & 0xFF) / 255.0f;
+                // Position
+                dst[0] = ndcX;
+                dst[1] = ndcY;
+                dst[2] = 0.0f;
+                dst[3] = 1.0f;
 
-            vboDst += floatsPerVert;
+                // UV
+                dst[4] = v.uv.x;
+                dst[5] = v.uv.y;
+
+                // Color (RGBA normalized from packed u32)
+                dst[6] = (float)((v.col >> 0) & 0xFF) / 255.0f;
+                dst[7] = (float)((v.col >> 8) & 0xFF) / 255.0f;
+                dst[8] = (float)((v.col >> 16) & 0xFF) / 255.0f;
+                dst[9] = (float)((v.col >> 24) & 0xFF) / 255.0f;
+            }
         }
 
         // Bind vertex buffer

@@ -83,6 +83,8 @@ void GfxRenderingAPIDeko3d::InitSwapchain() {
 
     int dispW = 1920, dispH = 1080;
     Ship::Switch::GetDisplaySize(&dispW, &dispH);
+    mSwapchainWidth = (uint32_t)dispW;
+    mSwapchainHeight = (uint32_t)dispH;
 
     dk::ImageLayout fbLayout;
     dk::ImageLayoutMaker{ mDevice }
@@ -491,7 +493,10 @@ uint32_t GfxRenderingAPIDeko3d::NewTexture() {
         mTextures[id].descriptorIdx = mFreeDescriptorIndices.top();
         mFreeDescriptorIndices.pop();
     } else {
-        mTextures[id].descriptorIdx = id;
+        // Allocate from the texture range [0, MAX_TEX_DESCRIPTORS).
+        // If we exceed the range, wrap to index 0 (overwrites the oldest descriptor).
+        uint32_t descIdx = id < MAX_TEX_DESCRIPTORS ? id : (id % MAX_TEX_DESCRIPTORS);
+        mTextures[id].descriptorIdx = descIdx;
     }
     return id;
 }
@@ -550,10 +555,12 @@ void GfxRenderingAPIDeko3d::UploadTexture(const uint8_t* rgba32_buf, uint32_t wi
     mCmdBuf.copyBufferToImage(srcBuf, view, dstRect);
 
     // Update image descriptor in the pool
-    dk::ImageView descView{ tex.image };
-    dk::ImageDescriptor imgDesc;
-    imgDesc.initialize(descView);
-    mImageDescriptors[tex.descriptorIdx] = *reinterpret_cast<DkImageDescriptor*>(&imgDesc);
+    if (tex.descriptorIdx < MAX_TEX_DESCRIPTORS) {
+        dk::ImageView descView{ tex.image };
+        dk::ImageDescriptor imgDesc;
+        imgDesc.initialize(descView);
+        mImageDescriptors[tex.descriptorIdx] = *reinterpret_cast<DkImageDescriptor*>(&imgDesc);
+    }
 
     // Flush the upload and wait for it to complete so the staging buffer can be freed
     FlushCommands();
@@ -594,9 +601,11 @@ void GfxRenderingAPIDeko3d::SetSamplerParameters(int tile, bool linear_filter, u
     sampler.setWrapMode(wrapS, wrapT, DkWrapMode_ClampToEdge);
 
     // Store in the sampler descriptor pool at the same index as the texture
-    dk::SamplerDescriptor desc;
-    desc.initialize(sampler);
-    mSamplerDescriptors[tex.descriptorIdx] = *reinterpret_cast<DkSamplerDescriptor*>(&desc);
+    if (tex.descriptorIdx < MAX_TEX_DESCRIPTORS) {
+        dk::SamplerDescriptor desc;
+        desc.initialize(sampler);
+        mSamplerDescriptors[tex.descriptorIdx] = *reinterpret_cast<DkSamplerDescriptor*>(&desc);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -975,7 +984,8 @@ void GfxRenderingAPIDeko3d::UpdateFramebufferParameters(int fb_id, uint32_t widt
         fb.colorImage.initialize(colorLayout, fb.colorMem, 0);
 
         // Also create an image descriptor for the framebuffer so it can be used as a texture
-        uint32_t fbDescIdx = MAX_DESCRIPTORS / 2 + fb_id; // Use second half of descriptor pool for FBs
+        // FB descriptors are reserved at the end of the pool [MAX_TEX_DESCRIPTORS, MAX_DESCRIPTORS)
+        uint32_t fbDescIdx = MAX_TEX_DESCRIPTORS + fb_id;
         if (fbDescIdx < MAX_DESCRIPTORS) {
             dk::ImageView descView{ fb.colorImage };
             dk::ImageDescriptor imgDesc;
@@ -1128,9 +1138,9 @@ GfxRenderingAPIDeko3d::GetPixelDepth(int fb_id, const std::set<std::pair<float, 
 
     if (fb_id == 0 && mCurrentSwapImage >= 0) {
         depthImg = &mSwapchainDepthImage;
-        // Use swapchain dimensions
-        fbW = 1280; // Default Switch resolution
-        fbH = 720;
+        // Use actual swapchain dimensions (may be 1920x1080 in docked mode)
+        fbW = mSwapchainWidth;
+        fbH = mSwapchainHeight;
     } else if ((size_t)fb_id < mFrameBuffers.size() && mFrameBuffers[fb_id].has_depth_buffer) {
         depthImg = &mFrameBuffers[fb_id].depthImage;
         fbW = mFrameBuffers[fb_id].width;
@@ -1277,25 +1287,21 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
     for (int n = 0; n < drawData->CmdListsCount; n++) {
         const ImDrawList* cmd_list = drawData->CmdLists[n];
 
-        // Upload vertex data — ImGui vertices are {pos.x, pos.y, uv.x, uv.y, col}
-        // We need to convert ImDrawVert to our uber-shader format.
+        // Upload vertex data — expand indexed triangles to non-indexed vertices.
+        // ImGui uses indexed drawing where indices reference into a vertex buffer.
+        // deko3d doesn't support base-vertex in indexed draws, so we expand each
+        // indexed triangle into 3 explicit vertices in the VBO.
+        //
         // ImDrawVert: ImVec2 pos, ImVec2 uv, ImU32 col
-        //
-        // For the uber-shader, we set up uniforms so that:
-        //   - output = vInput1 (which carries the vertex color)
-        //   - texture is sampled and multiplied
-        //
-        // We pack each ImDrawVert as:
-        //   aVtxPos = vec4(ndc_x, ndc_y, 0, 1)
-        //   aTexCoord0 = vec2(uv)
-        //   aInput1 = vec4(r, g, b, a) normalized
+        // Uber-shader format: aVtxPos(vec4) + aTexCoord0(vec2) + aInput1(vec4)
 
         size_t vtxCount = cmd_list->VtxBuffer.Size;
         size_t idxCount = cmd_list->IdxBuffer.Size;
 
         // Each vertex: 4 (pos) + 2 (tex) + 4 (color) = 10 floats
         size_t floatsPerVert = 10;
-        size_t uploadBytes = vtxCount * floatsPerVert * sizeof(float);
+        // Expanded: one output vertex per index entry
+        size_t uploadBytes = idxCount * floatsPerVert * sizeof(float);
 
         if (mVboOffset + uploadBytes > VBO_POOL_SIZE) {
             FlushCommands();
@@ -1305,8 +1311,12 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
 
         float* vboDst = (float*)((uint8_t*)mVboMem.getCpuAddr() + mVboOffset);
 
-        for (int i = 0; i < (int)vtxCount; i++) {
-            const ImDrawVert& v = cmd_list->VtxBuffer[i];
+        const ImDrawVert* vtxBuf = cmd_list->VtxBuffer.Data;
+        const ImDrawIdx* idxBuf = cmd_list->IdxBuffer.Data;
+
+        // Expand all indexed vertices into the VBO
+        for (size_t i = 0; i < idxCount; i++) {
+            const ImDrawVert& v = vtxBuf[idxBuf[i]];
 
             // Convert screen-space position to NDC
             float ndcX = (v.pos.x - L) / (R - L) * 2.0f - 1.0f;
@@ -1337,26 +1347,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
         vboBuf.size = (uint32_t)uploadBytes;
         mCmdBuf.bindVtxBuffers(0, dk::detail::ArrayProxy<DkBufExtents const>(1, &vboBuf));
 
-        // Set up vertex attributes: pos(4) + texcoord(2) + color(4)
-        DkVtxAttribState attribs[3];
-        memset(attribs, 0, sizeof(attribs));
-
-        // aVtxPos (location 0): vec4 at offset 0
-        attribs[0].bufferId = 0;
-        attribs[0].offset = 0;
-        attribs[0].size = DkVtxAttribSize_4x32;
-        attribs[0].type = DkVtxAttribType_Float;
-
-        // aTexCoord0 (location 1): vec2 at offset 16
-        attribs[1].bufferId = 0;
-        attribs[1].offset = 4 * sizeof(float);
-        attribs[1].size = DkVtxAttribSize_2x32;
-        attribs[1].type = DkVtxAttribType_Float;
-
-        // aInput1 (location 9): vec4 at offset 24
-        // But we need to map it to location 9 in the shader.
-        // Unfortunately deko3d binds attribs by index, not by location.
-        // We need to bind all 10 attrib slots (0-9) with slots 2-8 as dummy.
+        // Set up vertex attributes: pos(4) + texcoord(2) + color(4) mapped to shader locations 0-9
         DkVtxAttribState fullAttribs[10];
         memset(fullAttribs, 0, sizeof(fullAttribs));
 
@@ -1467,17 +1458,12 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
                                      dk::detail::ArrayProxy<DkResHandle const>(1, &handle));
             }
 
-            // Draw indexed triangles using vertex offset
-            // ImGui provides indices as ImDrawIdx (uint16_t by default).
-            // deko3d doesn't have a base vertex offset for indexed draws,
-            // so we draw non-indexed using the index buffer to look up vertices.
-            // For simplicity, draw each triangle by emitting 3 vertices per index triple.
-            uint32_t firstVtx = pcmd->VtxOffset;
-            uint32_t firstIdx = pcmd->IdxOffset;
+            // Draw non-indexed triangles from the expanded VBO.
+            // Since we expanded indexed triangles into sequential vertices,
+            // IdxOffset is the base vertex and ElemCount is the vertex count.
+            uint32_t firstVtx = pcmd->IdxOffset;
             uint32_t elemCount = pcmd->ElemCount;
-
-            // We already uploaded all vertices; draw using the vertex offset
-            mCmdBuf.draw(DkPrimitive_Triangles, elemCount, 1, firstVtx + firstIdx, 0);
+            mCmdBuf.draw(DkPrimitive_Triangles, elemCount, 1, firstVtx, 0);
         }
     }
 

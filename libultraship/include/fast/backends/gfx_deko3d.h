@@ -118,6 +118,8 @@ static constexpr unsigned VBO_POOL_SIZE = 4 * 1024 * 1024;   // 4 MB vertex pool
 static constexpr unsigned UNIFORM_POOL_SIZE = 256 * 1024;    // 256 KB uniform pool
 static constexpr unsigned CODE_POOL_SIZE = 512 * 1024;       // 512 KB shader code pool
 static constexpr unsigned MAX_DESCRIPTORS = 4096;             // Max image/sampler descriptors
+static constexpr unsigned MAX_FB_DESCRIPTORS = 256;           // Reserved at end of pool for framebuffers
+static constexpr unsigned MAX_TEX_DESCRIPTORS = MAX_DESCRIPTORS - MAX_FB_DESCRIPTORS; // Texture descriptor range
 
 class GfxRenderingAPIDeko3d final : public GfxRenderingAPI {
   public:
@@ -195,6 +197,8 @@ class GfxRenderingAPIDeko3d final : public GfxRenderingAPI {
     dk::Image mSwapchainDepthImage;
     dk::UniqueMemBlock mSwapchainDepthMem;
     int mCurrentSwapImage = -1;
+    uint32_t mSwapchainWidth = 0;
+    uint32_t mSwapchainHeight = 0;
 
     // Memory pools
     dk::UniqueMemBlock mCodeMem;

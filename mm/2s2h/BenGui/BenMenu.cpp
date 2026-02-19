@@ -1124,7 +1124,8 @@ void BenMenu::AddEnhancements() {
             info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_ARROW_CYCLE_OFF).active;
         })
         .Options(CheckboxOptions().Tooltip(
-            "While aiming the bow, use D-Pad Left/Right to cycle between arrow types."));
+            "While aiming the bow, use D-Pad Left/Right to cycle between arrow types. "
+            "Disables R-based arrow cycling; R will shield/exit as normal."));
     AddWidget(path, "Remote Bombchu Control", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.PlayerActions.RemoteBombchu")
         .Options(CheckboxOptions().Tooltip(

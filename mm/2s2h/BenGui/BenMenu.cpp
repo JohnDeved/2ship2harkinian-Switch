@@ -834,11 +834,6 @@ void BenMenu::AddEnhancements() {
                      .IsPercentage()
                      .Min(0.01f)
                      .Max(2.0f));
-    AddWidget(path, "Aim Camera From Camera Direction", WIDGET_CVAR_CHECKBOX)
-        .CVar("gEnhancements.Camera.AimingFirstPersonCamera")
-        .Options(CheckboxOptions().Tooltip(
-            "When aiming (bow, slingshot, etc.), the aiming camera starts from the direction the camera "
-            "is currently looking instead of the direction the player character is facing."));
 
     path.column = SECTION_COLUMN_2;
     AddWidget(path, "Cameras", WIDGET_SEPARATOR_TEXT);
@@ -851,6 +846,11 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "Enables free look camera control.\nNote: You must remap C buttons off of the right "
             "stick in the controller config menu, and map the camera stick to the right stick."));
+    AddWidget(path, "Aim Camera From Camera Direction", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Camera.AimingFirstPersonCamera")
+        .Options(CheckboxOptions().Tooltip(
+            "When aiming (bow, slingshot, etc.), the aiming camera starts from the direction the camera "
+            "is currently looking instead of the direction the player character is facing."));
     AddWidget(path, "Camera Distance: %d", WIDGET_CVAR_SLIDER_INT)
         .CVar("gEnhancements.Camera.FreeLook.MaxCameraDistance")
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })

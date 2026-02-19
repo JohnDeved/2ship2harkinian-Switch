@@ -117,7 +117,7 @@ jobs:
         sudo apt-get install -y ninja-build
         sudo apt-get remove -y cmake
         sudo dkp-pacman -R --noconfirm switch-tinyxml2
-        sudo dkp-pacman -S --noconfirm switch-deko3d
+        sudo dkp-pacman -S --noconfirm deko3d
         wget https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.sh -O /tmp/cmake.sh
         sudo sh /tmp/cmake.sh --prefix=/usr/local/ --exclude-subdir
 

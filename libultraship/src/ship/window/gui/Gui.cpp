@@ -46,6 +46,7 @@
 
 #ifdef ENABLE_DEKO3D
 #include <imgui_impl_sdl2.h>
+#include "fast/backends/gfx_deko3d.h"
 #endif
 
 #if defined(ENABLE_DX11) || defined(ENABLE_DX12)
@@ -954,10 +955,12 @@ void Gui::ImGuiRenderDrawData(ImDrawData* data) {
 #endif
 
 #ifdef ENABLE_DEKO3D
-        case WindowBackend::FAST3D_DEKO3D:
-            // TODO: Implement deko3d ImGui draw data rendering.
-            // For now, ImGui overlay is not rendered in deko3d mode.
+        case WindowBackend::FAST3D_DEKO3D: {
+            Fast::GfxRenderingAPIDeko3d* api =
+                (Fast::GfxRenderingAPIDeko3d*)mInterpreter.lock()->GetCurrentRenderingAPI();
+            api->RenderImGuiDrawData(data);
             break;
+        }
 #endif
         default:
             break;

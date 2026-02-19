@@ -650,6 +650,35 @@ endif()
 
 if(CMAKE_SYSTEM_NAME MATCHES "NintendoSwitch")
 
+# --- Compile deko3d shaders (GLSL -> DKSH via uam) ---
+set(DEKO3D_SHADER_DIR "${CMAKE_SOURCE_DIR}/libultraship/src/fast/shaders/deko3d")
+set(DEKO3D_ROMFS_DIR "${CMAKE_CURRENT_BINARY_DIR}/romfs/shaders")
+file(MAKE_DIRECTORY ${DEKO3D_ROMFS_DIR})
+
+find_program(UAM_EXECUTABLE uam HINTS "${DEVKITPRO}/tools/bin")
+
+if(UAM_EXECUTABLE)
+    add_custom_command(
+        OUTPUT ${DEKO3D_ROMFS_DIR}/fast3d_vs.dksh
+        COMMAND ${UAM_EXECUTABLE} -s vert -o ${DEKO3D_ROMFS_DIR}/fast3d_vs.dksh ${DEKO3D_SHADER_DIR}/fast3d.vert.glsl
+        DEPENDS ${DEKO3D_SHADER_DIR}/fast3d.vert.glsl
+        COMMENT "Compiling deko3d vertex shader"
+    )
+    add_custom_command(
+        OUTPUT ${DEKO3D_ROMFS_DIR}/fast3d_fs.dksh
+        COMMAND ${UAM_EXECUTABLE} -s frag -o ${DEKO3D_ROMFS_DIR}/fast3d_fs.dksh ${DEKO3D_SHADER_DIR}/fast3d.frag.glsl
+        DEPENDS ${DEKO3D_SHADER_DIR}/fast3d.frag.glsl
+        COMMENT "Compiling deko3d fragment shader"
+    )
+    add_custom_target(deko3d_shaders DEPENDS
+        ${DEKO3D_ROMFS_DIR}/fast3d_vs.dksh
+        ${DEKO3D_ROMFS_DIR}/fast3d_fs.dksh
+    )
+    add_dependencies(${PROJECT_NAME} deko3d_shaders)
+else()
+    message(WARNING "uam shader compiler not found — deko3d shaders will not be compiled")
+endif()
+
 nx_generate_nacp(2s2h.nacp
    NAME "2Ship 2Harkinian"
    AUTHOR "${PROJECT_TEAM}"
@@ -659,6 +688,7 @@ nx_generate_nacp(2s2h.nacp
 nx_create_nro(2ship
     NACP 2s2h.nacp
     ICON ${CMAKE_CURRENT_SOURCE_DIR}/switch/2s2hIcon.png
+    ROMFS ${CMAKE_CURRENT_BINARY_DIR}/romfs
 )
 
 INSTALL(FILES ${CMAKE_CURRENT_BINARY_DIR}/2s2h.nro DESTINATION . COMPONENT 2s2h)

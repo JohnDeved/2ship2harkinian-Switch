@@ -6,6 +6,7 @@
 
 #include <deko3d.hpp>
 #include <switch.h>
+#include <imgui.h>
 
 #include <vector>
 #include <unordered_map>
@@ -51,15 +52,26 @@ struct FramebufferDk {
     uint32_t descriptorIdx = 0; // Index into the image/sampler descriptor pool
 };
 
-// Uniforms layout for the uber-shader (must match GLSL layout)
+// Uniforms layout for the uber-shader (must match GLSL std140 layout exactly).
+// All fields use ivec4/ivec2/int/float aligned to avoid std140 padding surprises.
 struct alignas(DK_UNIFORM_BUF_ALIGNMENT) UberUniforms {
-    // Combiner control (packed as ivec4 arrays)
-    int32_t cc[2][2][4]; // c[cycle][colorOrAlpha][term]
-    // Feature flags
-    int32_t useTexture[2];
-    int32_t useMask[2];
-    int32_t useBlend[2];
-    int32_t useClamp[2][2];
+    // Color combiner terms: cc_CYC_TYPE[a,b,c,d]
+    // cc[0][0] = cycle 0 RGB, cc[0][1] = cycle 0 Alpha
+    // cc[1][0] = cycle 1 RGB, cc[1][1] = cycle 1 Alpha
+    int32_t cc_0_0[4]; // ivec4 cc_0_0
+    int32_t cc_0_1[4]; // ivec4 cc_0_1
+    int32_t cc_1_0[4]; // ivec4 cc_1_0
+    int32_t cc_1_1[4]; // ivec4 cc_1_1
+
+    // Texture/mask/blend usage flags (packed as ivec2)
+    int32_t useTexture[2]; // ivec2
+    int32_t useMask[2];    // ivec2
+    int32_t useBlend[2];   // ivec2
+
+    // Clamp flags: [tex0_s, tex0_t, tex1_s, tex1_t] (packed as ivec4)
+    int32_t useClamp[4]; // ivec4
+
+    // Feature flags (individual ints)
     int32_t optAlpha;
     int32_t optFog;
     int32_t optNoise;
@@ -68,14 +80,20 @@ struct alignas(DK_UNIFORM_BUF_ALIGNMENT) UberUniforms {
     int32_t optAlphaThreshold;
     int32_t optInvisible;
     int32_t optGrayscale;
-    int32_t doSingle[2][2];
-    int32_t doMultiply[2][2];
-    int32_t doMix[2][2];
-    int32_t colorAlphaSame[2];
-    // Texture info
-    int32_t textureFiltering[2];
-    int32_t textureWidth[2];
-    int32_t textureHeight[2];
+
+    // Operation mode flags: [cyc0_rgb, cyc0_a, cyc1_rgb, cyc1_a] (packed as ivec4)
+    int32_t doSingle[4];   // ivec4
+    int32_t doMultiply[4]; // ivec4
+    int32_t doMix[4];      // ivec4
+
+    // Color/alpha same per cycle (packed as ivec2)
+    int32_t colorAlphaSame[2]; // ivec2
+
+    // Texture info (packed as ivec2)
+    int32_t textureFiltering[2]; // ivec2
+    int32_t textureWidth[2];     // ivec2
+    int32_t textureHeight[2];    // ivec2
+
     // Misc
     int32_t frameCount;
     float noiseScale;
@@ -153,6 +171,9 @@ class GfxRenderingAPIDeko3d final : public GfxRenderingAPI {
     dk::Device GetDevice() const { return mDevice; }
     dk::Queue GetQueue() const { return mQueue; }
 
+    // ImGui draw data rendering
+    void RenderImGuiDrawData(ImDrawData* drawData);
+
   private:
     void InitDevice();
     void InitSwapchain();
@@ -227,6 +248,15 @@ class GfxRenderingAPIDeko3d final : public GfxRenderingAPI {
     size_t mCurrentFrameBuffer = 0;
     float mCurrentNoiseScale = 0.0f;
     FilteringMode mCurrentFilterMode = FILTER_THREE_POINT;
+
+    // Render state tracking
+    bool mCurrentDepthTest = false;
+    bool mCurrentDepthMask = false;
+    bool mCurrentZmodeDecal = false;
+    bool mLastDepthTest = false;
+    bool mLastDepthMask = false;
+    bool mLastZmodeDecal = false;
+    bool mSrgbMode = false;
 };
 
 } // namespace Fast

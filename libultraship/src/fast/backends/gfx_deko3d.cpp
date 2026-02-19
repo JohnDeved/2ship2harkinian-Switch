@@ -684,8 +684,11 @@ void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, s
     UberUniforms* uniforms = (UberUniforms*)((uint8_t*)mUniformMem.getCpuAddr() + mUniformOffset);
     memset(uniforms, 0, sizeof(UberUniforms));
 
-    // Fill combiner control
-    memcpy(uniforms->cc, mCurrentShaderProgram->c, sizeof(uniforms->cc));
+    // Fill combiner control — flatten c[cycle][colorOrAlpha][4] into cc_CYC_TYPE[4]
+    memcpy(uniforms->cc_0_0, mCurrentShaderProgram->c[0][0], sizeof(uniforms->cc_0_0));
+    memcpy(uniforms->cc_0_1, mCurrentShaderProgram->c[0][1], sizeof(uniforms->cc_0_1));
+    memcpy(uniforms->cc_1_0, mCurrentShaderProgram->c[1][0], sizeof(uniforms->cc_1_0));
+    memcpy(uniforms->cc_1_1, mCurrentShaderProgram->c[1][1], sizeof(uniforms->cc_1_1));
 
     uniforms->useTexture[0] = mCurrentShaderProgram->usedTextures[0] ? 1 : 0;
     uniforms->useTexture[1] = mCurrentShaderProgram->usedTextures[1] ? 1 : 0;
@@ -705,13 +708,27 @@ void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, s
     uniforms->noiseScale = mCurrentNoiseScale;
     uniforms->srgbMode = mSrgbMode ? 1 : 0;
 
+    // Flatten [tex][s/t] to [tex0_s, tex0_t, tex1_s, tex1_t]
+    uniforms->useClamp[0] = mCurrentShaderProgram->clamp[0][0] ? 1 : 0;
+    uniforms->useClamp[1] = mCurrentShaderProgram->clamp[0][1] ? 1 : 0;
+    uniforms->useClamp[2] = mCurrentShaderProgram->clamp[1][0] ? 1 : 0;
+    uniforms->useClamp[3] = mCurrentShaderProgram->clamp[1][1] ? 1 : 0;
+
+    // Flatten [cycle][colorOrAlpha] to [cyc0_rgb, cyc0_a, cyc1_rgb, cyc1_a]
+    uniforms->doSingle[0] = mCurrentShaderProgram->do_single[0][0] ? 1 : 0;
+    uniforms->doSingle[1] = mCurrentShaderProgram->do_single[0][1] ? 1 : 0;
+    uniforms->doSingle[2] = mCurrentShaderProgram->do_single[1][0] ? 1 : 0;
+    uniforms->doSingle[3] = mCurrentShaderProgram->do_single[1][1] ? 1 : 0;
+    uniforms->doMultiply[0] = mCurrentShaderProgram->do_multiply[0][0] ? 1 : 0;
+    uniforms->doMultiply[1] = mCurrentShaderProgram->do_multiply[0][1] ? 1 : 0;
+    uniforms->doMultiply[2] = mCurrentShaderProgram->do_multiply[1][0] ? 1 : 0;
+    uniforms->doMultiply[3] = mCurrentShaderProgram->do_multiply[1][1] ? 1 : 0;
+    uniforms->doMix[0] = mCurrentShaderProgram->do_mix[0][0] ? 1 : 0;
+    uniforms->doMix[1] = mCurrentShaderProgram->do_mix[0][1] ? 1 : 0;
+    uniforms->doMix[2] = mCurrentShaderProgram->do_mix[1][0] ? 1 : 0;
+    uniforms->doMix[3] = mCurrentShaderProgram->do_mix[1][1] ? 1 : 0;
+
     for (int i = 0; i < 2; i++) {
-        for (int j = 0; j < 2; j++) {
-            uniforms->useClamp[i][j] = mCurrentShaderProgram->clamp[i][j] ? 1 : 0;
-            uniforms->doSingle[i][j] = mCurrentShaderProgram->do_single[i][j] ? 1 : 0;
-            uniforms->doMultiply[i][j] = mCurrentShaderProgram->do_multiply[i][j] ? 1 : 0;
-            uniforms->doMix[i][j] = mCurrentShaderProgram->do_mix[i][j] ? 1 : 0;
-        }
         uniforms->colorAlphaSame[i] = mCurrentShaderProgram->color_alpha_same[i] ? 1 : 0;
     }
 
@@ -779,39 +796,103 @@ void GfxRenderingAPIDeko3d::ConfigureVertexState() {
         return;
     }
 
-    uint32_t offset = 0;
     uint32_t stride = mCurrentShaderProgram->numFloats * sizeof(float);
 
-    DkVtxAttribState attribs[16];
+    // The uber-shader has 13 attribute locations (0-12), matching this order:
+    //   0: aVtxPos (vec4)        — always
+    //   1: aTexCoord0 (vec2)     — if usedTextures[0]
+    //   2: aTexClampS0 (float)   — if clamp[0][0]
+    //   3: aTexClampT0 (float)   — if clamp[0][1]
+    //   4: aTexCoord1 (vec2)     — if usedTextures[1]
+    //   5: aTexClampS1 (float)   — if clamp[1][0]
+    //   6: aTexClampT1 (float)   — if clamp[1][1]
+    //   7: aFog (vec4)           — if opt_fog
+    //   8: aGrayscaleColor (vec4) — if opt_grayscale
+    //   9-12: aInput1-4 (vec3/vec4) — numInputs
+    //
+    // We bind all 13 locations. Active ones point into the VBO at their
+    // packed offset; inactive ones use isFixed=1 (default to zero).
+
+    static constexpr int NUM_SHADER_ATTRIBS = 13;
+    DkVtxAttribState attribs[NUM_SHADER_ATTRIBS];
+    memset(attribs, 0, sizeof(attribs));
+
+    // Mark all as fixed (default zero) initially
+    for (int i = 0; i < NUM_SHADER_ATTRIBS; i++) {
+        attribs[i].isFixed = 1;
+        attribs[i].size = DkVtxAttribSize_1x32;
+        attribs[i].type = DkVtxAttribType_Float;
+    }
+
+    auto setAttrib = [&](int loc, uint32_t offset, int numComponents) {
+        attribs[loc].bufferId = 0;
+        attribs[loc].isFixed = 0;
+        attribs[loc].offset = offset;
+        attribs[loc].type = DkVtxAttribType_Float;
+        switch (numComponents) {
+            case 1:
+                attribs[loc].size = DkVtxAttribSize_1x32;
+                break;
+            case 2:
+                attribs[loc].size = DkVtxAttribSize_2x32;
+                break;
+            case 3:
+                attribs[loc].size = DkVtxAttribSize_3x32;
+                break;
+            case 4:
+            default:
+                attribs[loc].size = DkVtxAttribSize_4x32;
+                break;
+        }
+    };
+
+    uint32_t offset = 0;
+
+    // Location 0: aVtxPos (vec4) — always present
+    setAttrib(0, offset, 4);
+    offset += 4 * sizeof(float);
+
+    // Textures
+    for (int i = 0; i < 2; i++) {
+        if (mCurrentShaderProgram->usedTextures[i]) {
+            int texCoordLoc = (i == 0) ? 1 : 4;
+            setAttrib(texCoordLoc, offset, 2);
+            offset += 2 * sizeof(float);
+
+            for (int j = 0; j < 2; j++) {
+                if (mCurrentShaderProgram->clamp[i][j]) {
+                    int clampLoc = (i == 0) ? (2 + j) : (5 + j);
+                    setAttrib(clampLoc, offset, 1);
+                    offset += 1 * sizeof(float);
+                }
+            }
+        }
+    }
+
+    // Location 7: aFog (vec4)
+    if (mCurrentShaderProgram->opt_fog) {
+        setAttrib(7, offset, 4);
+        offset += 4 * sizeof(float);
+    }
+
+    // Location 8: aGrayscaleColor (vec4)
+    if (mCurrentShaderProgram->opt_grayscale) {
+        setAttrib(8, offset, 4);
+        offset += 4 * sizeof(float);
+    }
+
+    // Locations 9-12: aInput1-4
+    int inputSize = mCurrentShaderProgram->opt_alpha ? 4 : 3;
+    for (int i = 0; i < mCurrentShaderProgram->numInputs && i < 4; i++) {
+        setAttrib(9 + i, offset, inputSize);
+        offset += inputSize * sizeof(float);
+    }
+
     DkVtxBufferState bufState;
     memset(&bufState, 0, sizeof(bufState));
     bufState.stride = stride;
 
-    for (uint8_t i = 0; i < mCurrentShaderProgram->numAttribs && i < 16; i++) {
-        memset(&attribs[i], 0, sizeof(DkVtxAttribState));
-        attribs[i].bufferId = 0;
-        attribs[i].offset = offset;
-        switch (mCurrentShaderProgram->attribSizes[i]) {
-            case 1:
-                attribs[i].size = DkVtxAttribSize_1x32;
-                break;
-            case 2:
-                attribs[i].size = DkVtxAttribSize_2x32;
-                break;
-            case 3:
-                attribs[i].size = DkVtxAttribSize_3x32;
-                break;
-            case 4:
-            default:
-                attribs[i].size = DkVtxAttribSize_4x32;
-                break;
-        }
-        attribs[i].type = DkVtxAttribType_Float;
-        offset += mCurrentShaderProgram->attribSizes[i] * sizeof(float);
-    }
-
-    mCmdBuf.bindVtxAttribState(
-        dk::detail::ArrayProxy<DkVtxAttribState const>(attribs, mCurrentShaderProgram->numAttribs));
+    mCmdBuf.bindVtxAttribState(dk::detail::ArrayProxy<DkVtxAttribState const>(attribs, NUM_SHADER_ATTRIBS));
     mCmdBuf.bindVtxBufferState(dk::detail::ArrayProxy<DkVtxBufferState const>(&bufState, 1));
 }
 
@@ -1019,11 +1100,65 @@ std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
 GfxRenderingAPIDeko3d::GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) {
     std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> result;
 
-    // Depth readback: would require reading the depth buffer to CPU.
-    // For now return 0 for all coordinates.
-    for (const auto& coord : coordinates) {
-        result[coord] = 0;
+    if (coordinates.empty()) {
+        return result;
     }
+
+    // Determine which depth image to read
+    dk::Image* depthImg = nullptr;
+    uint32_t fbW = 0, fbH = 0;
+
+    if (fb_id == 0 && mCurrentSwapImage >= 0) {
+        depthImg = &mSwapchainDepthImage;
+        // Use swapchain dimensions
+        fbW = 1280; // Default Switch resolution
+        fbH = 720;
+    } else if ((size_t)fb_id < mFrameBuffers.size() && mFrameBuffers[fb_id].has_depth_buffer) {
+        depthImg = &mFrameBuffers[fb_id].depthImage;
+        fbW = mFrameBuffers[fb_id].width;
+        fbH = mFrameBuffers[fb_id].height;
+    }
+
+    if (!depthImg || fbW == 0 || fbH == 0) {
+        for (const auto& coord : coordinates) {
+            result[coord] = 0;
+        }
+        return result;
+    }
+
+    // Read the depth buffer to a staging buffer
+    size_t pixelSize = 4; // Z24S8 = 4 bytes per pixel
+    size_t dataSize = fbW * fbH * pixelSize;
+    uint64_t stagingSize = (dataSize + DK_MEMBLOCK_ALIGNMENT - 1) & ~(DK_MEMBLOCK_ALIGNMENT - 1);
+
+    dk::UniqueMemBlock staging = dk::MemBlockMaker{ mDevice, (uint32_t)stagingSize }
+                                     .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
+                                     .create();
+
+    dk::ImageView view{ *depthImg };
+    DkImageRect srcRect = { 0, 0, 0, fbW, fbH, 1 };
+    DkCopyBuf dstBuf = { staging.getGpuAddr(), 0, 0 };
+    mCmdBuf.copyImageToBuffer(view, srcRect, dstBuf);
+    FlushCommands();
+
+    const uint32_t* depthData = (const uint32_t*)staging.getCpuAddr();
+
+    for (const auto& coord : coordinates) {
+        int x = (int)coord.first;
+        int y = (int)coord.second;
+
+        if (x >= 0 && x < (int)fbW && y >= 0 && y < (int)fbH) {
+            // Z24S8: upper 24 bits are depth, lower 8 bits are stencil
+            uint32_t z24s8 = depthData[y * fbW + x];
+            uint32_t z24 = z24s8 >> 8;
+            // Convert 24-bit depth to 16-bit
+            uint16_t z16 = (uint16_t)(z24 >> 8);
+            result[coord] = z16;
+        } else {
+            result[coord] = 0;
+        }
+    }
+
     return result;
 }
 
@@ -1071,6 +1206,269 @@ ImTextureID GfxRenderingAPIDeko3d::GetTextureById(int id) {
         return (ImTextureID)(intptr_t)id;
     }
     return (ImTextureID)0;
+}
+
+// ---------------------------------------------------------------------------
+// ImGui draw data rendering
+// ---------------------------------------------------------------------------
+
+void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
+    if (!drawData || drawData->CmdListsCount == 0 || !mShadersLoaded) {
+        return;
+    }
+
+    // Save current state
+    size_t savedVboOffset = mVboOffset;
+    size_t savedUniformOffset = mUniformOffset;
+
+    // Set up orthographic projection via viewport
+    float L = drawData->DisplayPos.x;
+    float R = drawData->DisplayPos.x + drawData->DisplaySize.x;
+    float T = drawData->DisplayPos.y;
+    float B = drawData->DisplayPos.y + drawData->DisplaySize.y;
+    ImVec2 clip_off = drawData->DisplayPos;
+    ImVec2 clip_scale = drawData->FramebufferScale;
+
+    // Disable depth test for UI overlay
+    dk::DepthStencilState dsState;
+    dsState.setDepthTestEnable(false).setDepthWriteEnable(false);
+    mCmdBuf.bindDepthStencilState(dsState);
+
+    // Enable alpha blending
+    dk::ColorState colorState;
+    colorState.setBlendEnable(0, true);
+    mCmdBuf.bindColorState(colorState);
+
+    dk::BlendState blendState;
+    blendState.setFactors(DkBlendFactor_SrcAlpha, DkBlendFactor_InvSrcAlpha,
+                          DkBlendFactor_One, DkBlendFactor_InvSrcAlpha);
+    blendState.setOps(DkBlendOp_Add, DkBlendOp_Add);
+    mCmdBuf.bindBlendStates(0, dk::detail::ArrayProxy<DkBlendState const>(&blendState, 1));
+
+    // Set viewport to cover the full display
+    DkViewport vp;
+    vp.x = L;
+    vp.y = T;
+    vp.width = R - L;
+    vp.height = B - T;
+    vp.near = 0.0f;
+    vp.far = 1.0f;
+    mCmdBuf.setViewports(0, dk::detail::ArrayProxy<DkViewport const>(&vp, 1));
+
+    for (int n = 0; n < drawData->CmdListsCount; n++) {
+        const ImDrawList* cmd_list = drawData->CmdLists[n];
+
+        // Upload vertex data — ImGui vertices are {pos.x, pos.y, uv.x, uv.y, col}
+        // We need to convert ImDrawVert to our uber-shader format.
+        // ImDrawVert: ImVec2 pos, ImVec2 uv, ImU32 col
+        //
+        // For the uber-shader, we set up uniforms so that:
+        //   - output = vInput1 (which carries the vertex color)
+        //   - texture is sampled and multiplied
+        //
+        // We pack each ImDrawVert as:
+        //   aVtxPos = vec4(ndc_x, ndc_y, 0, 1)
+        //   aTexCoord0 = vec2(uv)
+        //   aInput1 = vec4(r, g, b, a) normalized
+
+        size_t vtxCount = cmd_list->VtxBuffer.Size;
+        size_t idxCount = cmd_list->IdxBuffer.Size;
+
+        // Each vertex: 4 (pos) + 2 (tex) + 4 (color) = 10 floats
+        size_t floatsPerVert = 10;
+        size_t uploadBytes = vtxCount * floatsPerVert * sizeof(float);
+
+        if (mVboOffset + uploadBytes > VBO_POOL_SIZE) {
+            FlushCommands();
+            mVboOffset = 0;
+        }
+
+        float* vboDst = (float*)((uint8_t*)mVboMem.getCpuAddr() + mVboOffset);
+
+        for (int i = 0; i < (int)vtxCount; i++) {
+            const ImDrawVert& v = cmd_list->VtxBuffer[i];
+
+            // Convert screen-space position to NDC
+            float ndcX = (v.pos.x - L) / (R - L) * 2.0f - 1.0f;
+            float ndcY = (v.pos.y - T) / (B - T) * 2.0f - 1.0f;
+
+            // Position
+            vboDst[0] = ndcX;
+            vboDst[1] = ndcY;
+            vboDst[2] = 0.0f;
+            vboDst[3] = 1.0f;
+
+            // UV
+            vboDst[4] = v.uv.x;
+            vboDst[5] = v.uv.y;
+
+            // Color (RGBA normalized from packed u32)
+            vboDst[6] = (float)((v.col >> 0) & 0xFF) / 255.0f;
+            vboDst[7] = (float)((v.col >> 8) & 0xFF) / 255.0f;
+            vboDst[8] = (float)((v.col >> 16) & 0xFF) / 255.0f;
+            vboDst[9] = (float)((v.col >> 24) & 0xFF) / 255.0f;
+
+            vboDst += floatsPerVert;
+        }
+
+        // Bind vertex buffer
+        DkBufExtents vboBuf;
+        vboBuf.addr = mVboMem.getGpuAddr() + mVboOffset;
+        vboBuf.size = (uint32_t)uploadBytes;
+        mCmdBuf.bindVtxBuffers(0, dk::detail::ArrayProxy<DkBufExtents const>(&vboBuf, 1));
+
+        // Set up vertex attributes: pos(4) + texcoord(2) + color(4)
+        DkVtxAttribState attribs[3];
+        memset(attribs, 0, sizeof(attribs));
+
+        // aVtxPos (location 0): vec4 at offset 0
+        attribs[0].bufferId = 0;
+        attribs[0].offset = 0;
+        attribs[0].size = DkVtxAttribSize_4x32;
+        attribs[0].type = DkVtxAttribType_Float;
+
+        // aTexCoord0 (location 1): vec2 at offset 16
+        attribs[1].bufferId = 0;
+        attribs[1].offset = 4 * sizeof(float);
+        attribs[1].size = DkVtxAttribSize_2x32;
+        attribs[1].type = DkVtxAttribType_Float;
+
+        // aInput1 (location 9): vec4 at offset 24
+        // But we need to map it to location 9 in the shader.
+        // Unfortunately deko3d binds attribs by index, not by location.
+        // We need to bind all 10 attrib slots (0-9) with slots 2-8 as dummy.
+        DkVtxAttribState fullAttribs[10];
+        memset(fullAttribs, 0, sizeof(fullAttribs));
+
+        // Location 0: aVtxPos (vec4)
+        fullAttribs[0].bufferId = 0;
+        fullAttribs[0].offset = 0;
+        fullAttribs[0].size = DkVtxAttribSize_4x32;
+        fullAttribs[0].type = DkVtxAttribType_Float;
+
+        // Location 1: aTexCoord0 (vec2)
+        fullAttribs[1].bufferId = 0;
+        fullAttribs[1].offset = 4 * sizeof(float);
+        fullAttribs[1].size = DkVtxAttribSize_2x32;
+        fullAttribs[1].type = DkVtxAttribType_Float;
+
+        // Locations 2-8: dummy (isFixed = 1 means use fixed value 0)
+        for (int j = 2; j <= 8; j++) {
+            fullAttribs[j].bufferId = 0;
+            fullAttribs[j].isFixed = 1;
+            fullAttribs[j].offset = 0;
+            fullAttribs[j].size = DkVtxAttribSize_1x32;
+            fullAttribs[j].type = DkVtxAttribType_Float;
+        }
+
+        // Location 9: aInput1 (vec4) — the vertex color
+        fullAttribs[9].bufferId = 0;
+        fullAttribs[9].offset = 6 * sizeof(float);
+        fullAttribs[9].size = DkVtxAttribSize_4x32;
+        fullAttribs[9].type = DkVtxAttribType_Float;
+
+        DkVtxBufferState bufState;
+        memset(&bufState, 0, sizeof(bufState));
+        bufState.stride = (uint32_t)(floatsPerVert * sizeof(float));
+
+        mCmdBuf.bindVtxAttribState(dk::detail::ArrayProxy<DkVtxAttribState const>(fullAttribs, 10));
+        mCmdBuf.bindVtxBufferState(dk::detail::ArrayProxy<DkVtxBufferState const>(&bufState, 1));
+
+        // Set up uniforms for ImGui rendering:
+        // Use SHADER_TEXEL0 * SHADER_INPUT_1 formula
+        // c[0][0] = {SHADER_TEXEL0, SHADER_0, SHADER_INPUT_1, SHADER_0} → texel0 * input1
+        // c[0][1] = {SHADER_TEXEL0A, SHADER_0, SHADER_INPUT_1, SHADER_0} → texel0.a * input1.a
+        if (mUniformOffset + sizeof(UberUniforms) > UNIFORM_POOL_SIZE) {
+            FlushCommands();
+            mUniformOffset = 0;
+        }
+
+        UberUniforms* uniforms = (UberUniforms*)((uint8_t*)mUniformMem.getCpuAddr() + mUniformOffset);
+        memset(uniforms, 0, sizeof(UberUniforms));
+
+        // Set up color combiner: texel0.rgb * input1.rgb
+        uniforms->cc_0_0[0] = 8;  // SHADER_TEXEL0 = a
+        uniforms->cc_0_0[1] = 0;  // SHADER_0 = b
+        uniforms->cc_0_0[2] = 1;  // SHADER_INPUT_1 = c
+        uniforms->cc_0_0[3] = 0;  // SHADER_0 = d → (a - b) * c + d = texel0 * input1
+
+        // Alpha combiner: texel0.a * input1.a
+        uniforms->cc_0_1[0] = 9;  // SHADER_TEXEL0A = a
+        uniforms->cc_0_1[1] = 0;  // SHADER_0 = b
+        uniforms->cc_0_1[2] = 1;  // SHADER_INPUT_1 = c
+        uniforms->cc_0_1[3] = 0;  // SHADER_0 = d
+
+        uniforms->useTexture[0] = 1;
+        uniforms->optAlpha = 1;
+        uniforms->doMultiply[0] = 1; // Multiply mode for RGB
+        uniforms->doMultiply[1] = 1; // Multiply mode for Alpha
+
+        DkGpuAddr uboAddr = mUniformMem.getGpuAddr() + mUniformOffset;
+        mCmdBuf.bindUniformBuffer(DkStage_Fragment, 0, uboAddr, sizeof(UberUniforms));
+        mCmdBuf.bindUniformBuffer(DkStage_Vertex, 0, uboAddr, sizeof(UberUniforms));
+
+        mUniformOffset += sizeof(UberUniforms);
+        mUniformOffset = (mUniformOffset + DK_UNIFORM_BUF_ALIGNMENT - 1) & ~(DK_UNIFORM_BUF_ALIGNMENT - 1);
+
+        mVboOffset += uploadBytes;
+        mVboOffset = (mVboOffset + 255) & ~(size_t)255;
+
+        for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++) {
+            const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
+
+            if (pcmd->UserCallback) {
+                pcmd->UserCallback(cmd_list, pcmd);
+                continue;
+            }
+
+            // Set scissor rect
+            ImVec2 clip_min((pcmd->ClipRect.x - clip_off.x) * clip_scale.x,
+                            (pcmd->ClipRect.y - clip_off.y) * clip_scale.y);
+            ImVec2 clip_max((pcmd->ClipRect.z - clip_off.x) * clip_scale.x,
+                            (pcmd->ClipRect.w - clip_off.y) * clip_scale.y);
+            if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y) {
+                continue;
+            }
+
+            DkScissor sc;
+            sc.x = (uint32_t)clip_min.x;
+            sc.y = (uint32_t)clip_min.y;
+            sc.width = (uint32_t)(clip_max.x - clip_min.x);
+            sc.height = (uint32_t)(clip_max.y - clip_min.y);
+            mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(&sc, 1));
+
+            // Bind texture
+            uint32_t texId = (uint32_t)(intptr_t)pcmd->GetTexID();
+            if (texId < mTextures.size() && mTextures[texId].valid) {
+                uint32_t descIdx = mTextures[texId].descriptorIdx;
+                DkResHandle handle = dkMakeTextureHandle(descIdx, descIdx);
+                mCmdBuf.bindTextures(DkStage_Fragment, 0,
+                                     dk::detail::ArrayProxy<DkResHandle const>(&handle, 1));
+            }
+
+            // Draw indexed triangles using vertex offset
+            // ImGui provides indices as ImDrawIdx (uint16_t by default).
+            // deko3d doesn't have a base vertex offset for indexed draws,
+            // so we draw non-indexed using the index buffer to look up vertices.
+            // For simplicity, draw each triangle by emitting 3 vertices per index triple.
+            uint32_t firstVtx = pcmd->VtxOffset;
+            uint32_t firstIdx = pcmd->IdxOffset;
+            uint32_t elemCount = pcmd->ElemCount;
+
+            // We already uploaded all vertices; draw using the vertex offset
+            mCmdBuf.draw(DkPrimitive_Triangles, elemCount, 1, firstVtx + firstIdx, 0);
+        }
+    }
+
+    // Restore full scissor
+    uint32_t fbW = drawData->DisplaySize.x * drawData->FramebufferScale.x;
+    uint32_t fbH = drawData->DisplaySize.y * drawData->FramebufferScale.y;
+    DkScissor fullSc;
+    fullSc.x = 0;
+    fullSc.y = 0;
+    fullSc.width = fbW;
+    fullSc.height = fbH;
+    mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(&fullSc, 1));
 }
 
 } // namespace Fast

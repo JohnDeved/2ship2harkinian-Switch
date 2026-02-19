@@ -107,9 +107,12 @@ void Fast3dWindow::Init() {
     Ship::Context::GetInstance()->GetWindow()->SetMouseCaptureScancode(
         Ship::Context::GetInstance()->GetConfig()->GetInt("Shortcuts.MouseCapture", Ship::KbScancode::LUS_KB_F2));
 
+    SPDLOG_INFO("Fast3dWindow::Init start (fullscreen={}, {}x{}, pos={}, {})", isFullscreen, width, height, posX, posY);
     InitWindowManager();
+    SPDLOG_INFO("Fast3dWindow::Init selected backend id={}", static_cast<int>(GetWindowBackend()));
     mInterpreter->Init(mWindowManagerApi, mRenderingApi, Ship::Context::GetInstance()->GetName().c_str(), isFullscreen,
                        width, height, posX, posY);
+    SPDLOG_INFO("Fast3dWindow::Init interpreter init complete");
     mWindowManagerApi->SetFullscreenChangedCallback(OnFullscreenChanged);
     mWindowManagerApi->SetKeyboardCallbacks(KeyDown, KeyUp, AllKeysUp);
     mWindowManagerApi->SetMouseCallbacks(MouseButtonDown, MouseButtonUp);
@@ -140,30 +143,35 @@ uint16_t Fast3dWindow::GetPixelDepth(float x, float y) {
 
 void Fast3dWindow::InitWindowManager() {
     SetWindowBackend(Ship::Context::GetInstance()->GetConfig()->GetWindowBackend());
+    SPDLOG_INFO("Fast3dWindow::InitWindowManager backend enum={}", static_cast<int>(GetWindowBackend()));
 
     switch (GetWindowBackend()) {
 #ifdef ENABLE_DX11
         case Ship::WindowBackend::FAST3D_DXGI_DX11:
             mWindowManagerApi = new GfxWindowBackendDXGI();
             mRenderingApi = new GfxRenderingAPIDX11(static_cast<GfxWindowBackendDXGI*>(mWindowManagerApi));
+            SPDLOG_INFO("Fast3dWindow selected DX11 backend");
             break;
 #endif
 #ifdef ENABLE_OPENGL
         case Ship::WindowBackend::FAST3D_SDL_OPENGL:
             mRenderingApi = new GfxRenderingAPIOGL();
             mWindowManagerApi = new GfxWindowBackendSDL2();
+            SPDLOG_INFO("Fast3dWindow selected OpenGL backend");
             break;
 #endif
 #ifdef __APPLE__
         case Ship::WindowBackend::FAST3D_SDL_METAL:
             mRenderingApi = new GfxRenderingAPIMetal();
             mWindowManagerApi = new GfxWindowBackendSDL2();
+            SPDLOG_INFO("Fast3dWindow selected Metal backend");
             break;
 #endif
 #ifdef ENABLE_DEKO3D
         case Ship::WindowBackend::FAST3D_DEKO3D:
             mRenderingApi = new GfxRenderingAPIDeko3d();
             mWindowManagerApi = new GfxWindowBackendSDL2();
+            SPDLOG_INFO("Fast3dWindow selected deko3d backend");
             break;
 #endif
         default:

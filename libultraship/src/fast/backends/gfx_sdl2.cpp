@@ -34,7 +34,9 @@
 #elif __SWITCH__
 #include <SDL2/SDL.h>
 #include <switch.h>
+#ifndef ENABLE_DEKO3D
 #include <glad/glad.h>
+#endif
 #include "ship/port/switch/SwitchImpl.h"
 #else
 #include <SDL2/SDL.h>

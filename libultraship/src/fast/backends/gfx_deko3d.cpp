@@ -99,7 +99,7 @@ void GfxRenderingAPIDeko3d::InitSwapchain() {
                         .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
                         .create();
 
-    dk::Image const* swapImages[NUM_FRAMEBUFFERS];
+    DkImage const* swapImages[NUM_FRAMEBUFFERS];
     for (unsigned i = 0; i < NUM_FRAMEBUFFERS; i++) {
         mSwapchainImages[i].initialize(fbLayout, mSwapchainMem, totalFbSize * i);
         swapImages[i] = &mSwapchainImages[i];
@@ -259,10 +259,8 @@ void GfxRenderingAPIDeko3d::Init() {
     mCmdBuf.bindColorWriteState(cwState);
 
     // Set up initial depth-stencil state
-    DkDepthStencilState dsState;
-    dkDepthStencilStateDefaults(&dsState);
-    dsState.depthTestEnable = false;
-    dsState.depthWriteEnable = false;
+    dk::DepthStencilState dsState;
+    dsState.setDepthTestEnable(false).setDepthWriteEnable(false);
     mCmdBuf.bindDepthStencilState(dsState);
 
     // Bind descriptor pools so the GPU knows where to find texture/sampler descriptors
@@ -272,7 +270,8 @@ void GfxRenderingAPIDeko3d::Init() {
     // Bind shaders if loaded
     if (mShadersLoaded) {
         const DkShader* shaders[] = { &mVertexShader, &mFragmentShader };
-        mCmdBuf.bindShaders(DkStageFlag_Vertex | DkStageFlag_Fragment, { shaders, 2 });
+        mCmdBuf.bindShaders(DkStageFlag_Vertex | DkStageFlag_Fragment,
+                            dk::detail::ArrayProxy<DkShader const* const>(shaders, 2));
     }
 
     // Submit initial state commands
@@ -302,7 +301,8 @@ void GfxRenderingAPIDeko3d::StartFrame() {
     // Re-bind shaders each frame
     if (mShadersLoaded) {
         const DkShader* shaders[] = { &mVertexShader, &mFragmentShader };
-        mCmdBuf.bindShaders(DkStageFlag_Vertex | DkStageFlag_Fragment, { shaders, 2 });
+        mCmdBuf.bindShaders(DkStageFlag_Vertex | DkStageFlag_Fragment,
+                            dk::detail::ArrayProxy<DkShader const* const>(shaders, 2));
     }
 }
 
@@ -343,15 +343,20 @@ void GfxRenderingAPIDeko3d::BindCurrentFramebuffer() {
     if (mCurrentFrameBuffer == 0 && mCurrentSwapImage >= 0) {
         dk::ImageView colorTarget{ mSwapchainImages[mCurrentSwapImage] };
         dk::ImageView depthTarget{ mSwapchainDepthImage };
-        mCmdBuf.bindRenderTargets({ &colorTarget }, &depthTarget);
+        const DkImageView* colorTargetPtr = &colorTarget;
+        mCmdBuf.bindRenderTargets(
+            dk::detail::ArrayProxy<DkImageView const* const>(&colorTargetPtr, 1), &depthTarget);
     } else if (mCurrentFrameBuffer < mFrameBuffers.size()) {
         auto& fb = mFrameBuffers[mCurrentFrameBuffer];
         dk::ImageView colorTarget{ fb.colorImage };
+        const DkImageView* colorTargetPtr = &colorTarget;
         if (fb.has_depth_buffer) {
             dk::ImageView depthTarget{ fb.depthImage };
-            mCmdBuf.bindRenderTargets({ &colorTarget }, &depthTarget);
+            mCmdBuf.bindRenderTargets(
+                dk::detail::ArrayProxy<DkImageView const* const>(&colorTargetPtr, 1), &depthTarget);
         } else {
-            mCmdBuf.bindRenderTargets({ &colorTarget });
+            mCmdBuf.bindRenderTargets(
+                dk::detail::ArrayProxy<DkImageView const* const>(&colorTargetPtr, 1));
         }
     }
 }
@@ -528,7 +533,9 @@ void GfxRenderingAPIDeko3d::UploadTexture(const uint8_t* rgba32_buf, uint32_t wi
     memcpy(staging.getCpuAddr(), rgba32_buf, dataSize);
 
     dk::ImageView view{ tex.image };
-    mCmdBuf.copyBufferToImage({ staging.getGpuAddr() }, view, { 0, 0, 0, width, height, 1 });
+    DkCopyBuf srcBuf = { staging.getGpuAddr(), 0, 0 };
+    DkImageRect dstRect = { 0, 0, 0, width, height, 1 };
+    mCmdBuf.copyBufferToImage(srcBuf, view, dstRect);
 
     // Update image descriptor in the pool
     dk::ImageView descView{ tex.image };
@@ -598,7 +605,7 @@ void GfxRenderingAPIDeko3d::SetViewport(int x, int y, int width, int height) {
     vp.height = (float)height;
     vp.near = 0.0f;
     vp.far = 1.0f;
-    mCmdBuf.setViewports(0, { vp });
+    mCmdBuf.setViewports(0, dk::detail::ArrayProxy<DkViewport const>(&vp, 1));
 }
 
 void GfxRenderingAPIDeko3d::SetScissor(int x, int y, int width, int height) {
@@ -607,7 +614,7 @@ void GfxRenderingAPIDeko3d::SetScissor(int x, int y, int width, int height) {
     sc.y = (uint32_t)y;
     sc.width = (uint32_t)width;
     sc.height = (uint32_t)height;
-    mCmdBuf.setScissors(0, { sc });
+    mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(&sc, 1));
 }
 
 void GfxRenderingAPIDeko3d::SetUseAlpha(bool use_alpha) {
@@ -622,7 +629,7 @@ void GfxRenderingAPIDeko3d::SetUseAlpha(bool use_alpha) {
         blendState.setFactors(DkBlendFactor_SrcAlpha, DkBlendFactor_InvSrcAlpha,
                               DkBlendFactor_SrcAlpha, DkBlendFactor_InvSrcAlpha);
         blendState.setOps(DkBlendOp_Add, DkBlendOp_Add);
-        mCmdBuf.bindBlendStates(0, { blendState });
+        mCmdBuf.bindBlendStates(0, dk::detail::ArrayProxy<DkBlendState const>(&blendState, 1));
     }
 }
 
@@ -642,16 +649,15 @@ void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, s
         mLastDepthMask = mCurrentDepthMask;
         mLastZmodeDecal = mCurrentZmodeDecal;
 
-        DkDepthStencilState dsState;
-        dkDepthStencilStateDefaults(&dsState);
+        dk::DepthStencilState dsState;
 
         if (mCurrentDepthTest || mCurrentDepthMask) {
-            dsState.depthTestEnable = true;
-            dsState.depthWriteEnable = mCurrentDepthMask ? true : false;
-            dsState.depthCompareOp = mCurrentZmodeDecal ? DkCompareOp_Lequal : DkCompareOp_Less;
+            dsState.setDepthTestEnable(true);
+            dsState.setDepthWriteEnable(mCurrentDepthMask ? true : false);
+            dsState.setDepthCompareOp(mCurrentZmodeDecal ? DkCompareOp_Lequal : DkCompareOp_Less);
         } else {
-            dsState.depthTestEnable = false;
-            dsState.depthWriteEnable = false;
+            dsState.setDepthTestEnable(false);
+            dsState.setDepthWriteEnable(false);
         }
 
         mCmdBuf.bindDepthStencilState(dsState);
@@ -736,7 +742,8 @@ void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, s
             if (texId < mTextures.size() && mTextures[texId].valid) {
                 uint32_t descIdx = mTextures[texId].descriptorIdx;
                 DkResHandle handle = dkMakeTextureHandle(descIdx, descIdx);
-                mCmdBuf.bindTextures(DkStage_Fragment, i, { handle });
+                mCmdBuf.bindTextures(DkStage_Fragment, i,
+                                     dk::detail::ArrayProxy<DkResHandle const>(&handle, 1));
             }
         }
     }
@@ -755,7 +762,7 @@ void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, s
     DkBufExtents vboBuf;
     vboBuf.addr = mVboMem.getGpuAddr() + mVboOffset;
     vboBuf.size = (uint32_t)uploadBytes;
-    mCmdBuf.bindVtxBuffers(0, { vboBuf });
+    mCmdBuf.bindVtxBuffers(0, dk::detail::ArrayProxy<DkBufExtents const>(&vboBuf, 1));
 
     // Configure vertex attribute state
     ConfigureVertexState();
@@ -803,8 +810,9 @@ void GfxRenderingAPIDeko3d::ConfigureVertexState() {
         offset += mCurrentShaderProgram->attribSizes[i] * sizeof(float);
     }
 
-    mCmdBuf.bindVtxAttribState({ attribs, mCurrentShaderProgram->numAttribs });
-    mCmdBuf.bindVtxBufferState({ &bufState, 1 });
+    mCmdBuf.bindVtxAttribState(
+        dk::detail::ArrayProxy<DkVtxAttribState const>(attribs, mCurrentShaderProgram->numAttribs));
+    mCmdBuf.bindVtxBufferState(dk::detail::ArrayProxy<DkVtxBufferState const>(&bufState, 1));
 }
 
 // ---------------------------------------------------------------------------
@@ -950,13 +958,14 @@ void GfxRenderingAPIDeko3d::CopyFramebuffer(int fbDstId, int fbSrcId, int srcX0,
 
         if (srcW == dstW && srcH == dstH) {
             // Same-size copy
-            mCmdBuf.copyImage(srcView, { (uint32_t)srcX0, (uint32_t)srcY0, 0 },
-                              dstView, { (uint32_t)dstX0, (uint32_t)dstY0, 0 },
-                              { srcW, srcH, 1 });
+            DkImageRect srcRect = { (uint32_t)srcX0, (uint32_t)srcY0, 0, srcW, srcH, 1 };
+            DkImageRect dstRect = { (uint32_t)dstX0, (uint32_t)dstY0, 0, dstW, dstH, 1 };
+            mCmdBuf.copyImage(srcView, srcRect, dstView, dstRect);
         } else {
             // Scaled blit
-            mCmdBuf.blitImage(srcView, { (uint32_t)srcX0, (uint32_t)srcY0, 0, srcW, srcH, 1 },
-                              dstView, { (uint32_t)dstX0, (uint32_t)dstY0, 0, dstW, dstH, 1 });
+            DkImageRect srcRect = { (uint32_t)srcX0, (uint32_t)srcY0, 0, srcW, srcH, 1 };
+            DkImageRect dstRect = { (uint32_t)dstX0, (uint32_t)dstY0, 0, dstW, dstH, 1 };
+            mCmdBuf.blitImage(srcView, srcRect, dstView, dstRect);
         }
     }
 }
@@ -982,7 +991,9 @@ void GfxRenderingAPIDeko3d::ReadFramebufferToCPU(int fbId, uint32_t width, uint3
                                      .create();
 
     dk::ImageView view{ *srcImg };
-    mCmdBuf.copyImageToBuffer(view, { 0, 0, 0, width, height, 1 }, { staging.getGpuAddr() });
+    DkImageRect srcRect = { 0, 0, 0, width, height, 1 };
+    DkCopyBuf dstBuf = { staging.getGpuAddr(), 0, 0 };
+    mCmdBuf.copyImageToBuffer(view, srcRect, dstBuf);
     FlushCommands();
 
     // Convert RGBA8 to RGBA16 (5551 format)
@@ -1034,7 +1045,8 @@ void GfxRenderingAPIDeko3d::SelectTextureFb(int fbId) {
     if ((size_t)fbId < mFrameBuffers.size() && mFrameBuffers[fbId].descriptorIdx > 0) {
         uint32_t descIdx = mFrameBuffers[fbId].descriptorIdx;
         DkResHandle handle = dkMakeTextureHandle(descIdx, descIdx);
-        mCmdBuf.bindTextures(DkStage_Fragment, 0, { handle });
+        mCmdBuf.bindTextures(DkStage_Fragment, 0,
+                             dk::detail::ArrayProxy<DkResHandle const>(&handle, 1));
     }
 }
 

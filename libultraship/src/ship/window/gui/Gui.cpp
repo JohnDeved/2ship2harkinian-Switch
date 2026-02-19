@@ -44,6 +44,10 @@
 
 #endif
 
+#ifdef ENABLE_DEKO3D
+#include <imgui_impl_sdl2.h>
+#endif
+
 #if defined(ENABLE_DX11) || defined(ENABLE_DX12)
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>

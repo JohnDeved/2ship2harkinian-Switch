@@ -328,6 +328,9 @@ void Config::SetWindowBackend(WindowBackend backend) {
         case WindowBackend::FAST3D_SDL_METAL:
             SetString("Window.Backend.Name", "Metal");
             break;
+        case WindowBackend::FAST3D_DEKO3D:
+            SetString("Window.Backend.Name", "deko3d");
+            break;
         default:
             SetString("Window.Backend.Name", "");
     }

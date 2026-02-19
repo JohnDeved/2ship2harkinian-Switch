@@ -15,6 +15,8 @@ s32 Player_UpperAction_8(Player* thisx, PlayState* play);
 
 #define CVAR_NAME "gEnhancements.PlayerActions.ArrowCycle"
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
+#define CVAR_DPAD_NAME "gEnhancements.PlayerActions.ArrowCycle.UseDpad"
+#define CVAR_DPAD CVarGetInteger(CVAR_DPAD_NAME, 0)
 
 // Magic arrow costs based on z_player.c
 static const s16 sMagicArrowCosts[] = { 4, 4, 8 };
@@ -114,6 +116,25 @@ static s8 GetNextArrowType(s8 currentArrowType) {
         int nextIndex = (currentIndex + offset) % ARRAY_COUNT(sArrowCycleOrder);
         if (HasArrowType(sArrowCycleOrder[nextIndex])) {
             return sArrowCycleOrder[nextIndex];
+        }
+    }
+
+    return ARROW_NORMAL;
+}
+
+static s8 GetPrevArrowType(s8 currentArrowType) {
+    int currentIndex = 0;
+    for (int i = 0; i < (int)ARRAY_COUNT(sArrowCycleOrder); i++) {
+        if (sArrowCycleOrder[i] == currentArrowType) {
+            currentIndex = i;
+            break;
+        }
+    }
+
+    for (int offset = 1; offset <= (int)ARRAY_COUNT(sArrowCycleOrder); offset++) {
+        int prevIndex = (currentIndex - offset + ARRAY_COUNT(sArrowCycleOrder)) % ARRAY_COUNT(sArrowCycleOrder);
+        if (HasArrowType(sArrowCycleOrder[prevIndex])) {
+            return sArrowCycleOrder[prevIndex];
         }
     }
 
@@ -221,9 +242,7 @@ static void UpdateEquippedBow(PlayState* play, s8 arrowType) {
 }
 
 // Core Arrow Cycling Function
-static void CycleToNextArrow(PlayState* play, Player* player) {
-    s8 nextArrow = GetNextArrowType(player->heldItemAction);
-
+static void CycleToArrow(PlayState* play, Player* player, s8 targetArrow) {
     if (player->heldActor != NULL && player->heldActor->id == ACTOR_EN_ARROW) {
         EnArrow* arrow = (EnArrow*)player->heldActor;
 
@@ -234,9 +253,28 @@ static void CycleToNextArrow(PlayState* play, Player* player) {
         Actor_Kill(&arrow->actor);
     }
 
-    Player_InitItemAction(play, player, static_cast<PlayerItemAction>(nextArrow));
-    UpdateEquippedBow(play, nextArrow);
+    Player_InitItemAction(play, player, static_cast<PlayerItemAction>(targetArrow));
+    UpdateEquippedBow(play, targetArrow);
     Audio_PlaySfx(NA_SE_PL_CHANGE_ARMS);
+}
+
+static bool TryCycleArrow(PlayState* play, Player* player, s8 targetArrow) {
+    if (IsHoldingMagicBow(player) && gSaveContext.magicState != MAGIC_STATE_IDLE && player->heldActor == NULL) {
+        Audio_PlaySfx(NA_SE_SY_ERROR);
+        return false;
+    }
+
+    if (player->heldActor != NULL && player->heldActor->id == ACTOR_EN_ARROW) {
+        EnArrow* heldArrow = (EnArrow*)player->heldActor;
+
+        // If the held arrow itself is magical, then we should "restore" the consumed magic upon cycling
+        if (ARROW_IS_MAGICAL(heldArrow->actor.params)) {
+            Magic_Add(play, sMagicArrowCosts[ARROW_GET_MAGIC_FROM_TYPE(heldArrow->actor.params)]);
+        }
+    }
+
+    CycleToArrow(play, player, targetArrow);
+    return true;
 }
 
 void ArrowCycleMain() {
@@ -258,22 +296,23 @@ void ArrowCycleMain() {
         return;
     }
 
-    if (IsAimingBow(player) && CHECK_BTN_ANY(input->press.button, BTN_R)) {
-        if (IsHoldingMagicBow(player) && gSaveContext.magicState != MAGIC_STATE_IDLE && player->heldActor == NULL) {
-            Audio_PlaySfx(NA_SE_SY_ERROR);
-            return;
+    if (!IsAimingBow(player)) {
+        return;
+    }
+
+    bool cycled = false;
+
+    if (CHECK_BTN_ANY(input->press.button, BTN_R)) {
+        cycled = TryCycleArrow(gPlayState, player, GetNextArrowType(player->heldItemAction));
+    } else if (CVAR_DPAD) {
+        if (CHECK_BTN_ANY(input->press.button, BTN_DRIGHT)) {
+            cycled = TryCycleArrow(gPlayState, player, GetNextArrowType(player->heldItemAction));
+        } else if (CHECK_BTN_ANY(input->press.button, BTN_DLEFT)) {
+            cycled = TryCycleArrow(gPlayState, player, GetPrevArrowType(player->heldItemAction));
         }
+    }
 
-        if (player->heldActor != NULL && player->heldActor->id == ACTOR_EN_ARROW) {
-            EnArrow* heldArrow = (EnArrow*)player->heldActor;
-
-            // If the held arrow itself is magical, then we should "restore" the consumed magic upon cycling
-            if (ARROW_IS_MAGICAL(heldArrow->actor.params)) {
-                Magic_Add(gPlayState, sMagicArrowCosts[ARROW_GET_MAGIC_FROM_TYPE(heldArrow->actor.params)]);
-            }
-        }
-
-        CycleToNextArrow(gPlayState, player);
+    if (cycled) {
         // Track that we just cycled for 2 frames to prevent held R input from triggering the shield action when in
         // Z-Target mode as the arrow is respawned (Player_UpperAction_8)
         sJustCycledFrames = 2;
@@ -309,4 +348,4 @@ void RegisterArrowCycle() {
     COND_ID_HOOK(OnActorUpdate, ACTOR_PLAYER, CVAR, [](Actor* actor) { ArrowCycleMain(); });
 }
 
-static RegisterShipInitFunc initFunc(RegisterArrowCycle, { CVAR_NAME });
+static RegisterShipInitFunc initFunc(RegisterArrowCycle, { CVAR_NAME, CVAR_DPAD_NAME });

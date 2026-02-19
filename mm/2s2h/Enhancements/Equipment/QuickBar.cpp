@@ -12,6 +12,7 @@ extern "C" {
 void Player_UseItem(PlayState* play, Player* thisx, ItemId item);
 void Interface_LoadItemIconImpl(PlayState* play, u8 btn);
 void Interface_Dpad_LoadItemIconImpl(PlayState* play, u8 btn);
+OcarinaStaff* AudioOcarina_GetPlayingStaff(void);
 }
 
 #define CVAR_NAME "gEnhancements.Equipment.QuickBar"
@@ -31,10 +32,10 @@ static bool sStickReleased = true;
 static s8 sSavedRightStickX = 0;
 static s8 sSavedRightStickY = 0;
 
-// Deferred song playback (needs many frames for the ocarina state machine to initialize)
+// Deferred song recognition (needs frames for the ocarina state machine to initialize)
 struct DeferredSong {
     bool pending;
-    int songId;       // OcarinaSongId for AudioOcarina_SetPlaybackSong
+    int songIndex;    // OCARINA_SONG_* index to force-recognize
     int delayFrames;  // Frames to wait before executing
 };
 static DeferredSong sDeferredSong = {};
@@ -409,18 +410,46 @@ static void CloseQuickBar(bool confirm) {
                 }
                 break;
             }
-            case QB_CAT_MASKS:
-                // Masks: use Player_UseItem which toggles equip on/off
-                UseItemOnPlayer(selectedItem);
+            case QB_CAT_MASKS: {
+                // Equip mask to C-Left and directly toggle the player's currentMask.
+                // We set currentMask directly (same as z_player.c:4706-4713) because
+                // Player_UseItem has complex state conditions that can fail.
+                Player* player = GET_PLAYER(gPlayState);
+                int maskSlot = GetSlotForAnyItem(selectedItem);
+                if (maskSlot != SLOT_NONE) {
+                    SET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_C_LEFT, selectedItem);
+                    SET_CUR_FORM_BTN_SLOT(EQUIP_SLOT_C_LEFT, maskSlot);
+                    Interface_LoadItemIconImpl(gPlayState, EQUIP_SLOT_C_LEFT);
+                }
+                // For transform masks (Deku, Goron, Zora, Fierce Deity), use Player_UseItem
+                // which triggers the transformation cutscene
+                if (selectedItem == ITEM_MASK_DEKU || selectedItem == ITEM_MASK_GORON ||
+                    selectedItem == ITEM_MASK_ZORA || selectedItem == ITEM_MASK_FIERCE_DEITY) {
+                    UseItemOnPlayer(selectedItem);
+                } else {
+                    // Non-transform masks: directly toggle currentMask
+                    PlayerItemAction itemAction = (PlayerItemAction)(selectedItem - ITEM_MASK_DEKU + PLAYER_IA_MASK_DEKU);
+                    PlayerMask maskId = GET_MASK_FROM_IA(itemAction);
+                    player->prevMask = player->currentMask;
+                    if (maskId == player->currentMask) {
+                        player->currentMask = PLAYER_MASK_NONE;
+                    } else {
+                        player->currentMask = maskId;
+                    }
+                    gSaveContext.save.equippedMask = player->currentMask;
+                }
                 break;
+            }
             case QB_CAT_SONGS:
                 if (CVarGetInteger("gEnhancements.Equipment.QuickBar.AutoPlaySongs", 1)) {
-                    // Pull out ocarina, then defer song auto-play by 30 frames
-                    // to give the ocarina state machine time to fully initialize
+                    // Pull out ocarina, then defer song recognition by 30 frames.
+                    // We set the playing staff's state to the song index, which the
+                    // message system recognizes as a completed song (same as if the
+                    // player entered the notes manually).
                     UseItemOnPlayer(ITEM_OCARINA_OF_TIME);
-                    int songId = QuestBitToSongId(selectedItem);
-                    if (songId >= 0) {
-                        sDeferredSong = { true, songId, 30 };
+                    int songIndex = QuestBitToSongId(selectedItem);
+                    if (songIndex >= 0) {
+                        sDeferredSong = { true, songIndex, 30 };
                     }
                 }
                 break;
@@ -452,24 +481,58 @@ static void CloseQuickBar(bool confirm) {
 
 static void TapRecall(QuickBarCategory cat) {
     int lastItem = sState.lastUsed[cat];
+    if (lastItem < 0 && cat != QB_CAT_SONGS) return;
+    if (gPlayState == nullptr) return;
 
     switch (cat) {
-        case QB_CAT_TOOLS:
-            // Tap RIGHT: just set the active tool (shown on D-pad HUD)
-            if (lastItem >= 0) {
-                SetActiveTool(lastItem);
+        case QB_CAT_TOOLS: {
+            // Tap RIGHT: equip tool to C-Left so it appears on the button
+            SetActiveTool(lastItem);
+            int slot = GetSlotForItem(lastItem);
+            if (slot != SLOT_NONE) {
+                SET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_C_LEFT, lastItem);
+                SET_CUR_FORM_BTN_SLOT(EQUIP_SLOT_C_LEFT, slot);
+                Interface_LoadItemIconImpl(gPlayState, EQUIP_SLOT_C_LEFT);
             }
             break;
-        case QB_CAT_BOTTLES:
-            // Tap DOWN: just set last bottle (shown on D-pad HUD)
-            // Actual use via RB click (future)
+        }
+        case QB_CAT_BOTTLES: {
+            // Tap DOWN: equip last bottle to C-Left
+            for (int s = SLOT_BOTTLE_1; s <= SLOT_BOTTLE_6; s++) {
+                if (gSaveContext.save.saveInfo.inventory.items[s] == (u8)lastItem) {
+                    SET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_C_LEFT, lastItem);
+                    SET_CUR_FORM_BTN_SLOT(EQUIP_SLOT_C_LEFT, s);
+                    Interface_LoadItemIconImpl(gPlayState, EQUIP_SLOT_C_LEFT);
+                    break;
+                }
+            }
             break;
-        case QB_CAT_MASKS:
-            // Tap UP: equip last mask (masks are toggle-equip, works fine)
-            if (lastItem >= 0) {
+        }
+        case QB_CAT_MASKS: {
+            // Tap UP: toggle last mask
+            Player* player = GET_PLAYER(gPlayState);
+            int maskSlot = GetSlotForAnyItem(lastItem);
+            if (maskSlot != SLOT_NONE) {
+                SET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_C_LEFT, lastItem);
+                SET_CUR_FORM_BTN_SLOT(EQUIP_SLOT_C_LEFT, maskSlot);
+                Interface_LoadItemIconImpl(gPlayState, EQUIP_SLOT_C_LEFT);
+            }
+            if (lastItem == ITEM_MASK_DEKU || lastItem == ITEM_MASK_GORON ||
+                lastItem == ITEM_MASK_ZORA || lastItem == ITEM_MASK_FIERCE_DEITY) {
                 UseItemOnPlayer(lastItem);
+            } else {
+                PlayerItemAction itemAction = (PlayerItemAction)(lastItem - ITEM_MASK_DEKU + PLAYER_IA_MASK_DEKU);
+                PlayerMask maskId = GET_MASK_FROM_IA(itemAction);
+                player->prevMask = player->currentMask;
+                if (maskId == player->currentMask) {
+                    player->currentMask = PLAYER_MASK_NONE;
+                } else {
+                    player->currentMask = maskId;
+                }
+                gSaveContext.save.equippedMask = player->currentMask;
             }
             break;
+        }
         case QB_CAT_SONGS:
             // Tap LEFT: pull out ocarina
             UseItemOnPlayer(ITEM_OCARINA_OF_TIME);
@@ -511,14 +574,20 @@ static void QuickBarPreMain() {
 static void QuickBarUpdate() {
     if (gPlayState == nullptr) return;
 
-    // Process deferred song playback (needs ocarina state machine to initialize)
+    // Process deferred song recognition
+    // After pulling out the ocarina, the message system enters MSGMODE_OCARINA_PLAYING.
+    // We set the playing staff's state to the song index, which the message system
+    // picks up and processes through the normal song recognition flow (same as if
+    // the player entered the correct notes manually).
     if (sDeferredSong.pending) {
         if (sDeferredSong.delayFrames > 0) {
             sDeferredSong.delayFrames--;
         } else {
             sDeferredSong.pending = false;
-            AudioOcarina_SetInstrument(OCARINA_INSTRUMENT_DEFAULT);
-            AudioOcarina_SetPlaybackSong(sDeferredSong.songId + 1, 1);
+            OcarinaStaff* staff = AudioOcarina_GetPlayingStaff();
+            if (staff != NULL) {
+                staff->state = sDeferredSong.songIndex;
+            }
         }
     }
 

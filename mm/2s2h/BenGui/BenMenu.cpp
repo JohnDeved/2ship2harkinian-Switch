@@ -834,6 +834,11 @@ void BenMenu::AddEnhancements() {
                      .IsPercentage()
                      .Min(0.01f)
                      .Max(2.0f));
+    AddWidget(path, "Aim Camera From Camera Direction", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Camera.AimingFirstPersonCamera")
+        .Options(CheckboxOptions().Tooltip(
+            "When aiming (bow, slingshot, etc.), the aiming camera starts from the direction the camera "
+            "is currently looking instead of the direction the player character is facing."));
 
     path.column = SECTION_COLUMN_2;
     AddWidget(path, "Cameras", WIDGET_SEPARATOR_TEXT);

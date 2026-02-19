@@ -27,6 +27,10 @@ layout(location = 0) out vec4 outColor;
 // Texture samplers — bound per draw call
 layout(binding = 0) uniform sampler2D uTex0;
 layout(binding = 1) uniform sampler2D uTex1;
+layout(binding = 2) uniform sampler2D uTexMask0;
+layout(binding = 3) uniform sampler2D uTexMask1;
+layout(binding = 4) uniform sampler2D uTexBlend0;
+layout(binding = 5) uniform sampler2D uTexBlend1;
 
 // Uniform buffer — must match UberUniforms struct layout
 layout(std140, binding = 0) uniform UberBlock {
@@ -79,15 +83,37 @@ float randNoise() {
     return floor(random(vec3(gl_FragCoord.xy, float(frameCount))) + 0.5);
 }
 
-// --- Texture clamping helper ---
-vec4 sampleTex(int idx, vec2 tc, vec2 clampST) {
-    vec4 texVal;
-    if (idx == 0) {
-        texVal = texture(uTex0, tc);
-    } else {
-        texVal = texture(uTex1, tc);
+vec4 fromLinear(vec4 linearRGB){
+    bvec3 cutoff = lessThan(linearRGB.rgb, vec3(0.0031308));
+    vec3 higher = vec3(1.055) * pow(linearRGB.rgb, vec3(1.0 / 2.4)) - vec3(0.055);
+    vec3 lower = linearRGB.rgb * vec3(12.92);
+    return vec4(mix(higher, lower, cutoff), linearRGB.a);
+}
+
+vec4 sampleByUnit(int unit, vec2 uv) {
+    if (unit == 0) return texture(uTex0, uv);
+    if (unit == 1) return texture(uTex1, uv);
+    if (unit == 2) return texture(uTexMask0, uv);
+    if (unit == 3) return texture(uTexMask1, uv);
+    if (unit == 4) return texture(uTexBlend0, uv);
+    if (unit == 5) return texture(uTexBlend1, uv);
+    return vec4(0.0);
+}
+
+vec4 filter3point(int unit, vec2 texCoord, vec2 texSize) {
+    vec2 offset = fract(texCoord * texSize - vec2(0.5));
+    offset -= step(1.0, offset.x + offset.y);
+    vec4 c0 = sampleByUnit(unit, texCoord - offset / texSize);
+    vec4 c1 = sampleByUnit(unit, texCoord - vec2(offset.x - sign(offset.x), offset.y) / texSize);
+    vec4 c2 = sampleByUnit(unit, texCoord - vec2(offset.x, offset.y - sign(offset.y)) / texSize);
+    return c0 + abs(offset.x) * (c1 - c0) + abs(offset.y) * (c2 - c0);
+}
+
+vec4 hookTexture2D(int id, int unit, vec2 uv, vec2 texSize) {
+    if (id >= 0 && id < 2 && textureFiltering[id] == 0) { // FILTER_THREE_POINT
+        return filter3point(unit, uv, texSize);
     }
-    return texVal;
+    return sampleByUnit(unit, uv);
 }
 
 // --- Color combiner input lookup ---
@@ -183,30 +209,54 @@ float combineAlpha(ivec4 cc, bool doS, bool doMul, bool doMx,
     }
 }
 
-// Clamp helper matching OpenGL backend's WRAP macro
+// Wrap helper matching OpenGL backend's WRAP macro
 vec3 wrapRGB(vec3 v, float lo, float hi) {
-    return clamp(v, lo, hi);
+    float range = hi - lo;
+    vec3 x = v - vec3(lo);
+    return x - floor(x / vec3(range)) * vec3(range) + vec3(lo);
 }
 
 float wrapA(float v, float lo, float hi) {
-    return clamp(v, lo, hi);
+    float range = hi - lo;
+    float x = v - lo;
+    return x - floor(x / range) * range + lo;
+}
+
+vec4 wrap4(vec4 v, float lo, float hi) {
+    float range = hi - lo;
+    vec4 x = v - vec4(lo);
+    return x - floor(x / vec4(range)) * vec4(range) + vec4(lo);
 }
 
 void main() {
-    // Early discard for invisible geometry
-    if (optInvisible != 0) {
-        discard;
-    }
-
     // --- Sample textures ---
     vec4 texVal0 = vec4(0.0);
     vec4 texVal1 = vec4(0.0);
+    vec2 texSize0 = vec2(max(textureWidth.x, 1), max(textureHeight.x, 1));
+    vec2 texSize1 = vec2(max(textureWidth.y, 1), max(textureHeight.y, 1));
+    vec2 tc0 = vTexCoord0;
+    vec2 tc1 = vTexCoord1;
+
+    if (useClamp.x != 0) tc0.x = clamp(tc0.x, 0.5 / texSize0.x, vTexClampS0);
+    if (useClamp.y != 0) tc0.y = clamp(tc0.y, 0.5 / texSize0.y, vTexClampT0);
+    if (useClamp.z != 0) tc1.x = clamp(tc1.x, 0.5 / texSize1.x, vTexClampS1);
+    if (useClamp.w != 0) tc1.y = clamp(tc1.y, 0.5 / texSize1.y, vTexClampT1);
 
     if (useTexture.x != 0) {
-        texVal0 = texture(uTex0, vTexCoord0);
+        texVal0 = hookTexture2D(0, 0, tc0, texSize0);
+        if (useMask.x != 0) {
+            vec4 maskVal0 = hookTexture2D(0, 2, tc0, texSize0);
+            vec4 blendVal0 = useBlend.x != 0 ? hookTexture2D(0, 4, tc0, texSize0) : vec4(0.0);
+            texVal0 = mix(texVal0, blendVal0, maskVal0.a);
+        }
     }
     if (useTexture.y != 0) {
-        texVal1 = texture(uTex1, vTexCoord1);
+        texVal1 = hookTexture2D(1, 1, tc1, texSize1);
+        if (useMask.y != 0) {
+            vec4 maskVal1 = hookTexture2D(1, 3, tc1, texSize1);
+            vec4 blendVal1 = useBlend.y != 0 ? hookTexture2D(1, 5, tc1, texSize1) : vec4(0.0);
+            texVal1 = mix(texVal1, blendVal1, maskVal1.a);
+        }
     }
 
     // --- Color combiner ---
@@ -291,6 +341,26 @@ void main() {
         }
     }
 
+    texel = wrap4(texel, -0.51, 1.51);
+    texel = clamp(texel, 0.0, 1.0);
+
+    // --- Fog ---
+    if (optFog != 0) {
+        texel = vec4(mix(texel.rgb, vFog.rgb, vFog.a), texel.a);
+    }
+
+    // --- Grayscale ---
+    if (optGrayscale != 0) {
+        float intensity = (texel.r + texel.g + texel.b) / 3.0;
+        vec3 gray = vGrayscaleColor.rgb * intensity;
+        texel.rgb = mix(texel.rgb, gray, vGrayscaleColor.a);
+    }
+
+    // --- Noise ---
+    if (optNoise != 0) {
+        texel.a *= floor(clamp(random(vec3(floor(gl_FragCoord.xy * noiseScale), float(frameCount))) + texel.a, 0.0, 1.0));
+    }
+
     // --- Texture edge ---
     if (optTextureEdge != 0 && optAlpha != 0) {
         if (texel.a > 0.19) {
@@ -307,26 +377,14 @@ void main() {
         }
     }
 
-    // --- Fog ---
-    if (optFog != 0) {
-        texel = vec4(mix(texel.rgb, vFog.rgb, vFog.a), texel.a);
-    }
-
-    // --- Grayscale ---
-    if (optGrayscale != 0) {
-        float intensity = (texel.r + texel.g + texel.b) / 3.0;
-        vec3 gray = vec3(intensity);
-        texel.rgb = mix(texel.rgb, gray, vGrayscaleColor.r);
-    }
-
-    // --- Noise ---
-    if (optNoise != 0) {
-        texel.a *= randNoise();
+    // --- Invisible geometry ---
+    if (optInvisible != 0) {
+        texel.a = 0.0;
     }
 
     // --- sRGB conversion ---
     if (srgbMode != 0) {
-        texel.rgb = pow(texel.rgb, vec3(1.0 / 2.2));
+        texel = fromLinear(texel);
     }
 
     // Final output

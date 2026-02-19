@@ -289,10 +289,12 @@ void GfxRenderingAPIDeko3d::Init() {
 // ---------------------------------------------------------------------------
 
 void GfxRenderingAPIDeko3d::StartFrame() {
+    // Skip wait on first frame: fence has not been signaled yet.
+    if (mFrameCount > 0) {
+        // Wait for previous frame's GPU work to complete via fence
+        mFrameFence.wait();
+    }
     mFrameCount++;
-
-    // Wait for previous frame's GPU work to complete via fence
-    mFrameFence.wait();
 
     mVboOffset = 0;
     mUniformOffset = 0;
@@ -1214,13 +1216,12 @@ GfxRenderingAPIDeko3d::GetPixelDepth(int fb_id, const std::set<std::pair<float, 
 }
 
 void* GfxRenderingAPIDeko3d::GetFramebufferTextureId(int fbId) {
-    if (fbId == 0 && mCurrentSwapImage >= 0) {
-        return (void*)(intptr_t)(&mSwapchainImages[mCurrentSwapImage]);
+    // Return descriptor-index based ImTextureID encoding so RenderImGuiDrawData()
+    // can bind it consistently.
+    if ((size_t)fbId < mFrameBuffers.size() && mFrameBuffers[fbId].descriptorIdx > 0) {
+        return (void*)(intptr_t)mFrameBuffers[fbId].descriptorIdx;
     }
-    if ((size_t)fbId < mFrameBuffers.size()) {
-        return (void*)(intptr_t)(&mFrameBuffers[fbId].colorImage);
-    }
-    return nullptr;
+    return (void*)(intptr_t)0;
 }
 
 void GfxRenderingAPIDeko3d::SelectTextureFb(int fbId) {
@@ -1305,6 +1306,9 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
     vp.near = 0.0f;
     vp.far = 1.0f;
     mCmdBuf.setViewports(0, dk::detail::ArrayProxy<DkViewport const>(1, &vp));
+
+    const float fbWidth = drawData->DisplaySize.x * drawData->FramebufferScale.x;
+    const float fbHeight = drawData->DisplaySize.y * drawData->FramebufferScale.y;
 
     for (int n = 0; n < drawData->CmdListsCount; n++) {
         const ImDrawList* cmd_list = drawData->CmdLists[n];
@@ -1466,6 +1470,10 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
                             (pcmd->ClipRect.y - clip_off.y) * clip_scale.y);
             ImVec2 clip_max((pcmd->ClipRect.z - clip_off.x) * clip_scale.x,
                             (pcmd->ClipRect.w - clip_off.y) * clip_scale.y);
+            clip_min.x = std::max(0.0f, std::min(clip_min.x, fbWidth));
+            clip_min.y = std::max(0.0f, std::min(clip_min.y, fbHeight));
+            clip_max.x = std::max(0.0f, std::min(clip_max.x, fbWidth));
+            clip_max.y = std::max(0.0f, std::min(clip_max.y, fbHeight));
             if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y) {
                 continue;
             }
@@ -1478,9 +1486,15 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
             mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(1, &sc));
 
             // Bind texture
-            uint32_t texId = (uint32_t)(intptr_t)pcmd->GetTexID();
+            uint32_t texId = (uint32_t)(uintptr_t)pcmd->GetTexID();
+            uint32_t descIdx = 0;
             if (texId < mTextures.size() && mTextures[texId].valid) {
-                uint32_t descIdx = mTextures[texId].descriptorIdx;
+                descIdx = mTextures[texId].descriptorIdx;
+            } else if (texId < MAX_DESCRIPTORS) {
+                // Framebuffer path: TexID is encoded as descriptor index
+                descIdx = texId;
+            }
+            if (descIdx > 0) {
                 DkResHandle handle = dkMakeTextureHandle(descIdx, descIdx);
                 mCmdBuf.bindTextures(DkStage_Fragment, 0,
                                      dk::detail::ArrayProxy<DkResHandle const>(1, &handle));

@@ -363,28 +363,8 @@ static int QuestBitToSongId(int questBit) {
     }
 }
 
-// ─── Time-stop control (pauses day/night clock via timeSpeedOffset) ─────────
-
-static s32 sSavedTimeSpeedOffset = 0;
-static bool sTimeStopActive = false;
-
-static void EnterTimeStop() {
-    if (gPlayState == nullptr) return;
-    // Don't touch timeSpeedOffset if TimeMovesWhenYouMove is active (it manages its own)
-    if (CVarGetInteger("gModes.TimeMovesWhenYouMove", 0)) return;
-    // Save the current offset and set it to negate R_TIME_SPEED (stops the clock)
-    sSavedTimeSpeedOffset = gSaveContext.save.timeSpeedOffset;
-    gSaveContext.save.timeSpeedOffset = -R_TIME_SPEED;
-    sTimeStopActive = true;
-}
-
-static void ExitTimeStop() {
-    if (gPlayState == nullptr) return;
-    if (!sTimeStopActive) return;
-    // Restore original time speed offset
-    gSaveContext.save.timeSpeedOffset = sSavedTimeSpeedOffset;
-    sTimeStopActive = false;
-}
+// Actor freeze is handled via the ShouldActorUpdate hook in RegisterQuickBar.
+// When QuickBar is open, non-player actors are frozen (same visual effect as ocarina).
 
 // ─── Open / close QuickBar ──────────────────────────────────────────────────
 
@@ -407,14 +387,11 @@ static void OpenQuickBar(QuickBarCategory cat) {
     }
 
     sStickReleased = true;
-    EnterTimeStop();
     Audio_PlaySfx(NA_SE_SY_WIN_OPEN);
 }
 
 static void CloseQuickBar(bool confirm) {
     if (!sState.isOpen) return;
-
-    ExitTimeStop();
 
     if (confirm && !sState.currentItems.empty()) {
         int selectedItem = sState.currentItems[sState.selectionIndex];
@@ -639,6 +616,13 @@ void RegisterQuickBar() {
 
     COND_HOOK(OnGameStateUpdate, CVAR, []() {
         QuickBarUpdate();
+    });
+
+    // Freeze non-player actors while QuickBar is open (same visual effect as ocarina)
+    COND_HOOK(ShouldActorUpdate, CVAR, [](Actor* actor, bool* should) {
+        if (sState.isOpen && actor->category != ACTORCAT_PLAYER) {
+            *should = false;
+        }
     });
 }
 

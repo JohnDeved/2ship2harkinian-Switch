@@ -15,8 +15,6 @@ s32 Player_UpperAction_8(Player* thisx, PlayState* play);
 
 #define CVAR_NAME "gEnhancements.PlayerActions.ArrowCycle"
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
-#define CVAR_DPAD_NAME "gEnhancements.PlayerActions.ArrowCycle.DpadArrowSwitch"
-#define CVAR_DPAD CVarGetInteger(CVAR_DPAD_NAME, 0)
 
 // Magic arrow costs based on z_player.c
 static const s16 sMagicArrowCosts[] = { 4, 4, 8 };
@@ -319,7 +317,7 @@ void ArrowCycleMain() {
     }
 
     // D-pad arrow switch: D-Right = next, D-Left = previous
-    if (CVAR_DPAD && IsAimingBow(player)) {
+    if (CVarGetInteger("gEnhancements.PlayerActions.ArrowCycle.DpadArrowSwitch", 0) && IsAimingBow(player)) {
         bool dRight = CHECK_BTN_ANY(input->press.button, BTN_DRIGHT);
         bool dLeft = CHECK_BTN_ANY(input->press.button, BTN_DLEFT);
 
@@ -364,7 +362,7 @@ void RegisterArrowCycle() {
         }
     });
 
-    COND_ID_HOOK(OnActorUpdate, ACTOR_PLAYER, (CVAR || CVAR_DPAD), [](Actor* actor) { ArrowCycleMain(); });
+    COND_ID_HOOK(OnActorUpdate, ACTOR_PLAYER, CVAR, [](Actor* actor) { ArrowCycleMain(); });
 }
 
-static RegisterShipInitFunc initFunc(RegisterArrowCycle, { CVAR_NAME, CVAR_DPAD_NAME });
+static RegisterShipInitFunc initFunc(RegisterArrowCycle, { CVAR_NAME });

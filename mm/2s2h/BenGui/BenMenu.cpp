@@ -1089,7 +1089,12 @@ void BenMenu::AddEnhancements() {
             .DefaultValue(true));
     AddWidget(path, "Dpad Equips", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Dpad.DpadEquips")
-        .Options(CheckboxOptions().Tooltip("Allows you to equip items to your D-pad."));
+        .PreFunc([](WidgetInfo& info) {
+            if (mBenMenu->disabledMap.at(DISABLE_FOR_QUICKBAR_ON).active)
+                info.activeDisables.push_back(DISABLE_FOR_QUICKBAR_ON);
+        })
+        .Options(CheckboxOptions().Tooltip("Allows you to equip items to your D-pad. "
+                                           "Cannot be used together with BotW-Style QuickBar."));
     AddWidget(path, "Unequip Items", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Equipment.ItemUnequip")
         .Options(CheckboxOptions().Tooltip("In the pause menu, press the same C-button or D-pad button an item is "
@@ -1131,6 +1136,26 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "When the Great Fairy's Sword is held, pressing B attacks with it instead of drawing "
             "your equipped sword. The sword can still be put away with A as normal."));
+    AddWidget(path, "BotW-Style QuickBar", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Equipment.QuickBar")
+        .PreFunc([](WidgetInfo& info) {
+            if (mBenMenu->disabledMap.at(DISABLE_FOR_DPAD_EQUIPS_ON).active)
+                info.activeDisables.push_back(DISABLE_FOR_DPAD_EQUIPS_ON);
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Enables a BotW-style quick-switch system. Tap D-pad to recall the last-used item in "
+            "that category. Hold D-pad to open a QuickBar and select with the right stick. "
+            "Cannot be used together with Dpad Equips."));
+    AddWidget(path, "  Auto-Play Songs", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Equipment.QuickBar.AutoPlaySongs")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_DPAD_EQUIPS_ON).active ||
+                            !CVarGetInteger("gEnhancements.Equipment.QuickBar", 0);
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "When enabled, selecting a song from the QuickBar will play it automatically. "
+            "When disabled, selecting a song will only set it as the last-used song.")
+            .DefaultValue(true));
 
     path.column = SECTION_COLUMN_2;
     AddWidget(path, "Modes", WIDGET_SEPARATOR_TEXT);
@@ -2229,6 +2254,16 @@ void BenMenu::InitElement() {
                return !CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0);
            },
             "Modern Z-Targeting is Disabled" } },
+        { DISABLE_FOR_QUICKBAR_ON,
+          { [](disabledInfo& info) -> bool {
+               return CVarGetInteger("gEnhancements.Equipment.QuickBar", 0) != 0;
+           },
+            "BotW-Style QuickBar is Enabled (uses D-pad)" } },
+        { DISABLE_FOR_DPAD_EQUIPS_ON,
+          { [](disabledInfo& info) -> bool {
+               return CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0) != 0;
+           },
+            "Dpad Equips is Enabled (uses D-pad)" } },
     };
 }
 

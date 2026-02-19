@@ -23,6 +23,7 @@
 #include "Enhancements/Trackers/ItemTracker/ItemTracker.h"
 #include "Enhancements/Trackers/ItemTracker/ItemTrackerSettings.h"
 #include "Enhancements/Trackers/DisplayOverlay.h"
+#include "QuickBarOverlay.h"
 #include "Enhancements/Trackers/FpsOverlay.h"
 #include "Enhancements/Trackers//TimeSplits/Timesplits.h"
 #include "Enhancements/Trackers/TimeSplits/TimesplitsSettings.h"
@@ -71,6 +72,7 @@ std::shared_ptr<TimesplitsSettingsWindow> mTimesplitsSettingsWindow;
 std::shared_ptr<InputViewer> mInputViewer;
 std::shared_ptr<InputViewerSettingsWindow> mInputViewerSettings;
 std::shared_ptr<BenModalWindow> mModalWindow;
+std::shared_ptr<QuickBarOverlayWindow> mQuickBarOverlayWindow;
 
 UIWidgets::Colors GetMenuThemeColor() {
     return mBenMenu->GetMenuThemeColor();
@@ -195,6 +197,10 @@ void SetupGuiElements() {
     mModalWindow = std::make_shared<BenModalWindow>("gWindows.ModalWindow", "Modal Window");
     gui->AddGuiWindow(mModalWindow);
     mModalWindow->Show();
+
+    mQuickBarOverlayWindow = std::make_shared<QuickBarOverlayWindow>("gWindows.QuickBarOverlay", "QuickBar Overlay");
+    gui->AddGuiWindow(mQuickBarOverlayWindow);
+    mQuickBarOverlayWindow->Show();
 }
 
 void Destroy() {
@@ -227,6 +233,7 @@ void Destroy() {
     mItemTrackerSettingsWindow = nullptr;
     mInputViewer = nullptr;
     mInputViewerSettings = nullptr;
+    mQuickBarOverlayWindow = nullptr;
 }
 
 void RegisterPopup(std::string title, std::string message, std::string button1, std::string button2,

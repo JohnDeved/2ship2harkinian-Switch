@@ -3,6 +3,9 @@ FROM devkitpro/devkita64:latest
 # Update all devkitpro packages to latest versions first
 RUN dkp-pacman -Syu --noconfirm
 
+# Install deko3d GPU library for Nintendo Switch rendering
+RUN dkp-pacman -S --noconfirm switch-deko3d
+
 # Minimal additions for fast local builds.
 RUN apt-get update -y \
     && apt-get install -y --no-install-recommends \

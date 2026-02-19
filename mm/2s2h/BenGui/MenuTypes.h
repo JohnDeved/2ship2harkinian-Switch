@@ -296,6 +296,7 @@ static const std::unordered_map<Ship::WindowBackend, const char*> windowBackends
     { Ship::WindowBackend::FAST3D_DXGI_DX11, "DirectX" },
     { Ship::WindowBackend::FAST3D_SDL_OPENGL, "OpenGL" },
     { Ship::WindowBackend::FAST3D_SDL_METAL, "Metal" },
+    { Ship::WindowBackend::FAST3D_DEKO3D, "deko3d" },
 };
 
 struct MenuInit {

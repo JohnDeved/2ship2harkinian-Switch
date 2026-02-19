@@ -292,7 +292,8 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU|Clang|AppleClang")
 		# "$<$<BOOL:${BUILD_CROWD_CONTROL}>:ENABLE_CROWD_CONTROL>"
 		"_CONSOLE;"
 		"_CRT_SECURE_NO_WARNINGS;"
-		"ENABLE_OPENGL;"
+		"$<$<NOT:$<STREQUAL:${CMAKE_SYSTEM_NAME},NintendoSwitch>>:ENABLE_OPENGL>;"
+		"$<$<STREQUAL:${CMAKE_SYSTEM_NAME},NintendoSwitch>:ENABLE_DEKO3D>;"
 		"UNICODE;"
 		"_UNICODE;"
         SPDLOG_ACTIVE_LEVEL=${SPDLOG_MIN_CUTOFF}
@@ -569,7 +570,7 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
 	set(ADDITIONAL_LIBRARY_DEPENDENCIES
         "libultraship;"
         SDL2::SDL2
-        -lglad
+        -ldeko3d
         Threads::Threads
 			Opus::opus
 			OpusFile::opusfile

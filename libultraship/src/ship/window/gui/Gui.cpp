@@ -329,6 +329,9 @@ void Gui::HandleWindowEvents(WindowEvent event) {
     switch (Context::GetInstance()->GetWindow()->GetWindowBackend()) {
         case WindowBackend::FAST3D_SDL_OPENGL:
         case WindowBackend::FAST3D_SDL_METAL:
+#ifdef ENABLE_DEKO3D
+        case WindowBackend::FAST3D_DEKO3D:
+#endif
             ImGui_ImplSDL2_ProcessEvent(static_cast<const SDL_Event*>(event.Sdl.Event));
 #ifdef __SWITCH__
             {

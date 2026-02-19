@@ -676,7 +676,7 @@ if(UAM_EXECUTABLE)
     )
     add_dependencies(${PROJECT_NAME} deko3d_shaders)
 else()
-    message(WARNING "uam shader compiler not found — deko3d shaders will not be compiled")
+    message(FATAL_ERROR "uam shader compiler not found — deko3d shaders cannot be compiled; Switch build is invalid")
 endif()
 
 nx_generate_nacp(2s2h.nacp

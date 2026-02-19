@@ -74,6 +74,7 @@ _packages/
 
 build/
 nxlink-last.log
+_external/
 
 dist/switch/2ship.nro
 .ccache/

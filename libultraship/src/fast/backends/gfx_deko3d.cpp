@@ -16,6 +16,7 @@
 #include "fast/interpreter.h"
 #include "ship/config/ConsoleVariable.h"
 #include "ship/port/switch/SwitchImpl.h"
+#include <spdlog/spdlog.h>
 
 namespace Fast {
 
@@ -171,52 +172,102 @@ void GfxRenderingAPIDeko3d::InitShaders() {
     // will operate without shaders and draw calls will be no-ops until shaders
     // are provided.
 
-    FILE* vsFile = fopen("romfs:/shaders/fast3d_vs.dksh", "rb");
-    FILE* fsFile = fopen("romfs:/shaders/fast3d_fs.dksh", "rb");
+    struct DkshHeader {
+        uint32_t magic;
+        uint32_t header_sz;
+        uint32_t control_sz;
+        uint32_t code_sz;
+        uint32_t programs_off;
+        uint32_t num_programs;
+    };
+    static constexpr uint32_t kDkshMagic = 0x48534B44U; // "DKSH"
 
-    if (vsFile && fsFile) {
-        // Read vertex shader
-        fseek(vsFile, 0, SEEK_END);
-        long vsSize = ftell(vsFile);
-        fseek(vsFile, 0, SEEK_SET);
-
-        // Read fragment shader
-        fseek(fsFile, 0, SEEK_END);
-        long fsSize = ftell(fsFile);
-        fseek(fsFile, 0, SEEK_SET);
-
-        if (vsSize > 0 && fsSize > 0) {
-            // Align code offsets to DK_SHADER_CODE_ALIGNMENT
-            uint32_t vsCodeOff = DK_SHADER_CODE_UNUSABLE_SIZE;
-            uint32_t vsAligned = (vsSize + DK_SHADER_CODE_ALIGNMENT - 1) & ~(DK_SHADER_CODE_ALIGNMENT - 1);
-            uint32_t fsCodeOff = vsCodeOff + vsAligned;
-
-            // Read control blocks into temp buffers
-            std::vector<uint8_t> vsData(vsSize);
-            std::vector<uint8_t> fsData(fsSize);
-            fread(vsData.data(), 1, vsSize, vsFile);
-            fread(fsData.data(), 1, fsSize, fsFile);
-
-            // Copy shader code into code memory
-            uint8_t* codeBase = (uint8_t*)mCodeMem.getCpuAddr();
-            memcpy(codeBase + vsCodeOff, vsData.data(), vsSize);
-            memcpy(codeBase + fsCodeOff, fsData.data(), fsSize);
-
-            // Initialize shader objects using the C++ wrapper
-            dk::ShaderMaker{ mCodeMem, vsCodeOff }
-                .setControl(vsData.data())
-                .initialize(mVertexShader);
-
-            dk::ShaderMaker{ mCodeMem, fsCodeOff }
-                .setControl(fsData.data())
-                .initialize(mFragmentShader);
-
-            mShadersLoaded = true;
+    auto loadShader = [&](const char* path, dk::Shader& outShader, uint32_t& codeOffset) -> bool {
+        FILE* file = fopen(path, "rb");
+        if (!file) {
+            SPDLOG_ERROR("deko3d failed to open shader {}", path);
+            fprintf(stderr, "[deko3d] Failed to open shader: %s\n", path);
+            return false;
         }
-    }
 
-    if (vsFile) fclose(vsFile);
-    if (fsFile) fclose(fsFile);
+        DkshHeader header{};
+        if (fread(&header, 1, sizeof(header), file) != sizeof(header)) {
+            SPDLOG_ERROR("deko3d failed to read DKSH header {}", path);
+            fprintf(stderr, "[deko3d] Failed to read DKSH header: %s\n", path);
+            fclose(file);
+            return false;
+        }
+        if (header.magic != kDkshMagic || header.control_sz < sizeof(DkshHeader) || header.code_sz == 0) {
+            SPDLOG_ERROR("deko3d invalid DKSH header {}", path);
+            fprintf(stderr, "[deko3d] Invalid DKSH header in shader: %s\n", path);
+            fclose(file);
+            return false;
+        }
+        if ((header.control_sz % DK_SHADER_CODE_ALIGNMENT) != 0 || (header.code_sz % DK_SHADER_CODE_ALIGNMENT) != 0) {
+            SPDLOG_ERROR("deko3d DKSH alignment error {}", path);
+            fprintf(stderr, "[deko3d] DKSH alignment error in shader: %s\n", path);
+            fclose(file);
+            return false;
+        }
+
+        if (fseek(file, 0, SEEK_SET) != 0) {
+            SPDLOG_ERROR("deko3d failed to seek shader {}", path);
+            fprintf(stderr, "[deko3d] Failed to seek shader file: %s\n", path);
+            fclose(file);
+            return false;
+        }
+
+        std::vector<uint8_t> controlSection(header.control_sz);
+        if (fread(controlSection.data(), 1, controlSection.size(), file) != controlSection.size()) {
+            SPDLOG_ERROR("deko3d failed to read DKSH control section {}", path);
+            fprintf(stderr, "[deko3d] Failed to read DKSH control section: %s\n", path);
+            fclose(file);
+            return false;
+        }
+
+        codeOffset = (codeOffset + DK_SHADER_CODE_ALIGNMENT - 1) & ~(DK_SHADER_CODE_ALIGNMENT - 1);
+        const uint32_t codeMemLimit = CODE_POOL_SIZE - DK_SHADER_CODE_UNUSABLE_SIZE;
+        if (codeOffset > codeMemLimit || header.code_sz > (codeMemLimit - codeOffset)) {
+            SPDLOG_ERROR("deko3d shader code pool overflow while loading {}", path);
+            fprintf(stderr, "[deko3d] Shader code pool overflow while loading: %s\n", path);
+            fclose(file);
+            return false;
+        }
+
+        uint8_t* codeBase = static_cast<uint8_t*>(mCodeMem.getCpuAddr());
+        if (fread(codeBase + codeOffset, 1, header.code_sz, file) != header.code_sz) {
+            SPDLOG_ERROR("deko3d failed to read DKSH code section {}", path);
+            fprintf(stderr, "[deko3d] Failed to read DKSH code section: %s\n", path);
+            fclose(file);
+            return false;
+        }
+
+        fclose(file);
+
+        dk::ShaderMaker{ mCodeMem, codeOffset }
+            .setControl(controlSection.data())
+            .initialize(outShader);
+        if (!outShader.isValid()) {
+            SPDLOG_ERROR("deko3d failed to initialize shader object {}", path);
+            fprintf(stderr, "[deko3d] Failed to initialize shader object: %s\n", path);
+            return false;
+        }
+
+        codeOffset += header.code_sz;
+        return true;
+    };
+
+    uint32_t codeOffset = DK_SHADER_CODE_UNUSABLE_SIZE;
+    bool vertexLoaded = loadShader("romfs:/shaders/fast3d_vs.dksh", mVertexShader, codeOffset);
+    bool fragmentLoaded = loadShader("romfs:/shaders/fast3d_fs.dksh", mFragmentShader, codeOffset);
+    mShadersLoaded = vertexLoaded && fragmentLoaded;
+    if (!mShadersLoaded) {
+        SPDLOG_ERROR("deko3d shader load failed (vertex={}, fragment={})", vertexLoaded, fragmentLoaded);
+        fprintf(stderr, "[deko3d] Required DKSH shaders missing/invalid (vertex=%d, fragment=%d); rendering disabled.\n",
+                vertexLoaded ? 1 : 0, fragmentLoaded ? 1 : 0);
+    } else {
+        SPDLOG_INFO("deko3d shaders loaded successfully");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -224,9 +275,13 @@ void GfxRenderingAPIDeko3d::InitShaders() {
 // ---------------------------------------------------------------------------
 
 void GfxRenderingAPIDeko3d::Init() {
+    SPDLOG_INFO("deko3d init begin");
     InitDevice();
+    SPDLOG_INFO("deko3d device initialized");
     InitSwapchain();
+    SPDLOG_INFO("deko3d swapchain initialized ({}x{})", mSwapchainWidth, mSwapchainHeight);
     InitDescriptorPools();
+    SPDLOG_INFO("deko3d descriptor pools initialized");
 
     // VBO memory pool (CPU-writable, GPU-readable)
     mVboMem = dk::MemBlockMaker{ mDevice, VBO_POOL_SIZE }
@@ -246,6 +301,7 @@ void GfxRenderingAPIDeko3d::Init() {
     mCmdBuf.addMemory(mCmdBufMem, 0, CMDBUF_SIZE);
 
     InitShaders();
+    SPDLOG_INFO("deko3d shader init finished");
 
     // Set up initial rasterizer state: no culling, depth clamp enabled
     dk::RasterizerState rasterState;
@@ -280,8 +336,13 @@ void GfxRenderingAPIDeko3d::Init() {
     FlushCommands();
     mQueue.waitIdle();
 
-    // Reserve slot 0 for the default screen framebuffer
+    // Reserve slot 0 for the default screen framebuffer metadata.
     mFrameBuffers.resize(1);
+    mFrameBuffers[0] = {};
+    mFrameBuffers[0].width = mSwapchainWidth;
+    mFrameBuffers[0].height = mSwapchainHeight;
+    mFrameBuffers[0].has_depth_buffer = true;
+    mFrameBuffers[0].invertY = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -289,6 +350,16 @@ void GfxRenderingAPIDeko3d::Init() {
 // ---------------------------------------------------------------------------
 
 void GfxRenderingAPIDeko3d::StartFrame() {
+    static bool loggedStartFrame = false;
+    if (!loggedStartFrame) {
+        SPDLOG_INFO("deko3d entering first StartFrame");
+        loggedStartFrame = true;
+    }
+    if (mQueue.isInErrorState()) {
+        SPDLOG_ERROR("deko3d queue entered error state before StartFrame");
+        return;
+    }
+
     // Skip wait on first frame: fence has not been signaled yet.
     if (mFrameCount > 0) {
         // Wait for previous frame's GPU work to complete via fence
@@ -315,6 +386,11 @@ void GfxRenderingAPIDeko3d::StartFrame() {
 }
 
 void GfxRenderingAPIDeko3d::EndFrame() {
+    if (mQueue.isInErrorState()) {
+        SPDLOG_ERROR("deko3d queue entered error state before EndFrame");
+        return;
+    }
+
     // Signal fence to allow per-frame pipelining instead of full GPU stall
     mCmdBuf.signalFence(mFrameFence, true);
     FlushCommands();
@@ -349,13 +425,21 @@ void GfxRenderingAPIDeko3d::FlushCommands() {
 }
 
 void GfxRenderingAPIDeko3d::BindCurrentFramebuffer() {
-    if (mCurrentFrameBuffer == 0 && mCurrentSwapImage >= 0) {
+    if (mCurrentFrameBuffer == 0) {
+        if (mCurrentSwapImage < 0 || mCurrentSwapImage >= static_cast<int>(NUM_FRAMEBUFFERS)) {
+            SPDLOG_ERROR("deko3d invalid swap image slot {} while binding default framebuffer", mCurrentSwapImage);
+            return;
+        }
+
         dk::ImageView colorTarget{ mSwapchainImages[mCurrentSwapImage] };
         dk::ImageView depthTarget{ mSwapchainDepthImage };
         const DkImageView* colorTargetPtr = &colorTarget;
         mCmdBuf.bindRenderTargets(
             dk::detail::ArrayProxy<DkImageView const* const>(1, &colorTargetPtr), &depthTarget);
-    } else if (mCurrentFrameBuffer < mFrameBuffers.size()) {
+        return;
+    }
+
+    if (mCurrentFrameBuffer < mFrameBuffers.size()) {
         auto& fb = mFrameBuffers[mCurrentFrameBuffer];
         dk::ImageView colorTarget{ fb.colorImage };
         const DkImageView* colorTargetPtr = &colorTarget;
@@ -392,6 +476,8 @@ ShaderProgram* GfxRenderingAPIDeko3d::CreateAndLoadNewShader(uint64_t shader_id0
 
     CCFeatures cc_features;
     gfx_cc_get_features(shader_id0, shader_id1, &cc_features);
+    // The deko3d uber-shader exposes aInput1..aInput4 only.
+    const uint8_t numInputs = std::min<uint8_t>(cc_features.numInputs, 4);
 
     auto& prg = mShaderProgramPool[std::make_pair(shader_id0, shader_id1)];
 
@@ -429,13 +515,13 @@ ShaderProgram* GfxRenderingAPIDeko3d::CreateAndLoadNewShader(uint64_t shader_id0
         numFloats += 4;
     }
 
-    for (int i = 0; i < cc_features.numInputs; i++) {
+    for (int i = 0; i < numInputs; i++) {
         prg.attribSizes[cnt] = cc_features.opt_alpha ? 4 : 3; // aInput (vec3/vec4)
         ++cnt;
         numFloats += cc_features.opt_alpha ? 4 : 3;
     }
 
-    prg.numInputs = cc_features.numInputs;
+    prg.numInputs = numInputs;
     prg.usedTextures[0] = cc_features.usedTextures[0];
     prg.usedTextures[1] = cc_features.usedTextures[1];
     prg.usedTextures[2] = cc_features.used_masks[0];
@@ -657,11 +743,40 @@ void GfxRenderingAPIDeko3d::SetViewport(int x, int y, int width, int height) {
 }
 
 void GfxRenderingAPIDeko3d::SetScissor(int x, int y, int width, int height) {
+    int rtWidth = 0;
+    int rtHeight = 0;
+    if (mCurrentFrameBuffer == 0) {
+        rtWidth = static_cast<int>(mSwapchainWidth);
+        rtHeight = static_cast<int>(mSwapchainHeight);
+    } else if (mCurrentFrameBuffer < mFrameBuffers.size()) {
+        rtWidth = static_cast<int>(mFrameBuffers[mCurrentFrameBuffer].width);
+        rtHeight = static_cast<int>(mFrameBuffers[mCurrentFrameBuffer].height);
+    }
+
+    const int64_t x0Raw = static_cast<int64_t>(x);
+    const int64_t y0Raw = static_cast<int64_t>(y);
+    const int64_t x1Raw = x0Raw + std::max<int64_t>(0, static_cast<int64_t>(width));
+    const int64_t y1Raw = y0Raw + std::max<int64_t>(0, static_cast<int64_t>(height));
+
+    int64_t x0 = std::max<int64_t>(0, x0Raw);
+    int64_t y0 = std::max<int64_t>(0, y0Raw);
+    int64_t x1 = std::max<int64_t>(x0, x1Raw);
+    int64_t y1 = std::max<int64_t>(y0, y1Raw);
+
+    if (rtWidth > 0) {
+        x0 = std::min<int64_t>(x0, rtWidth);
+        x1 = std::min<int64_t>(x1, rtWidth);
+    }
+    if (rtHeight > 0) {
+        y0 = std::min<int64_t>(y0, rtHeight);
+        y1 = std::min<int64_t>(y1, rtHeight);
+    }
+
     DkScissor sc;
-    sc.x = (uint32_t)x;
-    sc.y = (uint32_t)y;
-    sc.width = (uint32_t)width;
-    sc.height = (uint32_t)height;
+    sc.x = static_cast<uint32_t>(x0);
+    sc.y = static_cast<uint32_t>(y0);
+    sc.width = static_cast<uint32_t>(x1 - x0);
+    sc.height = static_cast<uint32_t>(y1 - y0);
     mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(1, &sc));
 }
 
@@ -981,6 +1096,10 @@ void GfxRenderingAPIDeko3d::UpdateFramebufferParameters(int fb_id, uint32_t widt
     fb.invertY = opengl_invertY;
 
     if (fb_id == 0) {
+        fb.width = mSwapchainWidth;
+        fb.height = mSwapchainHeight;
+        fb.has_depth_buffer = true;
+        fb.invertY = false;
         return; // Swapchain framebuffer managed by InitSwapchain
     }
 
@@ -1268,10 +1387,6 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
     if (!drawData || drawData->CmdListsCount == 0 || !mShadersLoaded) {
         return;
     }
-
-    // Save current state
-    size_t savedVboOffset = mVboOffset;
-    size_t savedUniformOffset = mUniformOffset;
 
     // Set up orthographic projection via viewport
     float L = drawData->DisplayPos.x;

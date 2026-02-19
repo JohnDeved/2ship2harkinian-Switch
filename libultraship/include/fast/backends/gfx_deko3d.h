@@ -11,6 +11,7 @@
 #include <vector>
 #include <unordered_map>
 #include <cstdint>
+#include <stack>
 
 namespace Fast {
 
@@ -115,7 +116,6 @@ static constexpr unsigned NUM_FRAMEBUFFERS = 2;
 static constexpr unsigned CMDBUF_SIZE = 1024 * 1024;         // 1 MB command buffer
 static constexpr unsigned VBO_POOL_SIZE = 4 * 1024 * 1024;   // 4 MB vertex pool
 static constexpr unsigned UNIFORM_POOL_SIZE = 256 * 1024;    // 256 KB uniform pool
-static constexpr unsigned IMAGE_POOL_SIZE = 64 * 1024 * 1024; // 64 MB texture pool
 static constexpr unsigned CODE_POOL_SIZE = 512 * 1024;       // 512 KB shader code pool
 static constexpr unsigned MAX_DESCRIPTORS = 4096;             // Max image/sampler descriptors
 
@@ -235,6 +235,10 @@ class GfxRenderingAPIDeko3d final : public GfxRenderingAPI {
     uint32_t mNextTextureId = 1;
     uint32_t mCurrentTextureIds[SHADER_MAX_TEXTURES]{};
     uint8_t mCurrentTile = 0;
+    std::stack<uint32_t> mFreeDescriptorIndices; // Recycled descriptor pool indices
+
+    // Per-frame fence for GPU/CPU sync without waitIdle on EndFrame
+    dk::Fence mFrameFence;
 
     // VBO state
     size_t mVboOffset = 0;

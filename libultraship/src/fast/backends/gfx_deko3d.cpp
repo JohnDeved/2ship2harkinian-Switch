@@ -271,11 +271,12 @@ void GfxRenderingAPIDeko3d::Init() {
     if (mShadersLoaded) {
         const DkShader* shaders[] = { &mVertexShader, &mFragmentShader };
         mCmdBuf.bindShaders(DkStageFlag_Vertex | DkStageFlag_Fragment,
-                            dk::detail::ArrayProxy<DkShader const* const>(shaders, 2));
+                            dk::detail::ArrayProxy<DkShader const* const>(2, shaders));
     }
 
-    // Submit initial state commands
+    // Submit initial state commands and wait for them to complete
     FlushCommands();
+    mQueue.waitIdle();
 
     // Reserve slot 0 for the default screen framebuffer
     mFrameBuffers.resize(1);
@@ -287,6 +288,9 @@ void GfxRenderingAPIDeko3d::Init() {
 
 void GfxRenderingAPIDeko3d::StartFrame() {
     mFrameCount++;
+
+    // Wait for previous frame's GPU work to complete via fence
+    mFrameFence.wait();
 
     mVboOffset = 0;
     mUniformOffset = 0;
@@ -302,11 +306,13 @@ void GfxRenderingAPIDeko3d::StartFrame() {
     if (mShadersLoaded) {
         const DkShader* shaders[] = { &mVertexShader, &mFragmentShader };
         mCmdBuf.bindShaders(DkStageFlag_Vertex | DkStageFlag_Fragment,
-                            dk::detail::ArrayProxy<DkShader const* const>(shaders, 2));
+                            dk::detail::ArrayProxy<DkShader const* const>(2, shaders));
     }
 }
 
 void GfxRenderingAPIDeko3d::EndFrame() {
+    // Signal fence to allow per-frame pipelining instead of full GPU stall
+    mCmdBuf.signalFence(mFrameFence, true);
     FlushCommands();
 
     mQueue.presentImage(mSwapchain, mCurrentSwapImage);
@@ -333,7 +339,6 @@ void GfxRenderingAPIDeko3d::OnResize() {
 void GfxRenderingAPIDeko3d::FlushCommands() {
     DkCmdList cmdList = mCmdBuf.finishList();
     mQueue.submitCommands(cmdList);
-    mQueue.waitIdle();
 
     mCmdBuf.clear();
     mCmdBuf.addMemory(mCmdBufMem, 0, CMDBUF_SIZE);
@@ -345,7 +350,7 @@ void GfxRenderingAPIDeko3d::BindCurrentFramebuffer() {
         dk::ImageView depthTarget{ mSwapchainDepthImage };
         const DkImageView* colorTargetPtr = &colorTarget;
         mCmdBuf.bindRenderTargets(
-            dk::detail::ArrayProxy<DkImageView const* const>(&colorTargetPtr, 1), &depthTarget);
+            dk::detail::ArrayProxy<DkImageView const* const>(1, &colorTargetPtr), &depthTarget);
     } else if (mCurrentFrameBuffer < mFrameBuffers.size()) {
         auto& fb = mFrameBuffers[mCurrentFrameBuffer];
         dk::ImageView colorTarget{ fb.colorImage };
@@ -353,10 +358,10 @@ void GfxRenderingAPIDeko3d::BindCurrentFramebuffer() {
         if (fb.has_depth_buffer) {
             dk::ImageView depthTarget{ fb.depthImage };
             mCmdBuf.bindRenderTargets(
-                dk::detail::ArrayProxy<DkImageView const* const>(&colorTargetPtr, 1), &depthTarget);
+                dk::detail::ArrayProxy<DkImageView const* const>(1, &colorTargetPtr), &depthTarget);
         } else {
             mCmdBuf.bindRenderTargets(
-                dk::detail::ArrayProxy<DkImageView const* const>(&colorTargetPtr, 1));
+                dk::detail::ArrayProxy<DkImageView const* const>(1, &colorTargetPtr));
         }
     }
 }
@@ -480,7 +485,14 @@ uint32_t GfxRenderingAPIDeko3d::NewTexture() {
     }
     mTextures[id] = {};
     mTextures[id].valid = false;
-    mTextures[id].descriptorIdx = id;
+
+    // Recycle a descriptor index from the free list, or allocate a new one
+    if (!mFreeDescriptorIndices.empty()) {
+        mTextures[id].descriptorIdx = mFreeDescriptorIndices.top();
+        mFreeDescriptorIndices.pop();
+    } else {
+        mTextures[id].descriptorIdx = id;
+    }
     return id;
 }
 
@@ -545,10 +557,13 @@ void GfxRenderingAPIDeko3d::UploadTexture(const uint8_t* rgba32_buf, uint32_t wi
 
     // Flush the upload and wait for it to complete so the staging buffer can be freed
     FlushCommands();
+    mQueue.waitIdle();
 }
 
 void GfxRenderingAPIDeko3d::DeleteTexture(uint32_t texId) {
-    if (texId < mTextures.size()) {
+    if (texId < mTextures.size() && mTextures[texId].valid) {
+        // Recycle the descriptor index for future textures
+        mFreeDescriptorIndices.push(mTextures[texId].descriptorIdx);
         mTextures[texId].mem = nullptr;
         mTextures[texId].valid = false;
     }
@@ -605,7 +620,7 @@ void GfxRenderingAPIDeko3d::SetViewport(int x, int y, int width, int height) {
     vp.height = (float)height;
     vp.near = 0.0f;
     vp.far = 1.0f;
-    mCmdBuf.setViewports(0, dk::detail::ArrayProxy<DkViewport const>(&vp, 1));
+    mCmdBuf.setViewports(0, dk::detail::ArrayProxy<DkViewport const>(1, &vp));
 }
 
 void GfxRenderingAPIDeko3d::SetScissor(int x, int y, int width, int height) {
@@ -614,7 +629,7 @@ void GfxRenderingAPIDeko3d::SetScissor(int x, int y, int width, int height) {
     sc.y = (uint32_t)y;
     sc.width = (uint32_t)width;
     sc.height = (uint32_t)height;
-    mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(&sc, 1));
+    mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(1, &sc));
 }
 
 void GfxRenderingAPIDeko3d::SetUseAlpha(bool use_alpha) {
@@ -629,7 +644,7 @@ void GfxRenderingAPIDeko3d::SetUseAlpha(bool use_alpha) {
         blendState.setFactors(DkBlendFactor_SrcAlpha, DkBlendFactor_InvSrcAlpha,
                               DkBlendFactor_SrcAlpha, DkBlendFactor_InvSrcAlpha);
         blendState.setOps(DkBlendOp_Add, DkBlendOp_Add);
-        mCmdBuf.bindBlendStates(0, dk::detail::ArrayProxy<DkBlendState const>(&blendState, 1));
+        mCmdBuf.bindBlendStates(0, dk::detail::ArrayProxy<DkBlendState const>(1, &blendState));
     }
 }
 
@@ -678,6 +693,7 @@ void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, s
     // --- Upload uniforms ---
     if (mUniformOffset + sizeof(UberUniforms) > UNIFORM_POOL_SIZE) {
         FlushCommands();
+        mQueue.waitIdle();
         mUniformOffset = 0;
     }
 
@@ -753,14 +769,14 @@ void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, s
     mUniformOffset = (mUniformOffset + DK_UNIFORM_BUF_ALIGNMENT - 1) & ~(DK_UNIFORM_BUF_ALIGNMENT - 1);
 
     // --- Bind textures ---
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < SHADER_MAX_TEXTURES; i++) {
         if (mCurrentShaderProgram->usedTextures[i]) {
             uint32_t texId = mCurrentTextureIds[i];
             if (texId < mTextures.size() && mTextures[texId].valid) {
                 uint32_t descIdx = mTextures[texId].descriptorIdx;
                 DkResHandle handle = dkMakeTextureHandle(descIdx, descIdx);
                 mCmdBuf.bindTextures(DkStage_Fragment, i,
-                                     dk::detail::ArrayProxy<DkResHandle const>(&handle, 1));
+                                     dk::detail::ArrayProxy<DkResHandle const>(1, &handle));
             }
         }
     }
@@ -769,6 +785,7 @@ void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, s
     size_t uploadBytes = sizeof(float) * buf_vbo_len;
     if (mVboOffset + uploadBytes > VBO_POOL_SIZE) {
         FlushCommands();
+        mQueue.waitIdle();
         mVboOffset = 0;
     }
 
@@ -779,7 +796,7 @@ void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, s
     DkBufExtents vboBuf;
     vboBuf.addr = mVboMem.getGpuAddr() + mVboOffset;
     vboBuf.size = (uint32_t)uploadBytes;
-    mCmdBuf.bindVtxBuffers(0, dk::detail::ArrayProxy<DkBufExtents const>(&vboBuf, 1));
+    mCmdBuf.bindVtxBuffers(0, dk::detail::ArrayProxy<DkBufExtents const>(1, &vboBuf));
 
     // Configure vertex attribute state
     ConfigureVertexState();
@@ -892,8 +909,8 @@ void GfxRenderingAPIDeko3d::ConfigureVertexState() {
     memset(&bufState, 0, sizeof(bufState));
     bufState.stride = stride;
 
-    mCmdBuf.bindVtxAttribState(dk::detail::ArrayProxy<DkVtxAttribState const>(attribs, NUM_SHADER_ATTRIBS));
-    mCmdBuf.bindVtxBufferState(dk::detail::ArrayProxy<DkVtxBufferState const>(&bufState, 1));
+    mCmdBuf.bindVtxAttribState(dk::detail::ArrayProxy<DkVtxAttribState const>(NUM_SHADER_ATTRIBS, attribs));
+    mCmdBuf.bindVtxBufferState(dk::detail::ArrayProxy<DkVtxBufferState const>(1, &bufState));
 }
 
 // ---------------------------------------------------------------------------
@@ -1076,6 +1093,7 @@ void GfxRenderingAPIDeko3d::ReadFramebufferToCPU(int fbId, uint32_t width, uint3
     DkCopyBuf dstBuf = { staging.getGpuAddr(), 0, 0 };
     mCmdBuf.copyImageToBuffer(view, srcRect, dstBuf);
     FlushCommands();
+    mQueue.waitIdle();
 
     // Convert RGBA8 to RGBA16 (5551 format)
     const uint8_t* src = (const uint8_t*)staging.getCpuAddr();
@@ -1140,6 +1158,7 @@ GfxRenderingAPIDeko3d::GetPixelDepth(int fb_id, const std::set<std::pair<float, 
     DkCopyBuf dstBuf = { staging.getGpuAddr(), 0, 0 };
     mCmdBuf.copyImageToBuffer(view, srcRect, dstBuf);
     FlushCommands();
+    mQueue.waitIdle();
 
     const uint32_t* depthData = (const uint32_t*)staging.getCpuAddr();
 
@@ -1181,7 +1200,7 @@ void GfxRenderingAPIDeko3d::SelectTextureFb(int fbId) {
         uint32_t descIdx = mFrameBuffers[fbId].descriptorIdx;
         DkResHandle handle = dkMakeTextureHandle(descIdx, descIdx);
         mCmdBuf.bindTextures(DkStage_Fragment, 0,
-                             dk::detail::ArrayProxy<DkResHandle const>(&handle, 1));
+                             dk::detail::ArrayProxy<DkResHandle const>(1, &handle));
     }
 }
 
@@ -1243,7 +1262,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
     blendState.setFactors(DkBlendFactor_SrcAlpha, DkBlendFactor_InvSrcAlpha,
                           DkBlendFactor_One, DkBlendFactor_InvSrcAlpha);
     blendState.setOps(DkBlendOp_Add, DkBlendOp_Add);
-    mCmdBuf.bindBlendStates(0, dk::detail::ArrayProxy<DkBlendState const>(&blendState, 1));
+    mCmdBuf.bindBlendStates(0, dk::detail::ArrayProxy<DkBlendState const>(1, &blendState));
 
     // Set viewport to cover the full display
     DkViewport vp;
@@ -1253,7 +1272,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
     vp.height = B - T;
     vp.near = 0.0f;
     vp.far = 1.0f;
-    mCmdBuf.setViewports(0, dk::detail::ArrayProxy<DkViewport const>(&vp, 1));
+    mCmdBuf.setViewports(0, dk::detail::ArrayProxy<DkViewport const>(1, &vp));
 
     for (int n = 0; n < drawData->CmdListsCount; n++) {
         const ImDrawList* cmd_list = drawData->CmdLists[n];
@@ -1280,6 +1299,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
 
         if (mVboOffset + uploadBytes > VBO_POOL_SIZE) {
             FlushCommands();
+            mQueue.waitIdle();
             mVboOffset = 0;
         }
 
@@ -1315,7 +1335,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
         DkBufExtents vboBuf;
         vboBuf.addr = mVboMem.getGpuAddr() + mVboOffset;
         vboBuf.size = (uint32_t)uploadBytes;
-        mCmdBuf.bindVtxBuffers(0, dk::detail::ArrayProxy<DkBufExtents const>(&vboBuf, 1));
+        mCmdBuf.bindVtxBuffers(0, dk::detail::ArrayProxy<DkBufExtents const>(1, &vboBuf));
 
         // Set up vertex attributes: pos(4) + texcoord(2) + color(4)
         DkVtxAttribState attribs[3];
@@ -1371,8 +1391,8 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
         memset(&bufState, 0, sizeof(bufState));
         bufState.stride = (uint32_t)(floatsPerVert * sizeof(float));
 
-        mCmdBuf.bindVtxAttribState(dk::detail::ArrayProxy<DkVtxAttribState const>(fullAttribs, 10));
-        mCmdBuf.bindVtxBufferState(dk::detail::ArrayProxy<DkVtxBufferState const>(&bufState, 1));
+        mCmdBuf.bindVtxAttribState(dk::detail::ArrayProxy<DkVtxAttribState const>(10, fullAttribs));
+        mCmdBuf.bindVtxBufferState(dk::detail::ArrayProxy<DkVtxBufferState const>(1, &bufState));
 
         // Set up uniforms for ImGui rendering:
         // Use SHADER_TEXEL0 * SHADER_INPUT_1 formula
@@ -1380,6 +1400,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
         // c[0][1] = {SHADER_TEXEL0A, SHADER_0, SHADER_INPUT_1, SHADER_0} → texel0.a * input1.a
         if (mUniformOffset + sizeof(UberUniforms) > UNIFORM_POOL_SIZE) {
             FlushCommands();
+            mQueue.waitIdle();
             mUniformOffset = 0;
         }
 
@@ -1435,7 +1456,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
             sc.y = (uint32_t)clip_min.y;
             sc.width = (uint32_t)(clip_max.x - clip_min.x);
             sc.height = (uint32_t)(clip_max.y - clip_min.y);
-            mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(&sc, 1));
+            mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(1, &sc));
 
             // Bind texture
             uint32_t texId = (uint32_t)(intptr_t)pcmd->GetTexID();
@@ -1443,7 +1464,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
                 uint32_t descIdx = mTextures[texId].descriptorIdx;
                 DkResHandle handle = dkMakeTextureHandle(descIdx, descIdx);
                 mCmdBuf.bindTextures(DkStage_Fragment, 0,
-                                     dk::detail::ArrayProxy<DkResHandle const>(&handle, 1));
+                                     dk::detail::ArrayProxy<DkResHandle const>(1, &handle));
             }
 
             // Draw indexed triangles using vertex offset
@@ -1468,7 +1489,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
     fullSc.y = 0;
     fullSc.width = fbW;
     fullSc.height = fbH;
-    mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(&fullSc, 1));
+    mCmdBuf.setScissors(0, dk::detail::ArrayProxy<DkScissor const>(1, &fullSc));
 }
 
 } // namespace Fast

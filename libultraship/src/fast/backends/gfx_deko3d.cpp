@@ -30,7 +30,7 @@ static DkWrapMode gfx_cm_to_dk(uint32_t val) {
         case G_TX_MIRROR | G_TX_WRAP:
             return DkWrapMode_MirroredRepeat;
         case G_TX_MIRROR | G_TX_CLAMP:
-            return DkWrapMode_ClampToEdge; // deko3d lacks MirrorClampToEdge; approximate
+            return DkWrapMode_MirrorClampToEdge;
         case G_TX_NOMIRROR | G_TX_WRAP:
             return DkWrapMode_Repeat;
     }
@@ -45,7 +45,6 @@ GfxRenderingAPIDeko3d::GfxRenderingAPIDeko3d() {
 }
 
 GfxRenderingAPIDeko3d::~GfxRenderingAPIDeko3d() {
-    // Ensure GPU is idle before tearing down
     if (mQueue) {
         mQueue.waitIdle();
     }
@@ -60,11 +59,10 @@ const char* GfxRenderingAPIDeko3d::GetName() {
 }
 
 int GfxRenderingAPIDeko3d::GetMaxTextureSize() {
-    return 4096; // Maxwell SM 5.3 on Tegra X1 supports up to 16384, but 4096 matches the N64 pipeline expectation
+    return 4096;
 }
 
 GfxClipParameters GfxRenderingAPIDeko3d::GetClipParameters() {
-    // deko3d uses 0-to-1 depth range (like Vulkan/D3D)
     return { true, mFrameBuffers.size() > mCurrentFrameBuffer ? mFrameBuffers[mCurrentFrameBuffer].invertY : false };
 }
 
@@ -73,25 +71,21 @@ GfxClipParameters GfxRenderingAPIDeko3d::GetClipParameters() {
 // ---------------------------------------------------------------------------
 
 void GfxRenderingAPIDeko3d::InitDevice() {
-    // Create GPU device
     mDevice = dk::DeviceMaker{}.create();
 
-    // Create rendering queue on the default GPU
-    mQueue = dk::QueueMaker{mDevice}
+    mQueue = dk::QueueMaker{ mDevice }
                  .setFlags(DkQueueFlags_Graphics)
                  .create();
 }
 
 void GfxRenderingAPIDeko3d::InitSwapchain() {
-    // Get the default NWindow for the application
     mNWindow = nwindowGetDefault();
 
     int dispW = 1920, dispH = 1080;
     Ship::Switch::GetDisplaySize(&dispW, &dispH);
 
-    // Create memory for swapchain images
     dk::ImageLayout fbLayout;
-    dk::ImageLayoutMaker{mDevice}
+    dk::ImageLayoutMaker{ mDevice }
         .setFlags(DkImageFlags_UsageRender | DkImageFlags_UsagePresent | DkImageFlags_HwCompression)
         .setFormat(DkImageFormat_RGBA8_Unorm)
         .setDimensions(dispW, dispH)
@@ -99,11 +93,9 @@ void GfxRenderingAPIDeko3d::InitSwapchain() {
 
     uint64_t fbSize = fbLayout.getSize();
     uint64_t fbAlign = fbLayout.getAlignment();
-
-    // Round up to alignment
     uint64_t totalFbSize = (fbSize + fbAlign - 1) & ~(fbAlign - 1);
 
-    mSwapchainMem = dk::MemBlockMaker{mDevice, totalFbSize * NUM_FRAMEBUFFERS}
+    mSwapchainMem = dk::MemBlockMaker{ mDevice, (uint32_t)(totalFbSize * NUM_FRAMEBUFFERS) }
                         .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
                         .create();
 
@@ -113,9 +105,9 @@ void GfxRenderingAPIDeko3d::InitSwapchain() {
         swapImages[i] = &mSwapchainImages[i];
     }
 
-    // Create depth buffer for the swapchain
+    // Depth buffer for the swapchain
     dk::ImageLayout depthLayout;
-    dk::ImageLayoutMaker{mDevice}
+    dk::ImageLayoutMaker{ mDevice }
         .setFlags(DkImageFlags_UsageRender | DkImageFlags_HwCompression)
         .setFormat(DkImageFormat_Z24S8)
         .setDimensions(dispW, dispH)
@@ -124,62 +116,167 @@ void GfxRenderingAPIDeko3d::InitSwapchain() {
     uint64_t depthSize = depthLayout.getSize();
     uint64_t depthAlign = depthLayout.getAlignment();
     uint64_t totalDepthSize = (depthSize + depthAlign - 1) & ~(depthAlign - 1);
+    totalDepthSize = (totalDepthSize + DK_MEMBLOCK_ALIGNMENT - 1) & ~(DK_MEMBLOCK_ALIGNMENT - 1);
 
-    mSwapchainDepthMem = dk::MemBlockMaker{mDevice, totalDepthSize}
+    mSwapchainDepthMem = dk::MemBlockMaker{ mDevice, (uint32_t)totalDepthSize }
                              .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
                              .create();
     mSwapchainDepthImage.initialize(depthLayout, mSwapchainDepthMem, 0);
 
-    // Create the swapchain
-    mSwapchain = dk::SwapchainMaker{mDevice, mNWindow, swapImages, NUM_FRAMEBUFFERS}.create();
+    mSwapchain = dk::SwapchainMaker{ mDevice, mNWindow, swapImages, NUM_FRAMEBUFFERS }.create();
+}
+
+void GfxRenderingAPIDeko3d::InitDescriptorPools() {
+    // Create memory for image and sampler descriptor pools
+    uint32_t imageDescSize = MAX_DESCRIPTORS * sizeof(DkImageDescriptor);
+    imageDescSize = (imageDescSize + DK_MEMBLOCK_ALIGNMENT - 1) & ~(DK_MEMBLOCK_ALIGNMENT - 1);
+
+    uint32_t samplerDescSize = MAX_DESCRIPTORS * sizeof(DkSamplerDescriptor);
+    samplerDescSize = (samplerDescSize + DK_MEMBLOCK_ALIGNMENT - 1) & ~(DK_MEMBLOCK_ALIGNMENT - 1);
+
+    mImageDescMem = dk::MemBlockMaker{ mDevice, imageDescSize }
+                        .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
+                        .create();
+    mSamplerDescMem = dk::MemBlockMaker{ mDevice, samplerDescSize }
+                          .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
+                          .create();
+
+    mImageDescriptors = (DkImageDescriptor*)mImageDescMem.getCpuAddr();
+    mSamplerDescriptors = (DkSamplerDescriptor*)mSamplerDescMem.getCpuAddr();
+
+    // Zero-initialize
+    memset(mImageDescriptors, 0, imageDescSize);
+    memset(mSamplerDescriptors, 0, samplerDescSize);
 }
 
 void GfxRenderingAPIDeko3d::InitShaders() {
-    // Allocate shader code memory
-    mCodeMem = dk::MemBlockMaker{mDevice, CODE_POOL_SIZE}
+    mCodeMem = dk::MemBlockMaker{ mDevice, CODE_POOL_SIZE }
                    .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached | DkMemBlockFlags_Code)
                    .create();
 
-    // Load precompiled uber-shaders from the application's romfs or data directory.
-    // The shaders are compiled at build time by the `uam` tool from GLSL sources.
-    // For now, we initialize the dk::Shader objects; actual DKSH loading happens
-    // when the build system provides the compiled shader binaries.
+    // Load precompiled uber-shaders from romfs.
+    // The shaders are compiled at build time by the `uam` tool from GLSL sources
+    // and placed in romfs as .dksh files.
     //
-    // The vertex and fragment shaders are uber-shaders that handle all N64 color
-    // combiner configurations via uniform-driven branching.
-}
+    // The uber-shader approach: a single vertex + fragment shader pair handles all
+    // N64 color combiner configurations via uniform-driven branching, matching
+    // what the OpenGL backend does with its per-combiner generated shaders.
+    //
+    // File paths: romfs:/shaders/fast3d_vs.dksh and romfs:/shaders/fast3d_fs.dksh
+    //
+    // For the initial integration, shader loading happens here.
+    // If the shader files don't exist yet (build system not wired), the backend
+    // will operate without shaders and draw calls will be no-ops until shaders
+    // are provided.
 
-void GfxRenderingAPIDeko3d::InitSamplers() {
-    // Default samplers are configured per-texture via SetSamplerParameters
+    FILE* vsFile = fopen("romfs:/shaders/fast3d_vs.dksh", "rb");
+    FILE* fsFile = fopen("romfs:/shaders/fast3d_fs.dksh", "rb");
+
+    if (vsFile && fsFile) {
+        // Read vertex shader
+        fseek(vsFile, 0, SEEK_END);
+        long vsSize = ftell(vsFile);
+        fseek(vsFile, 0, SEEK_SET);
+
+        // Read fragment shader
+        fseek(fsFile, 0, SEEK_END);
+        long fsSize = ftell(fsFile);
+        fseek(fsFile, 0, SEEK_SET);
+
+        if (vsSize > 0 && fsSize > 0) {
+            // Align code offsets to DK_SHADER_CODE_ALIGNMENT
+            uint32_t vsCodeOff = DK_SHADER_CODE_UNUSABLE_SIZE;
+            uint32_t vsAligned = (vsSize + DK_SHADER_CODE_ALIGNMENT - 1) & ~(DK_SHADER_CODE_ALIGNMENT - 1);
+            uint32_t fsCodeOff = vsCodeOff + vsAligned;
+
+            // Read control blocks into temp buffers
+            std::vector<uint8_t> vsData(vsSize);
+            std::vector<uint8_t> fsData(fsSize);
+            fread(vsData.data(), 1, vsSize, vsFile);
+            fread(fsData.data(), 1, fsSize, fsFile);
+
+            // Copy shader code into code memory
+            uint8_t* codeBase = (uint8_t*)mCodeMem.getCpuAddr();
+            memcpy(codeBase + vsCodeOff, vsData.data(), vsSize);
+            memcpy(codeBase + fsCodeOff, fsData.data(), fsSize);
+
+            // Initialize shader objects using the C++ wrapper
+            dk::ShaderMaker{ mCodeMem, vsCodeOff }
+                .setControl(vsData.data())
+                .initialize(mVertexShader);
+
+            dk::ShaderMaker{ mCodeMem, fsCodeOff }
+                .setControl(fsData.data())
+                .initialize(mFragmentShader);
+
+            mShadersLoaded = true;
+        }
+    }
+
+    if (vsFile) fclose(vsFile);
+    if (fsFile) fclose(fsFile);
 }
 
 // ---------------------------------------------------------------------------
-// Init (called after window creation)
+// Init
 // ---------------------------------------------------------------------------
 
 void GfxRenderingAPIDeko3d::Init() {
     InitDevice();
     InitSwapchain();
+    InitDescriptorPools();
 
-    // Allocate VBO memory pool (CPU-writable, GPU-readable)
-    mVboMem = dk::MemBlockMaker{mDevice, VBO_POOL_SIZE}
+    // VBO memory pool (CPU-writable, GPU-readable)
+    mVboMem = dk::MemBlockMaker{ mDevice, VBO_POOL_SIZE }
                   .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
                   .create();
 
-    // Allocate uniform memory pool
-    mUniformMem = dk::MemBlockMaker{mDevice, UNIFORM_POOL_SIZE}
+    // Uniform memory pool
+    mUniformMem = dk::MemBlockMaker{ mDevice, UNIFORM_POOL_SIZE }
                       .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
                       .create();
 
-    // Create command buffer
-    mCmdBufMem = dk::MemBlockMaker{mDevice, CMDBUF_SIZE}
+    // Command buffer
+    mCmdBufMem = dk::MemBlockMaker{ mDevice, CMDBUF_SIZE }
                      .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
                      .create();
-    mCmdBuf = dk::CmdBufMaker{mDevice}.create();
+    mCmdBuf = dk::CmdBufMaker{ mDevice }.create();
     mCmdBuf.addMemory(mCmdBufMem, 0, CMDBUF_SIZE);
 
     InitShaders();
-    InitSamplers();
+
+    // Set up initial rasterizer state: no culling, depth clamp enabled
+    dk::RasterizerState rasterState;
+    rasterState.setCullMode(DkFace_None).setDepthClampEnable(true);
+    mCmdBuf.bindRasterizerState(rasterState);
+
+    // Set up initial color state: blending disabled
+    dk::ColorState colorState;
+    mCmdBuf.bindColorState(colorState);
+
+    // Set up initial color write state: write all channels
+    dk::ColorWriteState cwState;
+    mCmdBuf.bindColorWriteState(cwState);
+
+    // Set up initial depth-stencil state
+    DkDepthStencilState dsState;
+    dkDepthStencilStateDefaults(&dsState);
+    dsState.depthTestEnable = false;
+    dsState.depthWriteEnable = false;
+    mCmdBuf.bindDepthStencilState(dsState);
+
+    // Bind descriptor pools so the GPU knows where to find texture/sampler descriptors
+    mCmdBuf.bindImageDescriptorSet(mImageDescMem.getGpuAddr(), MAX_DESCRIPTORS);
+    mCmdBuf.bindSamplerDescriptorSet(mSamplerDescMem.getGpuAddr(), MAX_DESCRIPTORS);
+
+    // Bind shaders if loaded
+    if (mShadersLoaded) {
+        const DkShader* shaders[] = { &mVertexShader, &mFragmentShader };
+        mCmdBuf.bindShaders(DkStageFlag_Vertex | DkStageFlag_Fragment, { shaders, 2 });
+    }
+
+    // Submit initial state commands
+    FlushCommands();
 
     // Reserve slot 0 for the default screen framebuffer
     mFrameBuffers.resize(1);
@@ -192,69 +289,69 @@ void GfxRenderingAPIDeko3d::Init() {
 void GfxRenderingAPIDeko3d::StartFrame() {
     mFrameCount++;
 
-    // Reset per-frame VBO and uniform offsets
     mVboOffset = 0;
     mUniformOffset = 0;
 
     // Acquire next swapchain image
     mCurrentSwapImage = mQueue.acquireImage(mSwapchain);
+
+    // Re-bind descriptor pools each frame (they may have been invalidated)
+    mCmdBuf.bindImageDescriptorSet(mImageDescMem.getGpuAddr(), MAX_DESCRIPTORS);
+    mCmdBuf.bindSamplerDescriptorSet(mSamplerDescMem.getGpuAddr(), MAX_DESCRIPTORS);
+
+    // Re-bind shaders each frame
+    if (mShadersLoaded) {
+        const DkShader* shaders[] = { &mVertexShader, &mFragmentShader };
+        mCmdBuf.bindShaders(DkStageFlag_Vertex | DkStageFlag_Fragment, { shaders, 2 });
+    }
 }
 
 void GfxRenderingAPIDeko3d::EndFrame() {
-    // Submit remaining commands
     FlushCommands();
 
-    // Present the current frame
-    mQueue.submitCommands(nullptr);
     mQueue.presentImage(mSwapchain, mCurrentSwapImage);
 }
 
 void GfxRenderingAPIDeko3d::FinishRender() {
-    // Wait for GPU to finish all pending work
     if (mQueue) {
         mQueue.waitIdle();
     }
 }
 
 void GfxRenderingAPIDeko3d::OnResize() {
-    // On Switch, display size changes between docked (1920x1080) and handheld (1280x720).
-    // The swapchain needs to be recreated.
     if (mQueue) {
         mQueue.waitIdle();
     }
 
-    // Destroy old swapchain
     mSwapchain = nullptr;
     mSwapchainMem = nullptr;
     mSwapchainDepthMem = nullptr;
 
-    // Recreate
     InitSwapchain();
 }
 
 void GfxRenderingAPIDeko3d::FlushCommands() {
     DkCmdList cmdList = mCmdBuf.finishList();
     mQueue.submitCommands(cmdList);
+    mQueue.waitIdle();
 
-    // Reset command buffer for next batch
     mCmdBuf.clear();
     mCmdBuf.addMemory(mCmdBufMem, 0, CMDBUF_SIZE);
 }
 
 void GfxRenderingAPIDeko3d::BindCurrentFramebuffer() {
     if (mCurrentFrameBuffer == 0 && mCurrentSwapImage >= 0) {
-        // Bind swapchain image as render target
-        dk::ImageView colorTarget{mSwapchainImages[mCurrentSwapImage]};
-        dk::ImageView depthTarget{mSwapchainDepthImage};
-        mCmdBuf.bindRenderTargets(&colorTarget, &depthTarget);
+        dk::ImageView colorTarget{ mSwapchainImages[mCurrentSwapImage] };
+        dk::ImageView depthTarget{ mSwapchainDepthImage };
+        mCmdBuf.bindRenderTargets({ &colorTarget }, &depthTarget);
     } else if (mCurrentFrameBuffer < mFrameBuffers.size()) {
         auto& fb = mFrameBuffers[mCurrentFrameBuffer];
-        dk::ImageView colorTarget{fb.colorImage};
+        dk::ImageView colorTarget{ fb.colorImage };
         if (fb.has_depth_buffer) {
-            dk::ImageView depthTarget{fb.depthImage};
-            mCmdBuf.bindRenderTargets(&colorTarget, &depthTarget);
+            dk::ImageView depthTarget{ fb.depthImage };
+            mCmdBuf.bindRenderTargets({ &colorTarget }, &depthTarget);
         } else {
-            mCmdBuf.bindRenderTargets(&colorTarget);
+            mCmdBuf.bindRenderTargets({ &colorTarget });
         }
     }
 }
@@ -264,7 +361,7 @@ void GfxRenderingAPIDeko3d::BindCurrentFramebuffer() {
 // ---------------------------------------------------------------------------
 
 void GfxRenderingAPIDeko3d::UnloadShader(ShaderProgram* old_prg) {
-    // With the uber-shader approach, no per-program GPU resources to unbind
+    // Uber-shader approach: nothing to unbind per program
 }
 
 void GfxRenderingAPIDeko3d::LoadShader(ShaderProgram* new_prg) {
@@ -272,11 +369,6 @@ void GfxRenderingAPIDeko3d::LoadShader(ShaderProgram* new_prg) {
     if (mStats != nullptr) {
         mStats->shaderSwitches++;
     }
-    // Invalidate uniform cache on shader switch
-    mLastUniformTextureIds[0] = UINT32_MAX;
-    mLastUniformTextureIds[1] = UINT32_MAX;
-    mLastUniformTextureVersions[0] = UINT32_MAX;
-    mLastUniformTextureVersions[1] = UINT32_MAX;
 }
 
 ShaderProgram* GfxRenderingAPIDeko3d::CreateAndLoadNewShader(uint64_t shader_id0, uint32_t shader_id1) {
@@ -291,19 +383,19 @@ ShaderProgram* GfxRenderingAPIDeko3d::CreateAndLoadNewShader(uint64_t shader_id0
 
     // Count vertex attributes (same logic as OpenGL backend)
     size_t cnt = 0;
-    prg.attribSizes[cnt] = 4; // aVtxPos
+    prg.attribSizes[cnt] = 4; // aVtxPos (vec4)
     ++cnt;
 
     size_t numFloats = 4;
     for (int i = 0; i < 2; i++) {
         if (cc_features.usedTextures[i]) {
-            prg.attribSizes[cnt] = 2; // aTexCoord
+            prg.attribSizes[cnt] = 2; // aTexCoord (vec2)
             ++cnt;
             numFloats += 2;
 
             for (int j = 0; j < 2; j++) {
                 if (cc_features.clamp[i][j]) {
-                    prg.attribSizes[cnt] = 1; // aTexClamp
+                    prg.attribSizes[cnt] = 1; // aTexClamp (float)
                     ++cnt;
                     numFloats += 1;
                 }
@@ -312,19 +404,19 @@ ShaderProgram* GfxRenderingAPIDeko3d::CreateAndLoadNewShader(uint64_t shader_id0
     }
 
     if (cc_features.opt_fog) {
-        prg.attribSizes[cnt] = 4; // aFog
+        prg.attribSizes[cnt] = 4; // aFog (vec4)
         ++cnt;
         numFloats += 4;
     }
 
     if (cc_features.opt_grayscale) {
-        prg.attribSizes[cnt] = 4; // aGrayscaleColor
+        prg.attribSizes[cnt] = 4; // aGrayscaleColor (vec4)
         ++cnt;
         numFloats += 4;
     }
 
     for (int i = 0; i < cc_features.numInputs; i++) {
-        prg.attribSizes[cnt] = cc_features.opt_alpha ? 4 : 3; // aInput
+        prg.attribSizes[cnt] = cc_features.opt_alpha ? 4 : 3; // aInput (vec3/vec4)
         ++cnt;
         numFloats += cc_features.opt_alpha ? 4 : 3;
     }
@@ -339,7 +431,7 @@ ShaderProgram* GfxRenderingAPIDeko3d::CreateAndLoadNewShader(uint64_t shader_id0
     prg.numFloats = numFloats;
     prg.numAttribs = cnt;
 
-    // Store combiner features for uniform setup
+    // Store combiner features for uniform setup at draw time
     prg.opt_alpha = cc_features.opt_alpha;
     prg.opt_fog = cc_features.opt_fog;
     prg.opt_grayscale = cc_features.opt_grayscale;
@@ -383,6 +475,7 @@ uint32_t GfxRenderingAPIDeko3d::NewTexture() {
     }
     mTextures[id] = {};
     mTextures[id].valid = false;
+    mTextures[id].descriptorIdx = id;
     return id;
 }
 
@@ -403,9 +496,8 @@ void GfxRenderingAPIDeko3d::UploadTexture(const uint8_t* rgba32_buf, uint32_t wi
     auto& tex = mTextures[texId];
     size_t dataSize = width * height * 4;
 
-    // Create image layout
     dk::ImageLayout layout;
-    dk::ImageLayoutMaker{mDevice}
+    dk::ImageLayoutMaker{ mDevice }
         .setFlags(0)
         .setFormat(DkImageFormat_RGBA8_Unorm)
         .setDimensions(width, height)
@@ -414,12 +506,11 @@ void GfxRenderingAPIDeko3d::UploadTexture(const uint8_t* rgba32_buf, uint32_t wi
     uint64_t imgSize = layout.getSize();
     uint64_t imgAlign = layout.getAlignment();
     uint64_t allocSize = (imgSize + imgAlign - 1) & ~(imgAlign - 1);
-    // Round up to page size (DK_MEMBLOCK_ALIGNMENT)
     allocSize = (allocSize + DK_MEMBLOCK_ALIGNMENT - 1) & ~(DK_MEMBLOCK_ALIGNMENT - 1);
 
     // Reallocate if size changed
     if (!tex.valid || tex.width != width || tex.height != height) {
-        tex.mem = dk::MemBlockMaker{mDevice, allocSize}
+        tex.mem = dk::MemBlockMaker{ mDevice, (uint32_t)allocSize }
                       .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
                       .create();
         tex.image.initialize(layout, tex.mem, 0);
@@ -429,20 +520,24 @@ void GfxRenderingAPIDeko3d::UploadTexture(const uint8_t* rgba32_buf, uint32_t wi
         tex.valid = true;
     }
 
-    // Upload texture data via a staging buffer
+    // Upload via staging buffer
     uint64_t stagingSize = (dataSize + DK_MEMBLOCK_ALIGNMENT - 1) & ~(DK_MEMBLOCK_ALIGNMENT - 1);
-    dk::UniqueMemBlock staging = dk::MemBlockMaker{mDevice, stagingSize}
+    dk::UniqueMemBlock staging = dk::MemBlockMaker{ mDevice, (uint32_t)stagingSize }
                                      .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
                                      .create();
     memcpy(staging.getCpuAddr(), rgba32_buf, dataSize);
 
-    // Copy from staging to image
-    dk::ImageView view{tex.image};
-    mCmdBuf.copyBufferToImage({staging.getGpuAddr()}, view,
-                              {0, 0, 0, width, height, 1});
+    dk::ImageView view{ tex.image };
+    mCmdBuf.copyBufferToImage({ staging.getGpuAddr() }, view, { 0, 0, 0, width, height, 1 });
 
-    // Initialize texture descriptor
-    tex.descriptor.initialize(tex.image);
+    // Update image descriptor in the pool
+    dk::ImageView descView{ tex.image };
+    dk::ImageDescriptor imgDesc;
+    imgDesc.initialize(descView);
+    mImageDescriptors[tex.descriptorIdx] = *reinterpret_cast<DkImageDescriptor*>(&imgDesc);
+
+    // Flush the upload and wait for it to complete so the staging buffer can be freed
+    FlushCommands();
 }
 
 void GfxRenderingAPIDeko3d::DeleteTexture(uint32_t texId) {
@@ -465,23 +560,21 @@ void GfxRenderingAPIDeko3d::SetSamplerParameters(int tile, bool linear_filter, u
         tex.uniformsVersion++;
     }
 
-    // Configure sampler descriptor for this tile
-    DkFilter filter =
+    // Determine filter mode
+    DkFilter dkFilter =
         (linear_filter && mCurrentFilterMode == FILTER_LINEAR) ? DkFilter_Linear : DkFilter_Nearest;
     DkWrapMode wrapS = gfx_cm_to_dk(cms);
     DkWrapMode wrapT = gfx_cm_to_dk(cmt);
 
-    // Build sampler descriptor
-    DkSampler sampler;
-    DkSamplerDescriptor desc;
-    memset(&sampler, 0, sizeof(sampler));
-    // We configure the sampler descriptor directly
-    // deko3d sampler API: use DkSamplerDescriptor::initialize with a DkSampler
-    // For now, store the parameters for binding at draw time
-    mSamplerDescriptors[tile] = {};
-    (void)filter;
-    (void)wrapS;
-    (void)wrapT;
+    // Build a proper DkSampler and initialize its descriptor
+    dk::Sampler sampler;
+    sampler.setFilter(dkFilter, dkFilter, DkMipFilter_None);
+    sampler.setWrapMode(wrapS, wrapT, DkWrapMode_ClampToEdge);
+
+    // Store in the sampler descriptor pool at the same index as the texture
+    dk::SamplerDescriptor desc;
+    desc.initialize(sampler);
+    mSamplerDescriptors[tex.descriptorIdx] = *reinterpret_cast<DkSamplerDescriptor*>(&desc);
 }
 
 // ---------------------------------------------------------------------------
@@ -498,29 +591,38 @@ void GfxRenderingAPIDeko3d::SetZmodeDecal(bool zmode_decal) {
 }
 
 void GfxRenderingAPIDeko3d::SetViewport(int x, int y, int width, int height) {
-    mCmdBuf.setViewports(0, {{(float)x, (float)y, (float)width, (float)height, 0.0f, 1.0f}});
+    DkViewport vp;
+    vp.x = (float)x;
+    vp.y = (float)y;
+    vp.width = (float)width;
+    vp.height = (float)height;
+    vp.near = 0.0f;
+    vp.far = 1.0f;
+    mCmdBuf.setViewports(0, { vp });
 }
 
 void GfxRenderingAPIDeko3d::SetScissor(int x, int y, int width, int height) {
-    mCmdBuf.setScissors(0, {{(uint32_t)x, (uint32_t)y, (uint32_t)width, (uint32_t)height}});
+    DkScissor sc;
+    sc.x = (uint32_t)x;
+    sc.y = (uint32_t)y;
+    sc.width = (uint32_t)width;
+    sc.height = (uint32_t)height;
+    mCmdBuf.setScissors(0, { sc });
 }
 
 void GfxRenderingAPIDeko3d::SetUseAlpha(bool use_alpha) {
+    dk::ColorState colorState;
     if (use_alpha) {
-        // Enable alpha blending: srcAlpha, 1-srcAlpha
-        mCmdBuf.bindBlendStates(0, {{
-            DkBlendOp_Add,
-            DkBlendFactor_SrcAlpha,
-            DkBlendFactor_InvSrcAlpha,
-            DkBlendOp_Add,
-            DkBlendFactor_One,
-            DkBlendFactor_InvSrcAlpha,
-        }});
-        mCmdBuf.setColorWriteMask(0, DkColorMask_RGBA);
-    } else {
-        // Disable blending (default state)
-        mCmdBuf.bindBlendStates(0, {{}});
-        mCmdBuf.setColorWriteMask(0, DkColorMask_RGBA);
+        colorState.setBlendEnable(0, true);
+    }
+    mCmdBuf.bindColorState(colorState);
+
+    if (use_alpha) {
+        dk::BlendState blendState;
+        blendState.setFactors(DkBlendFactor_SrcAlpha, DkBlendFactor_InvSrcAlpha,
+                              DkBlendFactor_SrcAlpha, DkBlendFactor_InvSrcAlpha);
+        blendState.setOps(DkBlendOp_Add, DkBlendOp_Add);
+        mCmdBuf.bindBlendStates(0, { blendState });
     }
 }
 
@@ -529,27 +631,119 @@ void GfxRenderingAPIDeko3d::SetUseAlpha(bool use_alpha) {
 // ---------------------------------------------------------------------------
 
 void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
-    // Update depth state
-    if (mCurrentDepthTest != mLastDepthTest || mCurrentDepthMask != mLastDepthMask) {
+    if (!mShadersLoaded || !mCurrentShaderProgram) {
+        return;
+    }
+
+    // --- Depth/stencil state ---
+    if (mCurrentDepthTest != mLastDepthTest || mCurrentDepthMask != mLastDepthMask ||
+        mCurrentZmodeDecal != mLastZmodeDecal) {
         mLastDepthTest = mCurrentDepthTest;
         mLastDepthMask = mCurrentDepthMask;
+        mLastZmodeDecal = mCurrentZmodeDecal;
+
+        DkDepthStencilState dsState;
+        dkDepthStencilStateDefaults(&dsState);
 
         if (mCurrentDepthTest || mCurrentDepthMask) {
-            DkDepthStencilState dsState;
-            memset(&dsState, 0, sizeof(dsState));
-            // Enable depth test/write as needed
-            mCmdBuf.bindDepthStencilState(dsState);
+            dsState.depthTestEnable = true;
+            dsState.depthWriteEnable = mCurrentDepthMask ? true : false;
+            dsState.depthCompareOp = mCurrentZmodeDecal ? DkCompareOp_Lequal : DkCompareOp_Less;
         } else {
-            DkDepthStencilState dsState;
-            memset(&dsState, 0, sizeof(dsState));
-            mCmdBuf.bindDepthStencilState(dsState);
+            dsState.depthTestEnable = false;
+            dsState.depthWriteEnable = false;
+        }
+
+        mCmdBuf.bindDepthStencilState(dsState);
+
+        // Depth bias for decal mode (polygon offset equivalent)
+        dk::RasterizerState rasterState;
+        rasterState.setCullMode(DkFace_None).setDepthClampEnable(true);
+        if (mCurrentZmodeDecal) {
+            rasterState.setDepthBiasEnableMask(DkPolygonFlag_Fill);
+            mCmdBuf.bindRasterizerState(rasterState);
+            mCmdBuf.setDepthBias(0.0f, 0.0f, -2.0f);
+        } else {
+            rasterState.setDepthBiasEnableMask(0);
+            mCmdBuf.bindRasterizerState(rasterState);
         }
     }
 
-    // Upload vertex data to VBO pool
+    // --- Upload uniforms ---
+    if (mUniformOffset + sizeof(UberUniforms) > UNIFORM_POOL_SIZE) {
+        FlushCommands();
+        mUniformOffset = 0;
+    }
+
+    UberUniforms* uniforms = (UberUniforms*)((uint8_t*)mUniformMem.getCpuAddr() + mUniformOffset);
+    memset(uniforms, 0, sizeof(UberUniforms));
+
+    // Fill combiner control
+    memcpy(uniforms->cc, mCurrentShaderProgram->c, sizeof(uniforms->cc));
+
+    uniforms->useTexture[0] = mCurrentShaderProgram->usedTextures[0] ? 1 : 0;
+    uniforms->useTexture[1] = mCurrentShaderProgram->usedTextures[1] ? 1 : 0;
+    uniforms->useMask[0] = mCurrentShaderProgram->used_masks[0] ? 1 : 0;
+    uniforms->useMask[1] = mCurrentShaderProgram->used_masks[1] ? 1 : 0;
+    uniforms->useBlend[0] = mCurrentShaderProgram->used_blend[0] ? 1 : 0;
+    uniforms->useBlend[1] = mCurrentShaderProgram->used_blend[1] ? 1 : 0;
+    uniforms->optAlpha = mCurrentShaderProgram->opt_alpha ? 1 : 0;
+    uniforms->optFog = mCurrentShaderProgram->opt_fog ? 1 : 0;
+    uniforms->optNoise = mCurrentShaderProgram->opt_noise ? 1 : 0;
+    uniforms->opt2Cyc = mCurrentShaderProgram->opt_2cyc ? 1 : 0;
+    uniforms->optTextureEdge = mCurrentShaderProgram->opt_texture_edge ? 1 : 0;
+    uniforms->optAlphaThreshold = mCurrentShaderProgram->opt_alpha_threshold ? 1 : 0;
+    uniforms->optInvisible = mCurrentShaderProgram->opt_invisible ? 1 : 0;
+    uniforms->optGrayscale = mCurrentShaderProgram->opt_grayscale ? 1 : 0;
+    uniforms->frameCount = mFrameCount;
+    uniforms->noiseScale = mCurrentNoiseScale;
+    uniforms->srgbMode = mSrgbMode ? 1 : 0;
+
+    for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+            uniforms->useClamp[i][j] = mCurrentShaderProgram->clamp[i][j] ? 1 : 0;
+            uniforms->doSingle[i][j] = mCurrentShaderProgram->do_single[i][j] ? 1 : 0;
+            uniforms->doMultiply[i][j] = mCurrentShaderProgram->do_multiply[i][j] ? 1 : 0;
+            uniforms->doMix[i][j] = mCurrentShaderProgram->do_mix[i][j] ? 1 : 0;
+        }
+        uniforms->colorAlphaSame[i] = mCurrentShaderProgram->color_alpha_same[i] ? 1 : 0;
+    }
+
+    // Texture info
+    for (int i = 0; i < 2; i++) {
+        if (mCurrentShaderProgram->usedTextures[i]) {
+            uint32_t texId = mCurrentTextureIds[i];
+            if (texId < mTextures.size() && mTextures[texId].valid) {
+                uniforms->textureWidth[i] = mTextures[texId].width;
+                uniforms->textureHeight[i] = mTextures[texId].height;
+                uniforms->textureFiltering[i] = mTextures[texId].filtering;
+            }
+        }
+    }
+
+    // Bind uniform buffer
+    DkGpuAddr uboAddr = mUniformMem.getGpuAddr() + mUniformOffset;
+    mCmdBuf.bindUniformBuffer(DkStage_Fragment, 0, uboAddr, sizeof(UberUniforms));
+    mCmdBuf.bindUniformBuffer(DkStage_Vertex, 0, uboAddr, sizeof(UberUniforms));
+
+    mUniformOffset += sizeof(UberUniforms);
+    mUniformOffset = (mUniformOffset + DK_UNIFORM_BUF_ALIGNMENT - 1) & ~(DK_UNIFORM_BUF_ALIGNMENT - 1);
+
+    // --- Bind textures ---
+    for (int i = 0; i < 2; i++) {
+        if (mCurrentShaderProgram->usedTextures[i]) {
+            uint32_t texId = mCurrentTextureIds[i];
+            if (texId < mTextures.size() && mTextures[texId].valid) {
+                uint32_t descIdx = mTextures[texId].descriptorIdx;
+                DkResHandle handle = dkMakeTextureHandle(descIdx, descIdx);
+                mCmdBuf.bindTextures(DkStage_Fragment, i, { handle });
+            }
+        }
+    }
+
+    // --- Upload vertex data ---
     size_t uploadBytes = sizeof(float) * buf_vbo_len;
     if (mVboOffset + uploadBytes > VBO_POOL_SIZE) {
-        // Flush and reset if pool is full
         FlushCommands();
         mVboOffset = 0;
     }
@@ -558,18 +752,19 @@ void GfxRenderingAPIDeko3d::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, s
     memcpy(vboDst, buf_vbo, uploadBytes);
 
     // Bind vertex buffer
-    DkBufExtents vboBuf = {mVboMem.getGpuAddr() + mVboOffset, uploadBytes};
-    mCmdBuf.bindVtxBuffers(0, {vboBuf});
+    DkBufExtents vboBuf;
+    vboBuf.addr = mVboMem.getGpuAddr() + mVboOffset;
+    vboBuf.size = (uint32_t)uploadBytes;
+    mCmdBuf.bindVtxBuffers(0, { vboBuf });
 
-    // Configure vertex attribute state based on current shader program
+    // Configure vertex attribute state
     ConfigureVertexState();
 
     // Draw
     mCmdBuf.draw(DkPrimitive_Triangles, 3 * buf_vbo_num_tris, 1, 0, 0);
 
     mVboOffset += uploadBytes;
-    // Align offset to 256 bytes for next upload
-    mVboOffset = (mVboOffset + 255) & ~255;
+    mVboOffset = (mVboOffset + 255) & ~(size_t)255;
 }
 
 void GfxRenderingAPIDeko3d::ConfigureVertexState() {
@@ -577,8 +772,6 @@ void GfxRenderingAPIDeko3d::ConfigureVertexState() {
         return;
     }
 
-    // Build vertex attribute state from the current shader program's attribute list.
-    // Each attribute is a contiguous block of floats in the vertex buffer.
     uint32_t offset = 0;
     uint32_t stride = mCurrentShaderProgram->numFloats * sizeof(float);
 
@@ -610,10 +803,8 @@ void GfxRenderingAPIDeko3d::ConfigureVertexState() {
         offset += mCurrentShaderProgram->attribSizes[i] * sizeof(float);
     }
 
-    mCmdBuf.bindVtxAttribState(
-        {attribs, mCurrentShaderProgram->numAttribs});
-    mCmdBuf.bindVtxBufferState(
-        {&bufState, 1});
+    mCmdBuf.bindVtxAttribState({ attribs, mCurrentShaderProgram->numAttribs });
+    mCmdBuf.bindVtxBufferState({ &bufState, 1 });
 }
 
 // ---------------------------------------------------------------------------
@@ -651,8 +842,7 @@ void GfxRenderingAPIDeko3d::UpdateFramebufferParameters(int fb_id, uint32_t widt
     fb.invertY = opengl_invertY;
 
     if (fb_id == 0) {
-        // Swapchain framebuffer — managed by InitSwapchain
-        return;
+        return; // Swapchain framebuffer managed by InitSwapchain
     }
 
     if (!render_target || width == 0 || height == 0) {
@@ -662,7 +852,7 @@ void GfxRenderingAPIDeko3d::UpdateFramebufferParameters(int fb_id, uint32_t widt
     if (sizeChanged || depthChanged) {
         // (Re)create color image
         dk::ImageLayout colorLayout;
-        dk::ImageLayoutMaker{mDevice}
+        dk::ImageLayoutMaker{ mDevice }
             .setFlags(DkImageFlags_UsageRender | DkImageFlags_HwCompression)
             .setFormat(DkImageFormat_RGBA8_Unorm)
             .setDimensions(width, height)
@@ -673,14 +863,32 @@ void GfxRenderingAPIDeko3d::UpdateFramebufferParameters(int fb_id, uint32_t widt
         uint64_t allocColor = (colorSize + colorAlign - 1) & ~(colorAlign - 1);
         allocColor = (allocColor + DK_MEMBLOCK_ALIGNMENT - 1) & ~(DK_MEMBLOCK_ALIGNMENT - 1);
 
-        fb.colorMem = dk::MemBlockMaker{mDevice, allocColor}
+        fb.colorMem = dk::MemBlockMaker{ mDevice, (uint32_t)allocColor }
                           .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
                           .create();
         fb.colorImage.initialize(colorLayout, fb.colorMem, 0);
 
+        // Also create an image descriptor for the framebuffer so it can be used as a texture
+        uint32_t fbDescIdx = MAX_DESCRIPTORS / 2 + fb_id; // Use second half of descriptor pool for FBs
+        if (fbDescIdx < MAX_DESCRIPTORS) {
+            dk::ImageView descView{ fb.colorImage };
+            dk::ImageDescriptor imgDesc;
+            imgDesc.initialize(descView);
+            mImageDescriptors[fbDescIdx] = *reinterpret_cast<DkImageDescriptor*>(&imgDesc);
+            fb.descriptorIdx = fbDescIdx;
+
+            // Create a default sampler for the FB texture (linear filtering, clamp to edge)
+            dk::Sampler sampler;
+            sampler.setFilter(DkFilter_Linear, DkFilter_Linear, DkMipFilter_None);
+            sampler.setWrapMode(DkWrapMode_ClampToEdge, DkWrapMode_ClampToEdge, DkWrapMode_ClampToEdge);
+            dk::SamplerDescriptor sampDesc;
+            sampDesc.initialize(sampler);
+            mSamplerDescriptors[fbDescIdx] = *reinterpret_cast<DkSamplerDescriptor*>(&sampDesc);
+        }
+
         if (has_depth_buffer) {
             dk::ImageLayout depthLayout;
-            dk::ImageLayoutMaker{mDevice}
+            dk::ImageLayoutMaker{ mDevice }
                 .setFlags(DkImageFlags_UsageRender | DkImageFlags_HwCompression)
                 .setFormat(DkImageFormat_Z24S8)
                 .setDimensions(width, height)
@@ -691,7 +899,7 @@ void GfxRenderingAPIDeko3d::UpdateFramebufferParameters(int fb_id, uint32_t widt
             uint64_t allocDepth = (depthSize + depthAlign - 1) & ~(depthAlign - 1);
             allocDepth = (allocDepth + DK_MEMBLOCK_ALIGNMENT - 1) & ~(DK_MEMBLOCK_ALIGNMENT - 1);
 
-            fb.depthMem = dk::MemBlockMaker{mDevice, allocDepth}
+            fb.depthMem = dk::MemBlockMaker{ mDevice, (uint32_t)allocDepth }
                               .setFlags(DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image)
                               .create();
             fb.depthImage.initialize(depthLayout, fb.depthMem, 0);
@@ -716,7 +924,6 @@ void GfxRenderingAPIDeko3d::ClearFramebuffer(bool color, bool depth) {
 
 void GfxRenderingAPIDeko3d::CopyFramebuffer(int fbDstId, int fbSrcId, int srcX0, int srcY0, int srcX1, int srcY1,
                                             int dstX0, int dstY0, int dstX1, int dstY1) {
-    // deko3d image-to-image copy
     dk::Image* srcImg = nullptr;
     dk::Image* dstImg = nullptr;
 
@@ -733,17 +940,28 @@ void GfxRenderingAPIDeko3d::CopyFramebuffer(int fbDstId, int fbSrcId, int srcX0,
     }
 
     if (srcImg && dstImg) {
-        dk::ImageView srcView{*srcImg};
-        dk::ImageView dstView{*dstImg};
-        mCmdBuf.copyImage(srcView, {(uint32_t)srcX0, (uint32_t)srcY0, 0},
-                          dstView, {(uint32_t)dstX0, (uint32_t)dstY0, 0},
-                          {(uint32_t)(srcX1 - srcX0), (uint32_t)(srcY1 - srcY0), 1});
+        dk::ImageView srcView{ *srcImg };
+        dk::ImageView dstView{ *dstImg };
+
+        uint32_t srcW = (uint32_t)(srcX1 - srcX0);
+        uint32_t srcH = (uint32_t)(srcY1 - srcY0);
+        uint32_t dstW = (uint32_t)(dstX1 - dstX0);
+        uint32_t dstH = (uint32_t)(dstY1 - dstY0);
+
+        if (srcW == dstW && srcH == dstH) {
+            // Same-size copy
+            mCmdBuf.copyImage(srcView, { (uint32_t)srcX0, (uint32_t)srcY0, 0 },
+                              dstView, { (uint32_t)dstX0, (uint32_t)dstY0, 0 },
+                              { srcW, srcH, 1 });
+        } else {
+            // Scaled blit
+            mCmdBuf.blitImage(srcView, { (uint32_t)srcX0, (uint32_t)srcY0, 0, srcW, srcH, 1 },
+                              dstView, { (uint32_t)dstX0, (uint32_t)dstY0, 0, dstW, dstH, 1 });
+        }
     }
 }
 
 void GfxRenderingAPIDeko3d::ReadFramebufferToCPU(int fbId, uint32_t width, uint32_t height, uint16_t* rgba16Buf) {
-    // Read-back from GPU to CPU - used for depth buffer reads.
-    // This is a slow operation requiring a GPU sync.
     dk::Image* srcImg = nullptr;
 
     if (fbId == 0 && mCurrentSwapImage >= 0) {
@@ -756,17 +974,16 @@ void GfxRenderingAPIDeko3d::ReadFramebufferToCPU(int fbId, uint32_t width, uint3
         return;
     }
 
-    size_t dataSize = width * height * 4; // RGBA8
+    size_t dataSize = width * height * 4;
     uint64_t stagingSize = (dataSize + DK_MEMBLOCK_ALIGNMENT - 1) & ~(DK_MEMBLOCK_ALIGNMENT - 1);
 
-    dk::UniqueMemBlock staging = dk::MemBlockMaker{mDevice, stagingSize}
+    dk::UniqueMemBlock staging = dk::MemBlockMaker{ mDevice, (uint32_t)stagingSize }
                                      .setFlags(DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached)
                                      .create();
 
-    dk::ImageView view{*srcImg};
-    mCmdBuf.copyImageToBuffer(view, {0, 0, 0, width, height, 1}, {staging.getGpuAddr()});
+    dk::ImageView view{ *srcImg };
+    mCmdBuf.copyImageToBuffer(view, { 0, 0, 0, width, height, 1 }, { staging.getGpuAddr() });
     FlushCommands();
-    mQueue.waitIdle();
 
     // Convert RGBA8 to RGBA16 (5551 format)
     const uint8_t* src = (const uint8_t*)staging.getCpuAddr();
@@ -780,17 +997,19 @@ void GfxRenderingAPIDeko3d::ReadFramebufferToCPU(int fbId, uint32_t width, uint3
 }
 
 void GfxRenderingAPIDeko3d::ResolveMSAAColorBuffer(int fbIdTarget, int fbIdSrc) {
-    // MSAA not implemented in initial deko3d backend
-    (void)fbIdTarget;
-    (void)fbIdSrc;
+    if ((size_t)fbIdSrc < mFrameBuffers.size() && (size_t)fbIdTarget < mFrameBuffers.size()) {
+        dk::ImageView srcView{ mFrameBuffers[fbIdSrc].colorImage };
+        dk::ImageView dstView{ mFrameBuffers[fbIdTarget].colorImage };
+        mCmdBuf.resolveImage(srcView, dstView);
+    }
 }
 
 std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
 GfxRenderingAPIDeko3d::GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) {
     std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> result;
 
-    // For pixel depth queries, we need to read back the depth buffer.
-    // This is an expensive operation; return 0 for now as a placeholder.
+    // Depth readback: would require reading the depth buffer to CPU.
+    // For now return 0 for all coordinates.
     for (const auto& coord : coordinates) {
         result[coord] = 0;
     }
@@ -798,7 +1017,6 @@ GfxRenderingAPIDeko3d::GetPixelDepth(int fb_id, const std::set<std::pair<float, 
 }
 
 void* GfxRenderingAPIDeko3d::GetFramebufferTextureId(int fbId) {
-    // Return an opaque pointer that ImGui can use as a texture ID
     if (fbId == 0 && mCurrentSwapImage >= 0) {
         return (void*)(intptr_t)(&mSwapchainImages[mCurrentSwapImage]);
     }
@@ -809,9 +1027,15 @@ void* GfxRenderingAPIDeko3d::GetFramebufferTextureId(int fbId) {
 }
 
 void GfxRenderingAPIDeko3d::SelectTextureFb(int fbId) {
-    // Bind a framebuffer's color image as a texture source for subsequent draws
-    // This is used for post-processing effects
-    (void)fbId;
+    // Bind a framebuffer's color image as a texture source.
+    // Insert a barrier to ensure prior rendering to the FB is complete before sampling.
+    mCmdBuf.barrier(DkBarrier_Fragments, DkInvalidateFlags_Image);
+
+    if ((size_t)fbId < mFrameBuffers.size() && mFrameBuffers[fbId].descriptorIdx > 0) {
+        uint32_t descIdx = mFrameBuffers[fbId].descriptorIdx;
+        DkResHandle handle = dkMakeTextureHandle(descIdx, descIdx);
+        mCmdBuf.bindTextures(DkStage_Fragment, 0, { handle });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -831,7 +1055,6 @@ void GfxRenderingAPIDeko3d::SetSrgbMode() {
 }
 
 ImTextureID GfxRenderingAPIDeko3d::GetTextureById(int id) {
-    // Return an ImTextureID for the given internal texture ID
     if ((uint32_t)id < mTextures.size() && mTextures[id].valid) {
         return (ImTextureID)(intptr_t)id;
     }

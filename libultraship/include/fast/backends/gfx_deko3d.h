@@ -48,6 +48,7 @@ struct FramebufferDk {
     dk::Image depthImage;
     dk::UniqueMemBlock colorMem;
     dk::UniqueMemBlock depthMem;
+    uint32_t descriptorIdx = 0; // Index into the image/sampler descriptor pool
 };
 
 // Uniforms layout for the uber-shader (must match GLSL layout)
@@ -93,11 +94,12 @@ struct HashPairShaderIds {
 
 // Constants
 static constexpr unsigned NUM_FRAMEBUFFERS = 2;
-static constexpr unsigned CMDBUF_SIZE = 1024 * 1024;    // 1 MB command buffer
-static constexpr unsigned VBO_POOL_SIZE = 4 * 1024 * 1024; // 4 MB vertex pool
-static constexpr unsigned UNIFORM_POOL_SIZE = 256 * 1024;   // 256 KB uniform pool
+static constexpr unsigned CMDBUF_SIZE = 1024 * 1024;         // 1 MB command buffer
+static constexpr unsigned VBO_POOL_SIZE = 4 * 1024 * 1024;   // 4 MB vertex pool
+static constexpr unsigned UNIFORM_POOL_SIZE = 256 * 1024;    // 256 KB uniform pool
 static constexpr unsigned IMAGE_POOL_SIZE = 64 * 1024 * 1024; // 64 MB texture pool
-static constexpr unsigned CODE_POOL_SIZE = 512 * 1024;   // 512 KB shader code pool
+static constexpr unsigned CODE_POOL_SIZE = 512 * 1024;       // 512 KB shader code pool
+static constexpr unsigned MAX_DESCRIPTORS = 4096;             // Max image/sampler descriptors
 
 class GfxRenderingAPIDeko3d final : public GfxRenderingAPI {
   public:
@@ -154,13 +156,11 @@ class GfxRenderingAPIDeko3d final : public GfxRenderingAPI {
   private:
     void InitDevice();
     void InitSwapchain();
+    void InitDescriptorPools();
     void InitShaders();
-    void InitSamplers();
     void FlushCommands();
     void BindCurrentFramebuffer();
     void ConfigureVertexState();
-
-    DkSamplerDescriptor MakeSampler(bool linearFilter, uint32_t cms, uint32_t cmt);
 
     // Device and queue
     dk::UniqueDevice mDevice;
@@ -187,29 +187,33 @@ class GfxRenderingAPIDeko3d final : public GfxRenderingAPI {
     // Shaders
     dk::Shader mVertexShader;
     dk::Shader mFragmentShader;
+    bool mShadersLoaded = false;
 
     // Shader programs (combiner configurations)
     std::unordered_map<std::pair<uint64_t, uint32_t>, ShaderProgram, HashPairShaderIds> mShaderProgramPool;
     ShaderProgram* mCurrentShaderProgram = nullptr;
 
+    // Descriptor pools (GPU-visible memory for image/sampler descriptors)
+    dk::UniqueMemBlock mImageDescMem;
+    dk::UniqueMemBlock mSamplerDescMem;
+    DkImageDescriptor* mImageDescriptors = nullptr;
+    DkSamplerDescriptor* mSamplerDescriptors = nullptr;
+
     // Textures
     struct TextureData {
         dk::Image image;
         dk::UniqueMemBlock mem;
-        DkImageDescriptor descriptor;
         uint16_t width;
         uint16_t height;
         uint16_t filtering;
         uint32_t uniformsVersion;
+        uint32_t descriptorIdx;
         bool valid;
     };
     std::vector<TextureData> mTextures;
     uint32_t mNextTextureId = 1;
     uint32_t mCurrentTextureIds[SHADER_MAX_TEXTURES]{};
     uint8_t mCurrentTile = 0;
-
-    // Samplers
-    DkSamplerDescriptor mSamplerDescriptors[SHADER_MAX_TEXTURES]{};
 
     // VBO state
     size_t mVboOffset = 0;
@@ -223,10 +227,6 @@ class GfxRenderingAPIDeko3d final : public GfxRenderingAPI {
     size_t mCurrentFrameBuffer = 0;
     float mCurrentNoiseScale = 0.0f;
     FilteringMode mCurrentFilterMode = FILTER_THREE_POINT;
-
-    // Uniform cache
-    uint32_t mLastUniformTextureIds[2] = { UINT32_MAX, UINT32_MAX };
-    uint32_t mLastUniformTextureVersions[2] = { UINT32_MAX, UINT32_MAX };
 };
 
 } // namespace Fast

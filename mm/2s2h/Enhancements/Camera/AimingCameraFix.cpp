@@ -8,17 +8,14 @@ extern "C" {
 
 #define CVAR_NAME "gEnhancements.Camera.AimingFirstPersonCamera"
 
-// Aim camera modes that use Camera_Subject1 in a non-Z-targeting context.
-// When the player draws their bow/slingshot without a lock-on, the camera
-// snaps to the player's body facing direction. This enhancement makes the
-// aiming camera instead start from the current camera look direction.
-static bool IsAimCameraMode(s16 mode) {
-    return (mode == CAM_MODE_SLINGSHOT) || (mode == CAM_MODE_BOWARROW) || (mode == CAM_MODE_DEKUSHOOT);
-}
-
 void RegisterAimingCameraFix() {
+    // When the camera transitions into an aiming mode (bow/slingshot/Deku nuts),
+    // align the focal actor's rotation to the current camera look direction so
+    // Camera_Subject1 starts from where the player was already looking instead
+    // of snapping to the player's body facing direction.
     COND_HOOK(OnCameraChangeModeFlags, CVarGetInteger(CVAR_NAME, 0), [](Camera* camera) {
-        if (!IsAimCameraMode(camera->mode)) {
+        if (camera->mode != CAM_MODE_SLINGSHOT && camera->mode != CAM_MODE_BOWARROW &&
+            camera->mode != CAM_MODE_DEKUSHOOT) {
             return;
         }
 
@@ -31,18 +28,15 @@ void RegisterAimingCameraFix() {
             return;
         }
 
-        // Align the focal actor's focus rotation with the current camera look
-        // direction. Camera_Subject1 reads focalActor->focus.rot.y and computes
-        // sp7C.yaw = BINANG_ROT180(focus.rot.y) as the target eye yaw. Setting
-        // focus.rot.y = Math_Vec3f_Yaw(eye, at) makes sp7C.yaw equal to the
-        // current camera yaw (from at to eye), so no snapping transition occurs.
+        // Set focus/shape/world yaw to the current camera look direction.
+        // Camera_Subject1 uses BINANG_ROT180(focus.rot.y) as its target eye yaw,
+        // so matching it to the current camera yaw eliminates the snap transition.
+        // shape.rot.y must also match so the aim clamp in Ship_HandleFirstPersonAiming
+        // stays centred on the camera direction rather than the old body facing.
         s16 cameraYaw = Math_Vec3f_Yaw(&camera->eye, &camera->at);
         focalActor->focus.rot.y = cameraYaw;
-        // Also update world.rot.y so that the clamp in Ship_HandleFirstPersonAiming
-        // (focus.rot.y is clamped to ±0x4AAA relative to shape.rot.y) does not
-        // immediately force the aim back toward the original body direction.
-        focalActor->world.rot.y = cameraYaw;
         focalActor->shape.rot.y = cameraYaw;
+        focalActor->world.rot.y = cameraYaw;
     });
 }
 

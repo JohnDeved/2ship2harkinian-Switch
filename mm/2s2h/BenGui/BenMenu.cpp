@@ -1118,6 +1118,11 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.PlayerActions.ArrowCycle")
         .Options(CheckboxOptions().Tooltip(
             "While aiming the bow, use R to cycle between Normal, Fire, Ice and Light arrows."));
+    AddWidget(path, "  D-Pad Arrow Switch", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.PlayerActions.ArrowCycle.DpadArrowSwitch")
+        .Options(
+            CheckboxOptions().Tooltip("While aiming the bow, press D-Right/D-Left to switch to the next or previous "
+                                      "arrow type."));
     AddWidget(path, "Remote Bombchu Control", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.PlayerActions.RemoteBombchu")
         .Options(CheckboxOptions().Tooltip(

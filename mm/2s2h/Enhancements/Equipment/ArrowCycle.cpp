@@ -15,6 +15,8 @@ s32 Player_UpperAction_8(Player* thisx, PlayState* play);
 
 #define CVAR_NAME "gEnhancements.PlayerActions.ArrowCycle"
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
+#define CVAR_DPAD_NAME "gEnhancements.PlayerActions.ArrowCycle.DpadArrowSwitch"
+#define CVAR_DPAD CVarGetInteger(CVAR_DPAD_NAME, 0)
 
 // Magic arrow costs based on z_player.c
 static const s16 sMagicArrowCosts[] = { 4, 4, 8 };
@@ -114,6 +116,26 @@ static s8 GetNextArrowType(s8 currentArrowType) {
         int nextIndex = (currentIndex + offset) % ARRAY_COUNT(sArrowCycleOrder);
         if (HasArrowType(sArrowCycleOrder[nextIndex])) {
             return sArrowCycleOrder[nextIndex];
+        }
+    }
+
+    return ARROW_NORMAL;
+}
+
+static s8 GetPrevArrowType(s8 currentArrowType) {
+    int n = ARRAY_COUNT(sArrowCycleOrder);
+    int currentIndex = 0;
+    for (int i = 0; i < n; i++) {
+        if (sArrowCycleOrder[i] == currentArrowType) {
+            currentIndex = i;
+            break;
+        }
+    }
+
+    for (int offset = 1; offset <= n; offset++) {
+        int prevIndex = (currentIndex - offset + n) % n;
+        if (HasArrowType(sArrowCycleOrder[prevIndex])) {
+            return sArrowCycleOrder[prevIndex];
         }
     }
 
@@ -221,9 +243,7 @@ static void UpdateEquippedBow(PlayState* play, s8 arrowType) {
 }
 
 // Core Arrow Cycling Function
-static void CycleToNextArrow(PlayState* play, Player* player) {
-    s8 nextArrow = GetNextArrowType(player->heldItemAction);
-
+static void CycleArrow(PlayState* play, Player* player, s8 nextArrow) {
     if (player->heldActor != NULL && player->heldActor->id == ACTOR_EN_ARROW) {
         EnArrow* arrow = (EnArrow*)player->heldActor;
 
@@ -237,6 +257,33 @@ static void CycleToNextArrow(PlayState* play, Player* player) {
     Player_InitItemAction(play, player, static_cast<PlayerItemAction>(nextArrow));
     UpdateEquippedBow(play, nextArrow);
     Audio_PlaySfx(NA_SE_PL_CHANGE_ARMS);
+}
+
+static void CycleToNextArrow(PlayState* play, Player* player) {
+    CycleArrow(play, player, GetNextArrowType(player->heldItemAction));
+}
+
+static void CycleToPrevArrow(PlayState* play, Player* player) {
+    CycleArrow(play, player, GetPrevArrowType(player->heldItemAction));
+}
+
+// Returns true if the player is holding a magic bow and magic is not available,
+// playing the error sound if so.
+static bool MagicArrowUnavailable(Player* player) {
+    if (IsHoldingMagicBow(player) && gSaveContext.magicState != MAGIC_STATE_IDLE && player->heldActor == NULL) {
+        Audio_PlaySfx(NA_SE_SY_ERROR);
+        return true;
+    }
+    return false;
+}
+
+static void RestoreMagicIfNeeded(Player* player) {
+    if (player->heldActor != NULL && player->heldActor->id == ACTOR_EN_ARROW) {
+        EnArrow* heldArrow = (EnArrow*)player->heldActor;
+        if (ARROW_IS_MAGICAL(heldArrow->actor.params)) {
+            Magic_Add(gPlayState, sMagicArrowCosts[ARROW_GET_MAGIC_FROM_TYPE(heldArrow->actor.params)]);
+        }
+    }
 }
 
 void ArrowCycleMain() {
@@ -259,24 +306,35 @@ void ArrowCycleMain() {
     }
 
     if (IsAimingBow(player) && CHECK_BTN_ANY(input->press.button, BTN_R)) {
-        if (IsHoldingMagicBow(player) && gSaveContext.magicState != MAGIC_STATE_IDLE && player->heldActor == NULL) {
-            Audio_PlaySfx(NA_SE_SY_ERROR);
+        if (MagicArrowUnavailable(player)) {
             return;
         }
 
-        if (player->heldActor != NULL && player->heldActor->id == ACTOR_EN_ARROW) {
-            EnArrow* heldArrow = (EnArrow*)player->heldActor;
-
-            // If the held arrow itself is magical, then we should "restore" the consumed magic upon cycling
-            if (ARROW_IS_MAGICAL(heldArrow->actor.params)) {
-                Magic_Add(gPlayState, sMagicArrowCosts[ARROW_GET_MAGIC_FROM_TYPE(heldArrow->actor.params)]);
-            }
-        }
-
+        RestoreMagicIfNeeded(player);
         CycleToNextArrow(gPlayState, player);
         // Track that we just cycled for 2 frames to prevent held R input from triggering the shield action when in
         // Z-Target mode as the arrow is respawned (Player_UpperAction_8)
         sJustCycledFrames = 2;
+        return;
+    }
+
+    // D-pad arrow switch: D-Right = next, D-Left = previous
+    if (CVAR_DPAD && IsAimingBow(player)) {
+        bool dRight = CHECK_BTN_ANY(input->press.button, BTN_DRIGHT);
+        bool dLeft = CHECK_BTN_ANY(input->press.button, BTN_DLEFT);
+
+        if (dRight || dLeft) {
+            if (MagicArrowUnavailable(player)) {
+                return;
+            }
+            RestoreMagicIfNeeded(player);
+            if (dRight) {
+                CycleToNextArrow(gPlayState, player);
+            } else {
+                CycleToPrevArrow(gPlayState, player);
+            }
+            sJustCycledFrames = 2;
+        }
     }
 }
 
@@ -306,7 +364,7 @@ void RegisterArrowCycle() {
         }
     });
 
-    COND_ID_HOOK(OnActorUpdate, ACTOR_PLAYER, CVAR, [](Actor* actor) { ArrowCycleMain(); });
+    COND_ID_HOOK(OnActorUpdate, ACTOR_PLAYER, (CVAR || CVAR_DPAD), [](Actor* actor) { ArrowCycleMain(); });
 }
 
-static RegisterShipInitFunc initFunc(RegisterArrowCycle, { CVAR_NAME });
+static RegisterShipInitFunc initFunc(RegisterArrowCycle, { CVAR_NAME, CVAR_DPAD_NAME });

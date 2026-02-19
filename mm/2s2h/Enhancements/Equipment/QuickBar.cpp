@@ -31,10 +31,6 @@ static bool sStickReleased = true;
 static s8 sSavedRightStickX = 0;
 static s8 sSavedRightStickY = 0;
 
-// Saved R_UPDATE_RATE before QuickBar opened (for restoring game speed)
-// Default to 3 (the N64's native 60Hz/3 = 20fps) in case it's read before initialization
-static s32 sSavedUpdateRate = 3;
-
 // Deferred song playback (needs many frames for the ocarina state machine to initialize)
 struct DeferredSong {
     bool pending;
@@ -367,23 +363,27 @@ static int QuestBitToSongId(int questBit) {
     }
 }
 
-// ─── Time-stop control (uses R_UPDATE_RATE for visible slow-motion) ─────────
+// ─── Time-stop control (pauses day/night clock via timeSpeedOffset) ─────────
+
+static s32 sSavedTimeSpeedOffset = 0;
+static bool sTimeStopActive = false;
 
 static void EnterTimeStop() {
     if (gPlayState == nullptr) return;
-    // Save the current game speed divisor so we can restore it later
-    sSavedUpdateRate = R_UPDATE_RATE;
-    if (sSavedUpdateRate <= 0) sSavedUpdateRate = 3;
-    // Double the rate to halve the game speed (visible slow motion)
-    R_UPDATE_RATE = sSavedUpdateRate * 2;
-    // Also stop the day/night clock (same as TimeStop cheat)
-    R_TIME_SPEED = 0;
+    // Don't touch timeSpeedOffset if TimeMovesWhenYouMove is active (it manages its own)
+    if (CVarGetInteger("gModes.TimeMovesWhenYouMove", 0)) return;
+    // Save the current offset and set it to negate R_TIME_SPEED (stops the clock)
+    sSavedTimeSpeedOffset = gSaveContext.save.timeSpeedOffset;
+    gSaveContext.save.timeSpeedOffset = -R_TIME_SPEED;
+    sTimeStopActive = true;
 }
 
 static void ExitTimeStop() {
     if (gPlayState == nullptr) return;
-    // Restore original game speed
-    R_UPDATE_RATE = sSavedUpdateRate;
+    if (!sTimeStopActive) return;
+    // Restore original time speed offset
+    gSaveContext.save.timeSpeedOffset = sSavedTimeSpeedOffset;
+    sTimeStopActive = false;
 }
 
 // ─── Open / close QuickBar ──────────────────────────────────────────────────
@@ -523,12 +523,6 @@ static void QuickBarPreMain() {
         input->cur.stick_y = 0;
         input->rel.stick_x = 0;
         input->rel.stick_y = 0;
-
-        // Enforce slow-motion every frame (game may try to reset R_UPDATE_RATE)
-        if (sSavedUpdateRate > 0) {
-            R_UPDATE_RATE = sSavedUpdateRate * 2;
-        }
-        R_TIME_SPEED = 0;
     } else {
         sSavedRightStickX = 0;
         sSavedRightStickY = 0;

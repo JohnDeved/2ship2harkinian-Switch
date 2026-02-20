@@ -163,6 +163,11 @@ extern "C" int FrameProfiler_IsEnabled(void) {
     return sEnabled.load(std::memory_order_relaxed);
 }
 
+extern "C" void FrameProfiler_KeepAlive(void) {
+    sEnabled.store(1, std::memory_order_relaxed);
+    sDrawCountdown = PROFILE_KEEPALIVE_FRAMES;
+}
+
 // ── GBI Display List Scanner ───────────────────────────────────────────
 // Scan a single linear DL buffer (start to end pointer) counting commands by type.
 // Each Gfx command is 8 bytes (2 × uint32_t). Stops at G_ENDDL or buffer end.

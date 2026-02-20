@@ -36,6 +36,7 @@
 #include "DeveloperTools/DLViewer.h"
 #include "DeveloperTools/MessageViewer.h"
 #include "DeveloperTools/FrameProfiler.h"
+#include "DeveloperTools/Benchmark.h"
 
 namespace BenGui {
 // MARK: - Delegates
@@ -57,6 +58,7 @@ std::shared_ptr<EventLogWindow> mEventLogWindow;
 std::shared_ptr<DLViewerWindow> mDLViewerWindow;
 std::shared_ptr<MessageViewerWindow> mMessageViewerWindow;
 std::shared_ptr<FrameProfilerWindow> mFrameProfilerWindow;
+std::shared_ptr<BenchmarkWindow> mBenchmarkWindow;
 std::shared_ptr<AudioEditor> mAudioEditorWindow;
 std::shared_ptr<BenMenu> mBenMenu;
 std::shared_ptr<Notification::Window> mNotificationWindow;
@@ -152,6 +154,9 @@ void SetupGuiElements() {
         std::make_shared<FrameProfilerWindow>("gWindows.FrameProfiler", "Frame Profiler", ImVec2(550, 400));
     gui->AddGuiWindow(mFrameProfilerWindow);
 
+    mBenchmarkWindow = std::make_shared<BenchmarkWindow>("gWindows.Benchmark", "Benchmark", ImVec2(600, 450));
+    gui->AddGuiWindow(mBenchmarkWindow);
+
     mAudioEditorWindow = std::make_shared<AudioEditor>("gWindows.AudioEditor", "Audio Editor", ImVec2(520, 600));
     gui->AddGuiWindow(mAudioEditorWindow);
 
@@ -222,6 +227,7 @@ void Destroy() {
     mDLViewerWindow = nullptr;
     mMessageViewerWindow = nullptr;
     mFrameProfilerWindow = nullptr;
+    mBenchmarkWindow = nullptr;
     mAudioEditorWindow = nullptr;
     mItemTrackerWindow = nullptr;
     mItemTrackerSettingsWindow = nullptr;

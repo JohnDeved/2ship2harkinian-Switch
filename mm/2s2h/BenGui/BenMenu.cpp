@@ -2103,6 +2103,15 @@ void BenMenu::AddDevTools() {
         .CVar("gWindows.FrameProfiler")
         .Options(ButtonOptions().Tooltip("Shows per-phase CPU timing for each frame, helping identify bottlenecks."))
         .WindowName("Frame Profiler");
+
+    path = { "Dev Tools", "Benchmark", SECTION_COLUMN_1 };
+    AddSidebarEntry("Dev Tools", "Benchmark", 1);
+    AddWidget(path, "Popout Benchmark", WIDGET_WINDOW_BUTTON)
+        .CVar("gWindows.Benchmark")
+        .Options(ButtonOptions().Tooltip(
+            "Automated performance benchmark that warps through heavy scenes and collects profiler data "
+            "for deterministic, consistent performance comparisons across builds."))
+        .WindowName("Benchmark");
 }
 
 BenMenu::BenMenu(const std::string& consoleVariable, const std::string& name)

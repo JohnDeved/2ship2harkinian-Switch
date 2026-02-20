@@ -1130,18 +1130,26 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             wnd->HandleEvents();
             const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
             wnd->SetProfilingEnabled(profilerEnabled);
-            // Adaptive sub-frame dropping: track elapsed time per game frame.
+            // Adaptive sub-frame dropping: predictive budget tracking.
             // Budget = 1 game frame = 1/original_fps seconds (e.g. 50ms at 20fps).
-            // If rendering falls behind, skip intermediate sub-frames to keep game
-            // logic running at constant speed. Always render first and last sub-frames.
+            // Uses an EMA (exponential moving average) of per-sub-frame render cost
+            // to predict whether all remaining sub-frames will fit in the budget.
+            // If the predicted total exceeds the budget, skip intermediate sub-frames
+            // to keep game logic running at constant speed.
+            // Always render first and last sub-frames.
+            static float sSubFrameCostEma = 0.0f; // EMA of per-sub-frame cost in ns
             const auto frameBudget = std::chrono::nanoseconds(1000000000LL / original_fps);
             const auto frameStart = std::chrono::steady_clock::now();
 
             for (size_t i = 0; i < sub_frames.size(); i++) {
-                // Skip intermediate sub-frames if over budget (keep first + last)
+                // Skip intermediate sub-frames if predicted total exceeds budget
                 if (i > 0 && i < sub_frames.size() - 1) {
                     auto elapsed = std::chrono::steady_clock::now() - frameStart;
-                    if (elapsed >= frameBudget) {
+                    // Predict remaining cost: (sub_frames remaining) × EMA cost
+                    size_t remaining = sub_frames.size() - i;
+                    float predictedRemaining = remaining * sSubFrameCostEma;
+                    auto predictedTotal = elapsed + std::chrono::nanoseconds((int64_t)predictedRemaining);
+                    if (predictedTotal >= frameBudget) {
                         continue;
                     }
                 }
@@ -1161,12 +1169,17 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 // so there's no leaked async work when sub-frames are skipped.
                 // Find the next sub-frame index that won't be skipped:
                 // - Last sub-frame is never skipped
-                // - Intermediate sub-frames are skipped when over budget
+                // - Intermediate sub-frames are skipped when predicted total exceeds budget
                 size_t nextIdx = i + 1;
-                bool overBudget = (std::chrono::steady_clock::now() - frameStart) >= frameBudget;
-                // Skip past intermediate sub-frames that would be dropped
-                while (nextIdx > 0 && nextIdx < sub_frames.size() - 1 && overBudget) {
-                    nextIdx++;
+                {
+                    auto elapsed = std::chrono::steady_clock::now() - frameStart;
+                    // Predict: if rendering this sub-frame + remaining would exceed budget, skip intermediates
+                    size_t futureRemaining = sub_frames.size() - nextIdx;
+                    float predictedFutureTotal = (float)elapsed.count() + sSubFrameCostEma + futureRemaining * sSubFrameCostEma;
+                    bool willExceedBudget = predictedFutureTotal >= (float)frameBudget.count();
+                    while (nextIdx > 0 && nextIdx < sub_frames.size() - 1 && willExceedBudget) {
+                        nextIdx++;
+                    }
                 }
                 AsyncInterpJob nextJob;
                 bool hasNext = (nextIdx < sub_frames.size());
@@ -1180,9 +1193,20 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
                 FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
 
+                auto renderStart = std::chrono::steady_clock::now();
                 wnd->SubmitRenderWork(commands, current_m);
                 // Wait for render thread to finish this sub-frame's GL work
                 wnd->WaitForRenderDone();
+                // Update EMA of per-sub-frame render cost (α=0.3 for responsiveness)
+                {
+                    auto renderEnd = std::chrono::steady_clock::now();
+                    float costNs = (float)(renderEnd - renderStart).count();
+                    if (sSubFrameCostEma <= 0.0f) {
+                        sSubFrameCostEma = costNs; // seed on first measurement
+                    } else {
+                        sSubFrameCostEma = 0.7f * sSubFrameCostEma + 0.3f * costNs;
+                    }
+                }
 
                 if (profilerEnabled) {
                     const auto& stats = wnd->GetFrameStats();

@@ -79,13 +79,15 @@ class GfxRenderingAPI {
 
   protected:
     Fast3DStats* mStats = nullptr;
+    // Deferred render state: -1 = uninitialized sentinel, 0/1 = actual state.
+    // int8_t allows three-state tracking (uninitialized/-1, off/0, on/1) to
+    // detect first-frame state and avoid redundant GL calls.
     int8_t mCurrentDepthTest = 0;
     int8_t mCurrentDepthMask = 0;
     int8_t mCurrentZmodeDecal = 0;
     int8_t mLastDepthTest = -1;
     int8_t mLastDepthMask = -1;
     int8_t mLastZmodeDecal = -1;
-    // Deferred alpha blend state — cached in Set, applied in DrawTriangles.
     int8_t mCurrentAlphaBlend = 0;
     int8_t mLastAlphaBlend = -1;
     bool mSrgbMode = false;

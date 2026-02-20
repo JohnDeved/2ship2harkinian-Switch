@@ -5485,11 +5485,15 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
                         ++localCmd;
                     }
                 } else {
-                    // Branch: replace current DL, push nullptr marker
-                    g_exec_stack.cmd_stack.pop();
-                    g_exec_stack.cmd_stack.push(nullptr);
-                    g_exec_stack.cmd_stack.push(subGFX);
-                    localCmd = subGFX;
+                    // Branch: replace current DL with subGFX, push nullptr marker
+                    if (subGFX != nullptr) {
+                        g_exec_stack.cmd_stack.pop();
+                        g_exec_stack.cmd_stack.push(nullptr);
+                        g_exec_stack.cmd_stack.push(subGFX);
+                        localCmd = subGFX;
+                    } else {
+                        ++localCmd;
+                    }
                 }
                 continue;
             }

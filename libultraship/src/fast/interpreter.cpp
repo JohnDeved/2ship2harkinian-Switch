@@ -5470,6 +5470,48 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
                 continue;
             }
 
+            // Fast-path: G_DL (0xde) — inline display list call/branch.
+            // G_DL "call" (bit 16 = 0) is the common case (~169/frame): push return
+            // address and jump to sub-DL. Avoids generic dispatch + SegAddr virtual call.
+            if (opcode == 0xde) {
+                F3DGfx* subGFX = (F3DGfx*)SegAddr(localCmd->words.w1);
+                if ((localCmd->words.w0 & (1u << 16)) == 0) {
+                    // Call: save return address (localCmd+1), jump to sub-DL
+                    if (subGFX != nullptr) {
+                        g_exec_stack.cmd_stack.top() = localCmd + 1; // return address
+                        g_exec_stack.cmd_stack.push(subGFX);
+                        localCmd = subGFX;
+                    } else {
+                        ++localCmd;
+                    }
+                } else {
+                    // Branch: replace current DL, push nullptr marker
+                    g_exec_stack.cmd_stack.pop();
+                    g_exec_stack.cmd_stack.push(nullptr);
+                    g_exec_stack.cmd_stack.push(subGFX);
+                    localCmd = subGFX;
+                }
+                continue;
+            }
+
+            // Fast-path: G_SETCOMBINE (0xfc) — inline combine mode update.
+            if (opcode == 0xfc) {
+                uint32_t w0 = localCmd->words.w0;
+                uint32_t w1 = localCmd->words.w1;
+                uint32_t rgb = ((w0 >> 20) & 0xf) | (((w1 >> 28) & 0xf) << 4) |
+                               (((w0 >> 15) & 0x1f) << 8) | (((w1 >> 15) & 0x7) << 13);
+                uint32_t alpha = ((w0 >> 12) & 0x7) | (((w1 >> 12) & 0x7) << 3) |
+                                 (((w0 >> 9) & 0x7) << 6) | (((w1 >> 9) & 0x7) << 9);
+                uint32_t rgb2 = ((w0 >> 5) & 0xf) | (((w1 >> 24) & 0xf) << 4) |
+                                ((w0 & 0x1f) << 8) | (((w1 >> 6) & 0x7) << 13);
+                uint32_t alpha2 = ((w1 >> 21) & 0x7) | (((w1 >> 3) & 0x7) << 3) |
+                                  (((w1 >> 18) & 0x7) << 6) | ((w1 & 0x7) << 9);
+                mRdp->combine_mode = rgb | ((uint64_t)alpha << 16) |
+                                     ((uint64_t)rgb2 << 28) | ((uint64_t)alpha2 << 44);
+                ++localCmd;
+                continue;
+            }
+
             // Generic path: sync local pointer to stack and dispatch via handler table.
             g_exec_stack.cmd_stack.top() = localCmd;
             {

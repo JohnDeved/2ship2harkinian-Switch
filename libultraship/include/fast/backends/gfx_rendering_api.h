@@ -85,6 +85,9 @@ class GfxRenderingAPI {
     int8_t mLastDepthTest = -1;
     int8_t mLastDepthMask = -1;
     int8_t mLastZmodeDecal = -1;
+    // Deferred alpha blend state — cached in Set, applied in DrawTriangles.
+    int8_t mCurrentAlphaBlend = 0;
+    int8_t mLastAlphaBlend = -1;
     bool mSrgbMode = false;
 };
 } // namespace Fast

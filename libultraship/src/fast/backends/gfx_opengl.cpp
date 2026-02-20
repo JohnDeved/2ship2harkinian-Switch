@@ -662,11 +662,16 @@ void GfxRenderingAPIOGL::SetScissor(int x, int y, int width, int height) {
 }
 
 void GfxRenderingAPIOGL::SetUseAlpha(bool use_alpha) {
+#if defined(__SWITCH__)
+    // Defer GL call to DrawTriangles, like depth state.
+    mCurrentAlphaBlend = use_alpha ? 1 : 0;
+#else
     if (use_alpha) {
         glEnable(GL_BLEND);
     } else {
         glDisable(GL_BLEND);
     }
+#endif
 }
 
 void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
@@ -682,6 +687,18 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
             glDisable(GL_DEPTH_TEST);
         }
     }
+
+#if defined(__SWITCH__)
+    // Deferred alpha blend — apply here alongside other deferred state.
+    if (mCurrentAlphaBlend != mLastAlphaBlend) {
+        mLastAlphaBlend = mCurrentAlphaBlend;
+        if (mCurrentAlphaBlend) {
+            glEnable(GL_BLEND);
+        } else {
+            glDisable(GL_BLEND);
+        }
+    }
+#endif
 
     if (mCurrentZmodeDecal != mLastZmodeDecal) {
         mLastZmodeDecal = mCurrentZmodeDecal;

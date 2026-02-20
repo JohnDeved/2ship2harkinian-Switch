@@ -397,6 +397,13 @@ static void OnBenchmarkUpdate() {
             break;
         }
         case BENCH_SETTLING: {
+            // Freeze the in-game clock so game state (NPC schedules, actor load)
+            // stays consistent regardless of tick rate. Without this, frame-ahead
+            // makes the game tick faster, advancing MM's day cycle and loading
+            // different NPCs — causing 40ms+ game logic swings between runs.
+            R_TIME_SPEED = 0;
+            gSaveContext.save.time = CLOCK_TIME(8, 0);
+
             sFrameCounter++;
             if (sFrameCounter >= sActiveScenes[sCurrentScene].settleFrames) {
                 sFrameCounter = 0;
@@ -406,6 +413,8 @@ static void OnBenchmarkUpdate() {
             break;
         }
         case BENCH_MEASURING: {
+            R_TIME_SPEED = 0;
+            gSaveContext.save.time = CLOCK_TIME(8, 0);
             // Collect ALL profiler phases and counters each frame
             for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
                 sAccum.phases[i] += FrameProfiler_GetPhaseAvgMs((ProfilePhase)i);

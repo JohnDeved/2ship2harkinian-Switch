@@ -691,7 +691,13 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
             const int n64modeFactor = 120;
             const int noVanishFactor = 100;
             GLfloat SSDB = -2;
-            switch (Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_Z_FIGHTING_MODE, 0)) {
+#if defined(__SWITCH__)
+            // Use per-frame cached CVar to avoid hash map lookup on every decal state change.
+            int zFightMode = mCachedZFightingMode;
+#else
+            int zFightMode = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_Z_FIGHTING_MODE, 0);
+#endif
+            switch (zFightMode) {
                 // scaled z-fighting (N64 mode like)
                 case 1:
                     if (mFrameBuffers.size() >
@@ -734,8 +740,10 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     // Per-iteration VBO batching: orphan the VBO once per DL iteration,
     // then use glBufferSubData for each draw. This reduces ~320 glBufferData
     // allocations per iteration to just 1 orphan.
+    // All triangles in a batch use the same shader (shader changes trigger a
+    // flush), so uploadBytes is always stride-aligned — no modulo needed.
     size_t strideBytes = mCurrentShaderProgram ? (size_t)mCurrentShaderProgram->numFloats * sizeof(float) : 0;
-    if (strideBytes == 0) {
+    if (__builtin_expect(strideBytes == 0, 0)) {
         // Fallback: no valid shader, use simple upload
         {
             Fast3DScopedTimer t(vboTarget, profiling);
@@ -748,25 +756,23 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     } else {
         {
             Fast3DScopedTimer t(vboTarget, profiling);
-            if (!mVboIterActive) {
+            if (__builtin_expect(!mVboIterActive, 0)) {
                 glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
                 mVboIterOffset = 0;
                 mVboIterActive = true;
             }
 
-            // Align offset to vertex stride
-            if ((mVboIterOffset % strideBytes) != 0) {
-                mVboIterOffset += strideBytes - (mVboIterOffset % strideBytes);
-            }
-
-            // Re-orphan if data doesn't fit after alignment
-            if (mVboIterOffset + uploadBytes > VBO_ITER_SIZE) {
+            // Re-orphan if data doesn't fit
+            if (__builtin_expect(mVboIterOffset + uploadBytes > VBO_ITER_SIZE, 0)) {
                 glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
                 mVboIterOffset = 0;
             }
 
             glBufferSubData(GL_ARRAY_BUFFER, mVboIterOffset, uploadBytes, buf_vbo);
         }
+        // Compute first vertex using multiplication instead of division:
+        // firstVertex = offset / stride = offset / (numFloats * 4)
+        // Since offset is always stride-aligned, use integer division.
         GLint firstVertex = (GLint)(mVboIterOffset / strideBytes);
         {
             Fast3DScopedTimer t(drawTarget, profiling);
@@ -831,6 +837,8 @@ void GfxRenderingAPIOGL::StartFrame() {
     // Reset per-iteration VBO batching state.
     // The next DrawTriangles call will orphan the VBO.
     mVboIterActive = false;
+    // Cache z-fighting mode CVar once per frame to avoid per-draw CVar lookup.
+    mCachedZFightingMode = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_Z_FIGHTING_MODE, 0);
 #endif
 }
 

@@ -5401,8 +5401,104 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
 #endif
     g_exec_stack.start((F3DGfx*)commands);
 
+#ifdef __SWITCH__
+    // Switch-optimized dispatch: use local pointer for tight inner loop.
+    // Inlines common handlers to avoid indirect call overhead on A57 cores.
+    // Handlers that modify the stack (G_DL call/branch) fall through to the
+    // generic path which syncs the local pointer with the stack.
     while (!g_exec_stack.cmd_stack.empty()) {
-#ifndef __SWITCH__
+        F3DGfx* localCmd = g_exec_stack.cmd_stack.top();
+
+        for (;;) {
+            uint8_t opcode = (uint8_t)(localCmd->words.w0 >> 24);
+
+            // Fast-path: RDP sync commands (0xe6-0xe9) — no-ops on modern HW.
+            if (__builtin_expect(opcode >= 0xe6 && opcode <= 0xe9, 0)) {
+                ++localCmd;
+                continue;
+            }
+
+            // Fast-path: G_ENDDL (0xdf) — pop DL stack, return to caller.
+            if (__builtin_expect(opcode == 0xdf, 0)) {
+                mMarkerOn = false;
+                g_exec_stack.cmd_stack.pop();
+                // Clean up nullptr markers left by branch()
+                while (!g_exec_stack.cmd_stack.empty() && g_exec_stack.cmd_stack.top() == nullptr) {
+                    g_exec_stack.cmd_stack.pop();
+                }
+                break; // Back to outer while to reload from stack
+            }
+
+            // Fast-path: G_NOOP (0x00) — skip immediately.
+            if (__builtin_expect(opcode == 0x00, 0)) {
+                ++localCmd;
+                continue;
+            }
+
+            // Fast-path: G_GEOMETRYMODE (0xd9) — inline bit manipulation.
+            if (opcode == 0xd9) {
+                mRsp->geometry_mode = (mRsp->geometry_mode & ((uint32_t)localCmd->words.w0 & 0xFFFFFF)) |
+                                      (uint32_t)localCmd->words.w1;
+                mRdp->geometry_mode_changed = true;
+                ++localCmd;
+                continue;
+            }
+
+            // Fast-path: G_SETOTHERMODE_L (0xe2) — inline other_mode_l update.
+            if (opcode == 0xe2) {
+                uint32_t sft = (localCmd->words.w0 >> 8) & 0xFF;
+                uint32_t len = localCmd->words.w0 & 0xFF;
+                uint32_t shift = 31 - sft - len;
+                uint32_t num_bits = len + 1;
+                uint32_t mask = ((1u << num_bits) - 1) << shift;
+                mRdp->other_mode_l = (mRdp->other_mode_l & ~mask) | (uint32_t)localCmd->words.w1;
+                mRdp->other_mode_changed = true;
+                ++localCmd;
+                continue;
+            }
+
+            // Fast-path: G_SETOTHERMODE_H (0xe3) — inline other_mode_h update.
+            if (opcode == 0xe3) {
+                uint32_t sft = (localCmd->words.w0 >> 8) & 0xFF;
+                uint32_t len = localCmd->words.w0 & 0xFF;
+                uint32_t shift = 31 - sft - len;
+                uint32_t num_bits = len + 1;
+                uint32_t mask = ((1u << num_bits) - 1) << shift;
+                mRdp->other_mode_h = (mRdp->other_mode_h & ~mask) | (uint32_t)localCmd->words.w1;
+                mRdp->other_mode_changed = true;
+                ++localCmd;
+                continue;
+            }
+
+            // Generic path: sync local pointer to stack and dispatch via handler table.
+            g_exec_stack.cmd_stack.top() = localCmd;
+            {
+                auto& stepCmd = g_exec_stack.cmd_stack.top();
+
+                if (__builtin_expect(opcode == static_cast<uint8_t>(F3DEX2_G_LOAD_UCODE), 0)) {
+                    gfx_load_ucode_handler_f3dex2(&stepCmd);
+                } else {
+                    GfxOpcodeHandlerFunc handler = sUnifiedHandlers[opcode];
+                    if (__builtin_expect(handler != nullptr, 1)) {
+                        if (!handler(&stepCmd)) {
+                            ++stepCmd;
+                        }
+                    } else {
+                        SPDLOG_CRITICAL("Unhandled OP code: 0x{:X}, ucode: {}", opcode,
+                                        (uint32_t)ucode_handler_index);
+                        ++stepCmd;
+                    }
+                }
+            }
+            // Reload from stack — handler may have pushed/popped (G_DL call/branch)
+            if (__builtin_expect(g_exec_stack.cmd_stack.empty(), 0)) {
+                break;
+            }
+            localCmd = g_exec_stack.cmd_stack.top();
+        }
+    }
+#else
+    while (!g_exec_stack.cmd_stack.empty()) {
         // GfxDebugger: breakpoint support (skipped on Switch for performance)
         auto cmd = g_exec_stack.cmd_stack.top();
 
@@ -5418,7 +5514,6 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             }
             g_exec_stack.gfx_path.pop_back();
         }
-#endif
 
         // Inlined dispatch — avoids per-command function call overhead of gfx_step().
         {
@@ -5430,15 +5525,6 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
                 Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger("gEnableGFXTrace", 0)) {
                 SPDLOG_INFO(TRACE, opcode, stepCmd->words.trace.file, stepCmd->words.trace.idx,
                             stepCmd->words.w0, stepCmd->words.w1);
-            }
-#endif
-
-#ifdef __SWITCH__
-            // Fast-path: inline no-op RDP sync commands (0xe6-0xe9) to avoid
-            // function pointer dispatch overhead for ~109+ sync cmds/iteration.
-            if (opcode >= 0xe6 && opcode <= 0xe9) {
-                ++stepCmd;
-                continue;
             }
 #endif
 
@@ -5458,6 +5544,7 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             }
         }
     }
+#endif
 
     Flush();
     mGfxFrameBuffer = 0;

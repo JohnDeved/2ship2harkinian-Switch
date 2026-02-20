@@ -138,6 +138,7 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     static constexpr size_t VBO_ITER_SIZE = 2 * 1024 * 1024; // 2MB per iteration
     size_t mVboIterOffset = 0;  // Running byte offset within current iteration's VBO
     bool mVboIterActive = false; // True after orphaning for this iteration
+    int mCachedZFightingMode = 0; // Cached per-frame to avoid CVar lookup per draw
 
     // Cache state to skip redundant SetPerDrawUniforms calls
     uint32_t mLastUniformTextureIds[2] = { UINT32_MAX, UINT32_MAX };

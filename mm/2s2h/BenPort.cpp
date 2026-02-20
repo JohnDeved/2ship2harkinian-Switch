@@ -1137,7 +1137,8 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             // If the predicted total exceeds the budget, skip intermediate sub-frames
             // to keep game logic running at constant speed.
             // Always render first and last sub-frames.
-            static float sSubFrameCostEma = 0.0f; // EMA of per-sub-frame cost in ns
+            constexpr float kSubFrameEmaAlpha = 0.3f; // EMA smoothing factor (0-1, higher = more responsive)
+            static thread_local float sSubFrameCostEma = 0.0f; // EMA of per-sub-frame cost in ns
             const auto frameBudget = std::chrono::nanoseconds(1000000000LL / original_fps);
             const auto frameStart = std::chrono::steady_clock::now();
 
@@ -1197,14 +1198,14 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 wnd->SubmitRenderWork(commands, current_m);
                 // Wait for render thread to finish this sub-frame's GL work
                 wnd->WaitForRenderDone();
-                // Update EMA of per-sub-frame render cost (α=0.3 for responsiveness)
+                // Update EMA of per-sub-frame render cost
                 {
                     auto renderEnd = std::chrono::steady_clock::now();
                     float costNs = (float)(renderEnd - renderStart).count();
                     if (sSubFrameCostEma <= 0.0f) {
                         sSubFrameCostEma = costNs; // seed on first measurement
                     } else {
-                        sSubFrameCostEma = 0.7f * sSubFrameCostEma + 0.3f * costNs;
+                        sSubFrameCostEma = (1.0f - kSubFrameEmaAlpha) * sSubFrameCostEma + kSubFrameEmaAlpha * costNs;
                     }
                 }
 

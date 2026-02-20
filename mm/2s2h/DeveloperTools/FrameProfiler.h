@@ -122,6 +122,10 @@ void FrameProfiler_AddCounter(ProfileCounter counter, float value);
 float FrameProfiler_GetCounterAvg(ProfileCounter counter);
 int FrameProfiler_IsEnabled(void);
 
+// Keep the profiler enabled for the next few frames, even if the profiler window
+// is not open. Call each frame from systems that need profiler data (e.g. benchmark).
+void FrameProfiler_KeepAlive(void);
+
 // Scan all 5 DL buffers from the graphics context. Call from graph.c after
 // GameState_Update has filled the buffers but before Graph_ProcessGfxCommands.
 struct GraphicsContext;

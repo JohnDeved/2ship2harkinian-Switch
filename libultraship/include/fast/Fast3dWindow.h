@@ -72,7 +72,7 @@ class Fast3dWindow : public Ship::Window {
     // Core 0 submits render work, Core 1 executes it with the GL context.
     void InitRenderThread();
     void DestroyRenderThread();
-    bool SubmitRenderWork(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtxReplacements);
+    bool SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF> mtxReplacements);
     void WaitForRenderDone();
     bool IsRenderThreadActive() const { return mRenderThreadRunning; }
 #endif
@@ -101,7 +101,7 @@ class Fast3dWindow : public Ship::Window {
     bool mRenderWorkDone = true;
     // Render work parameters (set by Core 0, read by Core 1)
     Gfx* mRenderCommands = nullptr;
-    const std::unordered_map<Mtx*, MtxF>* mRenderMtxReplacements = nullptr;
+    std::unordered_map<Mtx*, MtxF> mRenderMtxReplacements; // owned copy for thread safety
 
     void RenderThreadLoop();
 #endif

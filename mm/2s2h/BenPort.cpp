@@ -1194,8 +1194,25 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
                 FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
 
+                bool isLastSubFrame = !hasNext;
                 auto renderStart = std::chrono::steady_clock::now();
-                wnd->SubmitRenderWork(commands, current_m);
+                wnd->SubmitRenderWork(commands, std::move(current_m));
+
+                if (isLastSubFrame) {
+                    // Frame-ahead: don't wait for the last sub-frame to finish.
+                    // Core 0 returns to game logic while Core 1 renders.
+                    // SubmitRenderWork() owns the matrix data (moved above),
+                    // so it's safe even after this function returns.
+                    // The next call to SubmitRenderWork() will wait internally.
+                    // Profiler stats will be collected at the start of the next tick.
+                    if (profilerEnabled) {
+                        FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
+                    }
+                    FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
+                    FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
+                    break; // exit the sub-frame loop — rendering continues on Core 1
+                }
+
                 // Wait for render thread to finish this sub-frame's GL work
                 wnd->WaitForRenderDone();
                 // Update EMA of per-sub-frame render cost
@@ -1299,8 +1316,8 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
 
             FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
             FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
-            for (const auto& m : mtx_replacements) {
-                wnd->SubmitRenderWork(commands, m);
+            for (auto& m : mtx_replacements) {
+                wnd->SubmitRenderWork(commands, std::move(m));
                 wnd->WaitForRenderDone();
 
                 if (profilerEnabled) {

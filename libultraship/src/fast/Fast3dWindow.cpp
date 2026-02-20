@@ -439,13 +439,13 @@ void Fast3dWindow::RenderThreadLoop() {
 
         // Capture work parameters
         Gfx* commands = mRenderCommands;
-        const std::unordered_map<Mtx*, MtxF>* mtxReplacements = mRenderMtxReplacements;
+        // mRenderMtxReplacements is owned by this class — safe to reference.
         lock.unlock();
 
         // Execute the full render pipeline on Core 1 (with GL context)
         gui->StartDraw();
         mInterpreter->StartFrame();
-        mInterpreter->Run(commands, *mtxReplacements);
+        mInterpreter->Run(commands, mRenderMtxReplacements);
         gui->EndDraw();
         mInterpreter->EndFrame();
 
@@ -493,7 +493,7 @@ void Fast3dWindow::DestroyRenderThread() {
     mWindowManagerApi->MakeContextCurrent();
 }
 
-bool Fast3dWindow::SubmitRenderWork(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtxReplacements) {
+bool Fast3dWindow::SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF> mtxReplacements) {
     {
         std::unique_lock<std::mutex> lock(mRenderMutex);
         if (!mRenderThreadRunning) {
@@ -506,7 +506,7 @@ bool Fast3dWindow::SubmitRenderWork(Gfx* commands, const std::unordered_map<Mtx*
             mRenderDoneCV.wait(lock);
         }
         mRenderCommands = commands;
-        mRenderMtxReplacements = &mtxReplacements;
+        mRenderMtxReplacements = std::move(mtxReplacements); // take ownership
         mRenderHasWork = true;
         mRenderWorkDone = false;
     }

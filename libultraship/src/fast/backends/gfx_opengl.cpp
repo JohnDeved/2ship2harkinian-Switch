@@ -83,6 +83,9 @@ void GfxRenderingAPIOGL::UnloadShader(ShaderProgram* old_prg) {
 void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     // if (!new_prg) return;
     mCurrentShaderProgram = new_prg;
+    if (mStats != nullptr) {
+        mStats->shaderSwitches++;
+    }
     glUseProgram(new_prg->openglProgramId);
     VertexArraySetAttribs(new_prg);
     SetUniforms(new_prg);
@@ -373,6 +376,10 @@ static std::string BuildVsShader(const CCFeatures& cc_features) {
 }
 
 ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, uint32_t shader_id1) {
+    if (mStats != nullptr) {
+        mStats->shaderCompilations++;
+    }
+
     CCFeatures cc_features;
     gfx_cc_get_features(shader_id0, shader_id1, &cc_features);
     const auto fs_buf = BuildFsShader(cc_features);
@@ -529,6 +536,10 @@ void GfxRenderingAPIOGL::DeleteTexture(uint32_t texID) {
 }
 
 void GfxRenderingAPIOGL::SelectTexture(int tile, GLuint texture_id) {
+    if (mStats != nullptr) {
+        mStats->textureBinds++;
+    }
+
     glActiveTexture(GL_TEXTURE0 + tile);
     glBindTexture(GL_TEXTURE_2D, texture_id);
     mCurrentTextureIds[tile] = texture_id;

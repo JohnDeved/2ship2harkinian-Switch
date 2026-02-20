@@ -23,6 +23,7 @@
 #include "Enhancements/Trackers/ItemTracker/ItemTracker.h"
 #include "Enhancements/Trackers/ItemTracker/ItemTrackerSettings.h"
 #include "Enhancements/Trackers/DisplayOverlay.h"
+#include "Enhancements/Trackers/FpsOverlay.h"
 #include "Enhancements/Trackers//TimeSplits/Timesplits.h"
 #include "Enhancements/Trackers/TimeSplits/TimesplitsSettings.h"
 #include "BenMenu.h"
@@ -34,6 +35,7 @@
 #include "DeveloperTools/EventLog.h"
 #include "DeveloperTools/DLViewer.h"
 #include "DeveloperTools/MessageViewer.h"
+#include "DeveloperTools/FrameProfiler.h"
 
 namespace BenGui {
 // MARK: - Delegates
@@ -54,6 +56,7 @@ std::shared_ptr<CollisionViewerWindow> mCollisionViewerWindow;
 std::shared_ptr<EventLogWindow> mEventLogWindow;
 std::shared_ptr<DLViewerWindow> mDLViewerWindow;
 std::shared_ptr<MessageViewerWindow> mMessageViewerWindow;
+std::shared_ptr<FrameProfilerWindow> mFrameProfilerWindow;
 std::shared_ptr<AudioEditor> mAudioEditorWindow;
 std::shared_ptr<BenMenu> mBenMenu;
 std::shared_ptr<Notification::Window> mNotificationWindow;
@@ -62,6 +65,7 @@ std::shared_ptr<Rando::CheckTracker::SettingsWindow> mRandoCheckTrackerSettingsW
 std::shared_ptr<ItemTrackerWindow> mItemTrackerWindow;
 std::shared_ptr<ItemTrackerSettingsWindow> mItemTrackerSettingsWindow;
 std::shared_ptr<DisplayOverlayWindow> mDisplayOverlayWindow;
+std::shared_ptr<FpsOverlayWindow> mFpsOverlayWindow;
 std::shared_ptr<TimesplitsWindow> mTimesplitsWindow;
 std::shared_ptr<TimesplitsSettingsWindow> mTimesplitsSettingsWindow;
 std::shared_ptr<InputViewer> mInputViewer;
@@ -144,6 +148,10 @@ void SetupGuiElements() {
         std::make_shared<MessageViewerWindow>("gWindows.MessageViewer", "Message Viewer", ImVec2(520, 600));
     gui->AddGuiWindow(mMessageViewerWindow);
 
+    mFrameProfilerWindow =
+        std::make_shared<FrameProfilerWindow>("gWindows.FrameProfiler", "Frame Profiler", ImVec2(550, 400));
+    gui->AddGuiWindow(mFrameProfilerWindow);
+
     mAudioEditorWindow = std::make_shared<AudioEditor>("gWindows.AudioEditor", "Audio Editor", ImVec2(520, 600));
     gui->AddGuiWindow(mAudioEditorWindow);
 
@@ -156,6 +164,9 @@ void SetupGuiElements() {
 
     mDisplayOverlayWindow = std::make_shared<DisplayOverlayWindow>("gWindows.DisplayOverlay", "Display Overlay");
     gui->AddGuiWindow(mDisplayOverlayWindow);
+
+    mFpsOverlayWindow = std::make_shared<FpsOverlayWindow>("gWindows.FpsOverlay", "FPS Overlay");
+    gui->AddGuiWindow(mFpsOverlayWindow);
 
     mTimesplitsWindow = std::make_shared<TimesplitsWindow>("gWindows.Timesplits", "Time Splits Window");
     gui->AddGuiWindow(mTimesplitsWindow);
@@ -210,6 +221,7 @@ void Destroy() {
     mActorViewerWindow = nullptr;
     mDLViewerWindow = nullptr;
     mMessageViewerWindow = nullptr;
+    mFrameProfilerWindow = nullptr;
     mAudioEditorWindow = nullptr;
     mItemTrackerWindow = nullptr;
     mItemTrackerSettingsWindow = nullptr;

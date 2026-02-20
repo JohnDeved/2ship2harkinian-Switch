@@ -537,16 +537,12 @@ f32 Math3D_Dist2D(f32 x0, f32 y0, f32 x1, f32 y1) {
 /**
  * Returns the magnitude (length) squared of `vec`
  */
-f32 Math3D_Vec3fMagnitudeSq(Vec3f* vec) {
-    return SQ(vec->x) + SQ(vec->y) + SQ(vec->z);
-}
+/* Math3D_Vec3fMagnitudeSq is now static inline in z64math.h */
 
 /**
  * Returns the magnitude (length) of `vec`
  */
-f32 Math3D_Vec3fMagnitude(Vec3f* vec) {
-    return sqrtf(Math3D_Vec3fMagnitudeSq(vec));
-}
+/* Math3D_Vec3fMagnitude is now static inline in z64math.h */
 
 /**
  * Returns the distance between `a` and `b` squared.

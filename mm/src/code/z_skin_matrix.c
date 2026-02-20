@@ -6,6 +6,10 @@
 
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 
+#if defined(__ARM_NEON) && defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
 MtxF sMtxFClear = { {
     { 1.0f, 0.0f, 0.0f, 0.0f },
     { 0.0f, 1.0f, 0.0f, 0.0f },
@@ -20,10 +24,26 @@ MtxF sMtxFClear = { {
  * \f[ [\texttt{xyzDest}, \texttt{wDest}] = [\texttt{src}, 1] \cdot [mf] \f]
  */
 void SkinMatrix_Vec3fMtxFMultXYZW(MtxF* mf, Vec3f* src, Vec3f* xyzDest, f32* wDest) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t col0 = vld1q_f32((const float*)&mf->xx);
+    float32x4_t col1 = vld1q_f32((const float*)&mf->xy);
+    float32x4_t col2 = vld1q_f32((const float*)&mf->xz);
+    float32x4_t col3 = vld1q_f32((const float*)&mf->xw);
+
+    float32x4_t result = vmlaq_n_f32(col3, col0, src->x);
+    result = vmlaq_n_f32(result, col1, src->y);
+    result = vmlaq_n_f32(result, col2, src->z);
+
+    xyzDest->x = vgetq_lane_f32(result, 0);
+    xyzDest->y = vgetq_lane_f32(result, 1);
+    xyzDest->z = vgetq_lane_f32(result, 2);
+    *wDest = vgetq_lane_f32(result, 3);
+#else
     xyzDest->x = mf->xw + ((src->x * mf->xx) + (src->y * mf->xy) + (src->z * mf->xz));
     xyzDest->y = mf->yw + ((src->x * mf->yx) + (src->y * mf->yy) + (src->z * mf->yz));
     xyzDest->z = mf->zw + ((src->x * mf->zx) + (src->y * mf->zy) + (src->z * mf->zz));
     *wDest = mf->ww + ((src->x * mf->wx) + (src->y * mf->wy) + (src->z * mf->wz));
+#endif
 }
 
 /**
@@ -32,6 +52,20 @@ void SkinMatrix_Vec3fMtxFMultXYZW(MtxF* mf, Vec3f* src, Vec3f* xyzDest, f32* wDe
  * \f[ [\texttt{dest}, -] = [\texttt{src}, 1] \cdot [mf] \f]
  */
 void SkinMatrix_Vec3fMtxFMultXYZ(MtxF* mf, Vec3f* src, Vec3f* dest) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    float32x4_t col0 = vld1q_f32((const float*)&mf->xx);
+    float32x4_t col1 = vld1q_f32((const float*)&mf->xy);
+    float32x4_t col2 = vld1q_f32((const float*)&mf->xz);
+    float32x4_t col3 = vld1q_f32((const float*)&mf->xw);
+
+    float32x4_t result = vmlaq_n_f32(col3, col0, src->x);
+    result = vmlaq_n_f32(result, col1, src->y);
+    result = vmlaq_n_f32(result, col2, src->z);
+
+    dest->x = vgetq_lane_f32(result, 0);
+    dest->y = vgetq_lane_f32(result, 1);
+    dest->z = vgetq_lane_f32(result, 2);
+#else
     f32 mx = mf->xx;
     f32 my = mf->xy;
     f32 mz = mf->xz;
@@ -50,6 +84,7 @@ void SkinMatrix_Vec3fMtxFMultXYZ(MtxF* mf, Vec3f* src, Vec3f* dest) {
     mz = mf->zz;
     mw = mf->zw;
     dest->z = mw + ((src->x * mx) + (src->y * my) + (src->z * mz));
+#endif
 }
 
 /**
@@ -57,6 +92,75 @@ void SkinMatrix_Vec3fMtxFMultXYZ(MtxF* mf, Vec3f* src, Vec3f* dest) {
  * mfA and dest should not be the same matrix.
  */
 void SkinMatrix_MtxFMtxFMult(MtxF* mfB, MtxF* mfA, MtxF* dest) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    // Compute dest = mfB * mfA (despite the historical comment above).
+    // This is the hottest matrix operation in the game; use NEON to compute 4 outputs per row.
+
+    // Load mfA as column vectors (column-major storage).
+    const float32x4_t a_col0 = vld1q_f32((const float*)&mfA->xx);
+    const float32x4_t a_col1 = vld1q_f32((const float*)&mfA->xy);
+    const float32x4_t a_col2 = vld1q_f32((const float*)&mfA->xz);
+    const float32x4_t a_col3 = vld1q_f32((const float*)&mfA->xw);
+
+    // Transpose columns -> rows so we can compute one result row as a linear combination of A's rows.
+    const float32x4x2_t a_t0 = vtrnq_f32(a_col0, a_col1);
+    const float32x4x2_t a_t1 = vtrnq_f32(a_col2, a_col3);
+
+    const float32x4_t a_row0 = vcombine_f32(vget_low_f32(a_t0.val[0]), vget_low_f32(a_t1.val[0]));
+    const float32x4_t a_row1 = vcombine_f32(vget_low_f32(a_t0.val[1]), vget_low_f32(a_t1.val[1]));
+    const float32x4_t a_row2 = vcombine_f32(vget_high_f32(a_t0.val[0]), vget_high_f32(a_t1.val[0]));
+    const float32x4_t a_row3 = vcombine_f32(vget_high_f32(a_t0.val[1]), vget_high_f32(a_t1.val[1]));
+
+    // Load mfB rows (mfB is stored column-major, so we load columns then transpose to rows).
+    const float32x4_t b_col0 = vld1q_f32((const float*)&mfB->xx);
+    const float32x4_t b_col1 = vld1q_f32((const float*)&mfB->xy);
+    const float32x4_t b_col2 = vld1q_f32((const float*)&mfB->xz);
+    const float32x4_t b_col3 = vld1q_f32((const float*)&mfB->xw);
+
+    const float32x4x2_t b_t0 = vtrnq_f32(b_col0, b_col1);
+    const float32x4x2_t b_t1 = vtrnq_f32(b_col2, b_col3);
+
+    const float32x4_t b_row0 = vcombine_f32(vget_low_f32(b_t0.val[0]), vget_low_f32(b_t1.val[0]));
+    const float32x4_t b_row1 = vcombine_f32(vget_low_f32(b_t0.val[1]), vget_low_f32(b_t1.val[1]));
+    const float32x4_t b_row2 = vcombine_f32(vget_high_f32(b_t0.val[0]), vget_high_f32(b_t1.val[0]));
+    const float32x4_t b_row3 = vcombine_f32(vget_high_f32(b_t0.val[1]), vget_high_f32(b_t1.val[1]));
+
+    // Compute each destination row (row(B) * A).
+    float32x4_t r0 = vmulq_n_f32(a_row0, vgetq_lane_f32(b_row0, 0));
+    r0 = vmlaq_n_f32(r0, a_row1, vgetq_lane_f32(b_row0, 1));
+    r0 = vmlaq_n_f32(r0, a_row2, vgetq_lane_f32(b_row0, 2));
+    r0 = vmlaq_n_f32(r0, a_row3, vgetq_lane_f32(b_row0, 3));
+
+    float32x4_t r1 = vmulq_n_f32(a_row0, vgetq_lane_f32(b_row1, 0));
+    r1 = vmlaq_n_f32(r1, a_row1, vgetq_lane_f32(b_row1, 1));
+    r1 = vmlaq_n_f32(r1, a_row2, vgetq_lane_f32(b_row1, 2));
+    r1 = vmlaq_n_f32(r1, a_row3, vgetq_lane_f32(b_row1, 3));
+
+    float32x4_t r2 = vmulq_n_f32(a_row0, vgetq_lane_f32(b_row2, 0));
+    r2 = vmlaq_n_f32(r2, a_row1, vgetq_lane_f32(b_row2, 1));
+    r2 = vmlaq_n_f32(r2, a_row2, vgetq_lane_f32(b_row2, 2));
+    r2 = vmlaq_n_f32(r2, a_row3, vgetq_lane_f32(b_row2, 3));
+
+    float32x4_t r3 = vmulq_n_f32(a_row0, vgetq_lane_f32(b_row3, 0));
+    r3 = vmlaq_n_f32(r3, a_row1, vgetq_lane_f32(b_row3, 1));
+    r3 = vmlaq_n_f32(r3, a_row2, vgetq_lane_f32(b_row3, 2));
+    r3 = vmlaq_n_f32(r3, a_row3, vgetq_lane_f32(b_row3, 3));
+
+    // Transpose rows -> columns for column-major storage in MtxF.
+    const float32x4x2_t r_t0 = vtrnq_f32(r0, r1);
+    const float32x4x2_t r_t1 = vtrnq_f32(r2, r3);
+
+    const float32x4_t d_col0 = vcombine_f32(vget_low_f32(r_t0.val[0]), vget_low_f32(r_t1.val[0]));
+    const float32x4_t d_col1 = vcombine_f32(vget_low_f32(r_t0.val[1]), vget_low_f32(r_t1.val[1]));
+    const float32x4_t d_col2 = vcombine_f32(vget_high_f32(r_t0.val[0]), vget_high_f32(r_t1.val[0]));
+    const float32x4_t d_col3 = vcombine_f32(vget_high_f32(r_t0.val[1]), vget_high_f32(r_t1.val[1]));
+
+    vst1q_f32((float*)&dest->xx, d_col0);
+    vst1q_f32((float*)&dest->xy, d_col1);
+    vst1q_f32((float*)&dest->xz, d_col2);
+    vst1q_f32((float*)&dest->xw, d_col3);
+    return;
+#endif
     f32 rx;
     f32 ry;
     f32 rz;
@@ -211,6 +315,12 @@ void SkinMatrix_Clear(MtxF* mf) {
 }
 
 void SkinMatrix_MtxFCopy(MtxF* src, MtxF* dest) {
+#if defined(__ARM_NEON) && defined(__aarch64__)
+    vst1q_f32((float*)&dest->xx, vld1q_f32((const float*)&src->xx));
+    vst1q_f32((float*)&dest->xy, vld1q_f32((const float*)&src->xy));
+    vst1q_f32((float*)&dest->xz, vld1q_f32((const float*)&src->xz));
+    vst1q_f32((float*)&dest->xw, vld1q_f32((const float*)&src->xw));
+#else
     dest->xx = src->xx;
     dest->yx = src->yx;
     dest->zx = src->zx;
@@ -227,6 +337,7 @@ void SkinMatrix_MtxFCopy(MtxF* src, MtxF* dest) {
     dest->yw = src->yw;
     dest->zw = src->zw;
     dest->ww = src->ww;
+#endif
 }
 
 /**

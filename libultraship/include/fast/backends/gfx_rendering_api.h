@@ -8,6 +8,7 @@
 
 namespace Fast {
 struct ShaderProgram;
+struct Fast3DStats;
 
 struct GfxClipParameters {
     bool z_is_from_0_to_1;
@@ -72,8 +73,12 @@ class GfxRenderingAPI {
     virtual FilteringMode GetTextureFilter() = 0;
     virtual void SetSrgbMode() = 0;
     virtual ImTextureID GetTextureById(int id) = 0;
+    void SetStatsPtr(Fast3DStats* stats) {
+        mStats = stats;
+    }
 
   protected:
+    Fast3DStats* mStats = nullptr;
     int8_t mCurrentDepthTest = 0;
     int8_t mCurrentDepthMask = 0;
     int8_t mCurrentZmodeDecal = 0;

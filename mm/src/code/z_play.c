@@ -46,7 +46,35 @@ u8 sMotionBlurStatus;
 #include "2s2h/Enhancements/Graphics/Graphics.h"
 #include "2s2h/DeveloperTools/CollisionViewer.h"
 #include "2s2h/framebuffer_effects.h"
+#include "2s2h/collision_worker.h"
+#include "2s2h/DeveloperTools/FrameProfiler.h"
 #include <string.h>
+
+// Task wrapper for CollisionCheck_OC on the worker thread.
+// OC only writes ocFlags1/ocFlags2/oc/displacement — no effects or SFX.
+typedef struct {
+    PlayState* play;
+    CollisionCheckContext* colChkCtx;
+} OcTaskArgs;
+
+static void OcTask(void* arg) {
+    FrameProfiler_StartPhase(PROFILE_PHASE_COLLISION_OC);
+    OcTaskArgs* args = (OcTaskArgs*)arg;
+    CollisionCheck_OC(args->play, args->colChkCtx);
+    FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_OC);
+}
+
+// Task wrapper for running all effect updates on the worker thread.
+// Effect_UpdateAll, EffectSs_UpdateAll, and EffFootmark_Update are independent
+// from camera/environment/UI updates, so they can run concurrently.
+static void EffectsTask(void* arg) {
+    FrameProfiler_StartPhase(PROFILE_PHASE_EFFECTS);
+    PlayState* play = (PlayState*)arg;
+    Effect_UpdateAll(play);
+    EffectSs_UpdateAll(play);
+    EffFootmark_Update(play);
+    FrameProfiler_EndPhase(PROFILE_PHASE_EFFECTS);
+}
 
 s32 gDbgCamEnabled = false;
 u8 D_801D0D54 = false;
@@ -1044,18 +1072,29 @@ void Play_UpdateMain(PlayState* this) {
                     }
                 } else {
                     Room_ProcessRoomRequest(this, &this->roomCtx);
+                    // Run OC (O(n^2) pairwise) on worker thread while AT runs on main thread.
+                    // AT must stay on main thread because CollisionCheck_SetHitEffects spawns
+                    // effects and plays SFX which are not thread-safe.
+                    OcTaskArgs ocArgs = { this, &this->colChkCtx };
+                    TaskWorker_Submit(OcTask, &ocArgs);
+                    FrameProfiler_StartPhase(PROFILE_PHASE_COLLISION_AT);
                     CollisionCheck_AT(this, &this->colChkCtx);
-                    CollisionCheck_OC(this, &this->colChkCtx);
+                    FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_AT);
+                    TaskWorker_Wait();
+                    FrameProfiler_StartPhase(PROFILE_PHASE_COLLISION_DAMAGE);
                     CollisionCheck_Damage(this, &this->colChkCtx);
+                    FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_DAMAGE);
                     CollisionCheck_ClearContext(this, &this->colChkCtx);
                     if (!this->haltAllActors) {
+                        FrameProfiler_StartPhase(PROFILE_PHASE_ACTOR_UPDATE);
                         Actor_UpdateAll(this, &this->actorCtx);
+                        FrameProfiler_EndPhase(PROFILE_PHASE_ACTOR_UPDATE);
                     }
                     Cutscene_UpdateManual(this, &this->csCtx);
                     Cutscene_UpdateScripted(this, &this->csCtx);
-                    Effect_UpdateAll(this);
-                    EffectSs_UpdateAll(this);
-                    EffFootmark_Update(this);
+                    // Run effects on worker thread while main thread continues
+                    // with room/skybox/message/interface updates (independent systems)
+                    TaskWorker_Submit(EffectsTask, this);
                 }
             } else {
                 Rumble_SetUpdateEnabled(false);
@@ -1099,6 +1138,10 @@ void Play_UpdateMain(PlayState* this) {
 
     Environment_Update(this, &this->envCtx, &this->lightCtx, &this->pauseCtx, &this->msgCtx, &this->gameOverCtx,
                        this->state.gfxCtx);
+
+    // Wait for effects worker to complete (submitted after cutscene updates above).
+    // Effects must finish before the draw phase begins.
+    TaskWorker_Wait();
 
     if (this->sramCtx.status != 0) {
         if (GameInteractor_Should(VB_SAVE_USE_OWL_SAVE_TIMING, gSaveContext.save.isOwlSave)) {
@@ -1399,11 +1442,13 @@ void Play_DrawMain(PlayState* this) {
                         gSPSetExtraGeometryMode(POLY_XLU_DISP++, G_EX_ALWAYS_EXECUTE_BRANCH);
                     }
 
+                    FrameProfiler_StartPhase(PROFILE_PHASE_SCENE_DRAW);
                     Scene_Draw(this);
                     if (this->roomCtx.unk78) {
                         Room_Draw(this, &this->roomCtx.curRoom, roomDrawFlags & 3);
                         Room_Draw(this, &this->roomCtx.prevRoom, roomDrawFlags & 3);
                     }
+                    FrameProfiler_EndPhase(PROFILE_PHASE_SCENE_DRAW);
 
                     if (CVarGetInteger("gEnhancements.Graphics.DisableSceneGeometryDistanceCheck", 0)) {
                         gSPClearExtraGeometryMode(POLY_OPA_DISP++, G_EX_ALWAYS_EXECUTE_BRANCH);
@@ -1431,7 +1476,9 @@ void Play_DrawMain(PlayState* this) {
             }
 
             if (1) {
+                FrameProfiler_StartPhase(PROFILE_PHASE_ACTOR_DRAW);
                 Actor_DrawAll(this, &this->actorCtx);
+                FrameProfiler_EndPhase(PROFILE_PHASE_ACTOR_DRAW);
             }
 
             if (1) {
@@ -1624,7 +1671,9 @@ void Play_Main(GameState* thisx) {
         if (1) {
             this->state.gfxCtx = NULL;
         }
+        FrameProfiler_StartPhase(PROFILE_PHASE_PLAY_UPDATE);
         Play_Update(this);
+        FrameProfiler_EndPhase(PROFILE_PHASE_PLAY_UPDATE);
         this->state.gfxCtx = gfxCtx;
     }
 
@@ -1634,9 +1683,11 @@ void Play_Main(GameState* thisx) {
         if (1) {
             *CONTROLLER1(&this->state) = D_801F6C18;
         }
+        FrameProfiler_StartPhase(PROFILE_PHASE_PLAY_DRAW);
         FrameInterpolation_StartRecord();
         Play_Draw(this);
         FrameInterpolation_StopRecord();
+        FrameProfiler_EndPhase(PROFILE_PHASE_PLAY_DRAW);
         *CONTROLLER1(&this->state) = input;
     }
 

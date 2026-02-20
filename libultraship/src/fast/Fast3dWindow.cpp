@@ -209,6 +209,18 @@ bool Fast3dWindow::DrawAndRunGraphicsCommands(Gfx* commands, const std::unordere
     return true;
 }
 
+const Fast3DStats& Fast3dWindow::GetFrameStats() const {
+    return mInterpreter->GetFrameStats();
+}
+
+void Fast3dWindow::ResetFrameStats() {
+    mInterpreter->ResetFrameStats();
+}
+
+void Fast3dWindow::SetProfilingEnabled(bool enabled) {
+    mInterpreter->SetProfilingEnabled(enabled);
+}
+
 void Fast3dWindow::HandleEvents() {
     mWindowManagerApi->HandleEvents();
 }

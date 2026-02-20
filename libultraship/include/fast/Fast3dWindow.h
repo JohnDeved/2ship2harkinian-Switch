@@ -55,6 +55,9 @@ class Fast3dWindow : public Ship::Window {
     void SetRendererUCode(UcodeHandlers ucode);
     void EnableSRGBMode();
     bool DrawAndRunGraphicsCommands(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtxReplacements);
+    const Fast3DStats& GetFrameStats() const;
+    void ResetFrameStats();
+    void SetProfilingEnabled(bool enabled);
 
     std::weak_ptr<Interpreter> GetInterpreterWeak() const;
 

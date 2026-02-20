@@ -38,14 +38,16 @@
 
 #ifdef __SWITCH__
 #include <ship/port/switch/SwitchImpl.h>
+#include <switch.h>
 #endif
 
-#if not defined (__SWITCH__) && not defined(__WIIU__)
+#if not defined(__SWITCH__) && not defined(__WIIU__)
 #include "Extractor/Extract.h"
 #endif
 // OTRTODO
-//#include <functions.h>
+// #include <functions.h>
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
+#include "DeveloperTools/FrameProfiler.h"
 
 #ifdef ENABLE_CROWD_CONTROL
 #include "Enhancements/crowd-control/CrowdControl.h"
@@ -71,6 +73,7 @@ CrowdControl* CrowdControl::Instance;
 #include "2s2h/ShipUtils.h"
 #include "2s2h/ShipInit.hpp"
 #include "2s2h/PresetManager/PresetManager.h"
+#include "2s2h/collision_worker.h"
 
 // Resource Types/Factories
 #include <ship/resource/type/Blob.h>
@@ -225,7 +228,18 @@ OTRGlobals::OTRGlobals() {
     overlay->LoadFont("Fipps", 32.0f, "fonts/Fipps-Regular.otf");
     overlay->SetCurrentFont(CVarGetString(CVAR_GAME_OVERLAY_FONT, "Press Start 2P"));
 
-    context->InitAudio({ .SampleRate = 32000, .SampleLength = 1024, .DesiredBuffered = 1680 });
+    // DesiredBuffered controls the target number of queued samples in the SDL audio
+    // device.  On Switch the slower CPU causes longer game-frames when the scene is
+    // heavy (zone transitions, particle-heavy areas).  A larger cushion lets the
+    // audio device coast through those spikes without underrunning.
+    //   1680 samples ≈  52 ms @ 32 kHz  (fine for desktop)
+    //   3200 samples ≈ 100 ms @ 32 kHz  (absorbs frames up to ~100 ms on Switch)
+#if defined(__SWITCH__)
+    constexpr int desiredBuffered = 3200;
+#else
+    constexpr int desiredBuffered = 1680;
+#endif
+    context->InitAudio({ .SampleRate = 32000, .SampleLength = 1024, .DesiredBuffered = desiredBuffered });
 
     SPDLOG_INFO("Starting 2 Ship 2 Harkinian version {} (Branch: {} | Commit: {})", (char*)gBuildVersion,
                 (char*)gGitBranch, (char*)gGitCommitHash);
@@ -397,6 +411,14 @@ extern "C" int AudioPlayer_GetDesiredBuffered(void);
 extern "C" void ResourceMgr_LoadDirectory(const char* resName);
 std::unordered_map<std::string, ExtensionEntry> ExtensionCache;
 
+// 528 and 544 relate to 60 fps at 32 kHz  32000/60 = 533.333..
+// in an ideal world, one third of the calls should use num_samples=544 and two thirds num_samples=528
+#define SAMPLES_HIGH 560
+#define SAMPLES_LOW 528
+
+#define AUDIO_FRAMES_PER_UPDATE (R_UPDATE_RATE > 0 ? R_UPDATE_RATE : 1)
+#define NUM_AUDIO_CHANNELS 2
+
 static struct {
     std::thread thread;
     std::condition_variable cv_to_thread, cv_from_thread;
@@ -406,6 +428,12 @@ static struct {
 } audio;
 
 void OTRAudio_Thread() {
+#ifdef __SWITCH__
+    // Pin audio thread to core 2 so it never competes with the main/render
+    // thread on core 0.  This eliminates audio starvation during FPS dips.
+    svcSetThreadCoreMask(CUR_THREAD_HANDLE, 2, (1U << 2));
+#endif
+
     while (audio.running) {
         {
             std::unique_lock<std::mutex> Lock(audio.mutex);
@@ -417,15 +445,10 @@ void OTRAudio_Thread() {
                 break;
             }
         }
-        std::unique_lock<std::mutex> Lock(audio.mutex);
-// AudioMgr_ThreadEntry(&gAudioMgr);
-//  528 and 544 relate to 60 fps at 32 kHz 32000/60 = 533.333..
-//  in an ideal world, one third of the calls should use num_samples=544 and two thirds num_samples=528
-#define SAMPLES_HIGH 560
-#define SAMPLES_LOW 528
 
-#define AUDIO_FRAMES_PER_UPDATE (R_UPDATE_RATE > 0 ? R_UPDATE_RATE : 1)
-#define NUM_AUDIO_CHANNELS 2
+        // ---- normal path: game thread signaled, generate real audio ----
+        // No lock held during synthesis -- the mutex only guards the flag and CV,
+        // not the (potentially expensive) audio generation.
 
         int samples_left = AudioPlayer_Buffered();
         u32 num_audio_samples = samples_left < AudioPlayer_GetDesiredBuffered() ? SAMPLES_HIGH : SAMPLES_LOW;
@@ -440,7 +463,10 @@ void OTRAudio_Thread() {
         AudioPlayer_Play((u8*)audio_buffer,
                          num_audio_samples * (sizeof(int16_t) * NUM_AUDIO_CHANNELS * AUDIO_FRAMES_PER_UPDATE));
 
-        audio.processing = false;
+        {
+            std::unique_lock<std::mutex> Lock(audio.mutex);
+            audio.processing = false;
+        }
         audio.cv_from_thread.notify_one();
     }
 }
@@ -737,6 +763,8 @@ extern "C" void InitOTR() {
 
     OTRMessage_Init();
     OTRAudio_Init();
+    TaskWorker_Init();
+    TaskWorkerPool_Init();
     OTRExtScanner();
     PlayerCustomFlipbooks_Patch();
 
@@ -776,6 +804,8 @@ extern "C" void SaveManager_ThreadPoolWait() {
 
 extern "C" void DeinitOTR() {
     SaveManager_ThreadPoolWait();
+    TaskWorkerPool_Destroy();
+    TaskWorker_Destroy();
     OTRAudio_Exit();
 #ifdef ENABLE_CROWD_CONTROL
     CrowdControl::Instance->Disable();
@@ -931,24 +961,64 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
     // Process window events for resize, mouse, keyboard events
     wnd->HandleEvents();
 
+    const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
+    wnd->SetProfilingEnabled(profilerEnabled);
+
     auto intp = wnd->GetInterpreterWeak().lock().get();
     intp->mInterpolationIndex = 0;
 
     for (const auto& m : mtx_replacements) {
         wnd->DrawAndRunGraphicsCommands(Commands, m);
+
+        if (profilerEnabled) {
+            const auto& stats = wnd->GetFrameStats();
+
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, (float)stats.drawCalls);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BATCH_FLUSHES, (float)stats.batchFlushes);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_STATE_FLUSHES, (float)stats.stateChangeFlushes);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_SWITCHES, (float)stats.shaderSwitches);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_COMPILATIONS, (float)stats.shaderCompilations);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_BINDS, (float)stats.textureBinds);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_CACHE_MISSES, (float)stats.textureCacheMisses);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_VERTICES_SUBMITTED, (float)stats.verticesSubmitted);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED, (float)stats.trianglesSubmitted);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TOTAL_MS, (float)stats.timeTotal / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DISPATCH_MS, (float)stats.timeGbiDispatch / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TRI_MS, (float)stats.timeTriProcessing / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEX_MS, (float)stats.timeTextureSetup / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)stats.timeShaderSetup / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DRAW_MS, (float)stats.timeDrawSubmit / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VTX_MS, (float)stats.timeVertexLoad / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
+        }
+
         intp->mInterpolationIndex++;
+        FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
     }
 }
 
 // C->C++ Bridge
 extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
+    // Wait for the *previous* frame's audio to finish before starting the new one.
+    // This lets audio processing overlap with game logic instead of blocking after rendering.
+    FrameProfiler_StartPhase(PROFILE_PHASE_AUDIO_WAIT);
+    {
+        std::unique_lock<std::mutex> Lock(audio.mutex);
+        while (audio.processing) {
+            audio.cv_from_thread.wait(Lock);
+        }
+    }
+    FrameProfiler_EndPhase(PROFILE_PHASE_AUDIO_WAIT);
+
+    // Now kick off this frame's audio processing
     {
         std::unique_lock<std::mutex> Lock(audio.mutex);
         audio.processing = true;
     }
-
     audio.cv_to_thread.notify_one();
-    std::vector<std::unordered_map<Mtx*, MtxF>> mtx_replacements;
+
+    thread_local std::vector<std::unordered_map<Mtx*, MtxF>> mtx_replacements;
+    mtx_replacements.clear();
     int target_fps = OTRGlobals::Instance->GetInterpolationFPS();
     static int last_fps;
     static int last_update_rate;
@@ -968,6 +1038,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     // time_base = fps * original_fps (one second)
     int next_original_frame = fps;
 
+    FrameProfiler_StartPhase(PROFILE_PHASE_FRAME_INTERP);
     while (time + original_fps <= next_original_frame) {
         time += original_fps;
         if (time != next_original_frame) {
@@ -976,6 +1047,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             mtx_replacements.emplace_back();
         }
     }
+    FrameProfiler_EndPhase(PROFILE_PHASE_FRAME_INTERP);
 
     time -= fps;
 
@@ -989,17 +1061,14 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
         mtx_replacements.emplace_back();
     }
 
+    FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
+    FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
     RunCommands(commands, mtx_replacements);
+    FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
+    FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
 
     last_fps = fps;
     last_update_rate = R_UPDATE_RATE;
-
-    {
-        std::unique_lock<std::mutex> Lock(audio.mutex);
-        while (audio.processing) {
-            audio.cv_from_thread.wait(Lock);
-        }
-    }
 
     bool curAltAssets = CVarGetInteger("gEnhancements.Mods.AlternateAssets", 0);
     if (prevAltAssets != curAltAssets) {
@@ -1968,7 +2037,7 @@ extern "C" int Controller_ShouldRumble(size_t slot) {
     return 1;
 }
 
-#if not defined (__SWITCH__) && not defined(__WIIU__)
+#if not defined(__SWITCH__) && not defined(__WIIU__)
 extern "C" void Messagebox_ShowErrorBox(char* title, char* body) {
     Extractor::ShowErrorBox(title, body);
 }

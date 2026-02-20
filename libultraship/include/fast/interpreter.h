@@ -6,6 +6,7 @@
 #include <map>
 #include <list>
 #include <cstddef>
+#include <cstring>
 #include <vector>
 #include <stack>
 #include <string>
@@ -27,7 +28,35 @@
 
 #ifdef __cplusplus
 #include <compare>
+#include <chrono>
 #endif
+
+static inline uint64_t Fast3DTimerNowNs() {
+    return (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+struct Fast3DScopedTimer {
+    uint64_t& target;
+    uint64_t start;
+    bool enabled;
+
+    Fast3DScopedTimer(uint64_t& t, bool en) : target(t), start(0), enabled(en) {
+        if (enabled) {
+            start = Fast3DTimerNowNs();
+        }
+    }
+
+    ~Fast3DScopedTimer() {
+        if (enabled) {
+            target += Fast3DTimerNowNs() - start;
+        }
+    }
+
+    Fast3DScopedTimer(const Fast3DScopedTimer&) = delete;
+    Fast3DScopedTimer& operator=(const Fast3DScopedTimer&) = delete;
+};
 
 /*enum {
     CC_0,
@@ -340,6 +369,43 @@ struct RenderingState {
     TextureCacheNode* mTextures[SHADER_MAX_TEXTURES];
 };
 
+struct Fast3DStats {
+    uint32_t drawCalls;
+    uint32_t batchFlushes;
+    uint32_t textureBinds;
+    uint32_t textureCacheMisses;
+    uint32_t shaderSwitches;
+    uint32_t shaderCompilations;
+    uint32_t verticesSubmitted;
+    uint32_t trianglesSubmitted;
+    uint32_t stateChangeFlushes;
+
+    uint64_t timeTotal;
+    uint64_t timeGbiDispatch;
+    uint64_t timeTriProcessing;
+    uint64_t timeTextureSetup;
+    uint64_t timeShaderSetup;
+    uint64_t timeDrawSubmit;
+    uint64_t timeVertexLoad;
+
+    float avgBatchSize;
+    float usPerTriangle;
+    float usPerDrawCall;
+
+    void Reset() {
+        memset(this, 0, sizeof(*this));
+    }
+
+    void ComputeDerived() {
+        avgBatchSize = drawCalls > 0 ? (float)trianglesSubmitted / (float)drawCalls : 0.0f;
+        usPerTriangle = trianglesSubmitted > 0 ? (float)timeTotal / (float)trianglesSubmitted / 1000.0f : 0.0f;
+        usPerDrawCall = drawCalls > 0 ? (float)timeTotal / (float)drawCalls / 1000.0f : 0.0f;
+
+        const uint64_t accounted = timeTriProcessing + timeTextureSetup + timeShaderSetup + timeDrawSubmit + timeVertexLoad;
+        timeGbiDispatch = timeTotal > accounted ? (timeTotal - accounted) : 0;
+    }
+};
+
 struct FBInfo {
     uint32_t orig_width, orig_height;       // Original shape
     uint32_t applied_width, applied_height; // Up-scaled for the viewport
@@ -387,6 +453,10 @@ class Interpreter {
     void SetResolutionMultiplier(float multiplier);
     void SetMsaaLevel(uint32_t level);
     void GetCurDimensions(uint32_t* width, uint32_t* height);
+    const Fast3DStats& GetFrameStats() const;
+    void ResetFrameStats();
+    void SetProfilingEnabled(bool enabled);
+    bool IsProfilingEnabled() const;
 
     // private: TODO make these private
     void Flush();
@@ -492,6 +562,8 @@ class Interpreter {
 
     unsigned int mMsaaLevel = 1;
     bool mDroppedFrame{};
+    bool mProfilingEnabled = false;
+    Fast3DStats mFrameStats{};
     float* mBufVbo; // 3 vertices in a triangle and 32 floats per vtx
     size_t mBufVboLen{};
     size_t mBufVboNumTris{};

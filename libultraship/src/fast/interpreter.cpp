@@ -125,7 +125,18 @@ void GfxSetInstance(std::shared_ptr<Interpreter> gfx) {
 }
 
 void Interpreter::Flush() {
+    if (mProfilingEnabled) {
+        mFrameStats.batchFlushes++;
+    }
+
     if (mBufVboLen > 0) {
+        if (mProfilingEnabled) {
+            mFrameStats.drawCalls++;
+            mFrameStats.verticesSubmitted += (uint32_t)(mBufVboNumTris * 3);
+            mFrameStats.trianglesSubmitted += (uint32_t)mBufVboNumTris;
+        }
+
+        Fast3DScopedTimer timer(mFrameStats.timeDrawSubmit, mProfilingEnabled);
         mRapi->DrawTriangles(mBufVbo, mBufVboLen, mBufVboNumTris);
         mBufVboLen = 0;
         mBufVboNumTris = 0;
@@ -133,6 +144,7 @@ void Interpreter::Flush() {
 }
 
 ShaderProgram* Interpreter::LookupOrCreateShaderProgram(uint64_t id0, uint64_t id1) {
+    Fast3DScopedTimer timer(mFrameStats.timeShaderSetup, mProfilingEnabled);
     ShaderProgram* prg = mRapi->LookupShader(id0, id1);
     if (prg == nullptr) {
         mRapi->UnloadShader(mRenderingState.mShaderProgram);
@@ -399,6 +411,9 @@ ColorCombiner* Interpreter::LookupOrCreateColorCombiner(const ColorCombinerKey& 
     if (mPrevCombiner != mColorCombinerPool.end()) {
         return &mPrevCombiner->second;
     }
+    if (mProfilingEnabled) {
+        mFrameStats.stateChangeFlushes++;
+    }
     Flush();
     mPrevCombiner = mColorCombinerPool.insert(std::make_pair(key, ColorCombiner())).first;
     GenerateCC(&mPrevCombiner->second, key);
@@ -423,6 +438,10 @@ bool Interpreter::TextureCacheLookup(int i, const TextureCacheKey& key) {
         mTextureCache.lru.splice(mTextureCache.lru.end(), mTextureCache.lru,
                                  it->second.lru_location); // move to back
         return true;
+    }
+
+    if (mProfilingEnabled) {
+        mFrameStats.textureCacheMisses++;
     }
 
     if (mTextureCache.map.size() >= TEXTURE_CACHE_MAX_SIZE) {
@@ -884,6 +903,7 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
 }
 
 void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
+    Fast3DScopedTimer timer(mFrameStats.timeTextureSetup, mProfilingEnabled);
     uint8_t fmt = mRdp->texture_tile[tile].fmt;
     uint8_t siz = mRdp->texture_tile[tile].siz;
     uint32_t texFlags = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags;
@@ -1155,6 +1175,7 @@ void Interpreter::AdjustWidthHeightForScale(uint32_t& width, uint32_t& height, u
 }
 
 void Interpreter::GfxSpVertex(size_t n_vertices, size_t dest_index, const F3DVtx* vertices) {
+    Fast3DScopedTimer timer(mFrameStats.timeVertexLoad, mProfilingEnabled);
     for (size_t i = 0; i < n_vertices; i++, dest_index++) {
         const F3DVtx_t* v = &vertices[i].v;
         const F3DVtx_tn* vn = &vertices[i].n;
@@ -1354,6 +1375,14 @@ void Interpreter::GfxSpModifyVertex(uint16_t vtx_idx, uint8_t where, uint32_t va
 }
 
 void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx, bool is_rect) {
+    Fast3DScopedTimer timer(mFrameStats.timeTriProcessing, mProfilingEnabled);
+    auto state_change_flush = [this]() {
+        if (mProfilingEnabled) {
+            mFrameStats.stateChangeFlushes++;
+        }
+        Flush();
+    };
+
     struct LoadedVertex* v1 = &mRsp->loaded_vertices[vtx1_idx];
     struct LoadedVertex* v2 = &mRsp->loaded_vertices[vtx2_idx];
     struct LoadedVertex* v3 = &mRsp->loaded_vertices[vtx3_idx];
@@ -1409,26 +1438,26 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     bool depth_mask = (mRdp->other_mode_l & Z_UPD) == Z_UPD;
     uint8_t depth_test_and_mask = (depth_test ? 1 : 0) | (depth_mask ? 2 : 0);
     if (depth_test_and_mask != mRenderingState.depth_test_and_mask) {
-        Flush();
+        state_change_flush();
         mRapi->SetDepthTestAndMask(depth_test, depth_mask);
         mRenderingState.depth_test_and_mask = depth_test_and_mask;
     }
 
     bool zmode_decal = (mRdp->other_mode_l & ZMODE_DEC) == ZMODE_DEC;
     if (zmode_decal != mRenderingState.decal_mode) {
-        Flush();
+        state_change_flush();
         mRapi->SetZmodeDecal(zmode_decal);
         mRenderingState.decal_mode = zmode_decal;
     }
 
     if (mRdp->viewport_or_scissor_changed) {
         if (memcmp(&mRdp->viewport, &mRenderingState.viewport, sizeof(mRdp->viewport)) != 0) {
-            Flush();
+            state_change_flush();
             mRapi->SetViewport(mRdp->viewport.x, mRdp->viewport.y, mRdp->viewport.width, mRdp->viewport.height);
             mRenderingState.viewport = mRdp->viewport;
         }
         if (memcmp(&mRdp->scissor, &mRenderingState.scissor, sizeof(mRdp->scissor)) != 0) {
-            Flush();
+            state_change_flush();
             mRapi->SetScissor(mRdp->scissor.x, mRdp->scissor.y, mRdp->scissor.width, mRdp->scissor.height);
             mRenderingState.scissor = mRdp->scissor;
         }
@@ -1518,7 +1547,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         uint32_t tile = mRdp->first_tile_index + i;
         if (comb->usedTextures[i]) {
             if (mRdp->textures_changed[i]) {
-                Flush();
+                state_change_flush();
                 ImportTexture(i, tile, false);
                 if (mRdp->loaded_texture[i].masked) {
                     ImportTextureMask(SHADER_FIRST_MASK_TEXTURE + i, tile);
@@ -1578,7 +1607,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             bool linear_filter = (mRdp->other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT;
             if (linear_filter != mRenderingState.mTextures[i]->second.linear_filter ||
                 cms != mRenderingState.mTextures[i]->second.cms || cmt != mRenderingState.mTextures[i]->second.cmt) {
-                Flush();
+                state_change_flush();
 
                 // Set the same sampler params on the blended texture. Needed for opengl.
                 if (mRdp->loaded_texture[i].blended) {
@@ -1599,13 +1628,13 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             LookupOrCreateShaderProgram(comb->shader_id0, comb->shader_id1 | tm * SHADER_OPT(TEXEL0_CLAMP_S));
     }
     if (prg != mRenderingState.mShaderProgram) {
-        Flush();
+        state_change_flush();
         mRapi->UnloadShader(mRenderingState.mShaderProgram);
         mRapi->LoadShader(prg);
         mRenderingState.mShaderProgram = prg;
     }
     if (use_alpha != mRenderingState.alpha_blend) {
-        Flush();
+        state_change_flush();
         mRapi->SetUseAlpha(use_alpha);
         mRenderingState.alpha_blend = use_alpha;
     }
@@ -4352,6 +4381,15 @@ void Interpreter::RunGuiOnly() {
 }
 
 void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_replacements) {
+    if (mProfilingEnabled) {
+        mFrameStats.Reset();
+        mRapi->SetStatsPtr(&mFrameStats);
+    } else {
+        mRapi->SetStatsPtr(nullptr);
+    }
+
+    const uint64_t runStartNs = mProfilingEnabled ? Fast3DTimerNowNs() : 0;
+
     SpReset();
 
     mGetPixelDepthPending.clear();
@@ -4413,6 +4451,11 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
         mRapi->StartDrawToFramebuffer(0, 1);
 
         assert(0 && "active framebuffer was never reset back to original");
+    }
+
+    if (mProfilingEnabled) {
+        mFrameStats.timeTotal = Fast3DTimerNowNs() - runStartNs;
+        mFrameStats.ComputeDerived();
     }
 }
 
@@ -4602,6 +4645,22 @@ void Interpreter::SetMsaaLevel(uint32_t level) {
 void Interpreter::GetCurDimensions(uint32_t* width, uint32_t* height) {
     *width = mCurDimensions.width;
     *height = mCurDimensions.height;
+}
+
+const Fast3DStats& Interpreter::GetFrameStats() const {
+    return mFrameStats;
+}
+
+void Interpreter::ResetFrameStats() {
+    mFrameStats.Reset();
+}
+
+void Interpreter::SetProfilingEnabled(bool enabled) {
+    mProfilingEnabled = enabled;
+}
+
+bool Interpreter::IsProfilingEnabled() const {
+    return mProfilingEnabled;
 }
 
 } // namespace Fast

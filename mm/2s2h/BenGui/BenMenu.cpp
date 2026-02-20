@@ -675,6 +675,24 @@ void BenMenu::AddSettings() {
                      .Format("%.1f")
                      .Step(0.1f));
 
+    AddWidget(path, "FPS Counter", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Show FPS", WIDGET_CVAR_CHECKBOX)
+        .CVar("gWindows.FpsOverlay")
+        .WindowName("FPS Overlay")
+        .Options(CheckboxOptions().Tooltip("Displays a real-time FPS counter on screen."));
+    AddWidget(path, "Hide Window Background", WIDGET_CVAR_CHECKBOX)
+        .CVar("gFpsOverlay.HideBackground")
+        .Options(CheckboxOptions().Tooltip("Hides the background of the FPS Overlay window."));
+    AddWidget(path, "Scale: %.1fx", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gFpsOverlay.Scale")
+        .Options(FloatSliderOptions()
+                     .Tooltip("Adjust the Scale for the FPS Overlay window.")
+                     .Min(1.0f)
+                     .Max(5.0f)
+                     .DefaultValue(1.0f)
+                     .Format("%.1f")
+                     .Step(0.1f));
+
     path.column = SECTION_COLUMN_1;
     path.sidebarName = "Presets";
     AddSidebarEntry("Settings", "Presets", 1);
@@ -2021,6 +2039,13 @@ void BenMenu::AddDevTools() {
         .CVar("gWindows.MessageViewer")
         .Options(ButtonOptions().Tooltip("Enables the Message Viewer window for testing in-game messages."))
         .WindowName("Message Viewer");
+
+    path = { "Dev Tools", "Frame Profiler", SECTION_COLUMN_1 };
+    AddSidebarEntry("Dev Tools", "Frame Profiler", 1);
+    AddWidget(path, "Popout Frame Profiler", WIDGET_WINDOW_BUTTON)
+        .CVar("gWindows.FrameProfiler")
+        .Options(ButtonOptions().Tooltip("Shows per-phase CPU timing for each frame, helping identify bottlenecks."))
+        .WindowName("Frame Profiler");
 }
 
 BenMenu::BenMenu(const std::string& consoleVariable, const std::string& name)

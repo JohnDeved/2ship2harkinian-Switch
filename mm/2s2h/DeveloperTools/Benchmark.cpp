@@ -33,7 +33,8 @@ struct BenchmarkScene {
     int measureFrames; // frames to collect profiler data
 };
 
-static const BenchmarkScene sBenchmarkScenes[] = {
+// Full benchmark: 7 scenes covering a wide range of rendering workloads
+static const BenchmarkScene sBenchmarkScenesFull[] = {
     { ENTRANCE(SOUTH_CLOCK_TOWN, 0), "South Clock Town", 120, 300 },
     { ENTRANCE(NORTH_CLOCK_TOWN, 0), "North Clock Town", 120, 300 },
     { ENTRANCE(EAST_CLOCK_TOWN, 0), "East Clock Town", 120, 300 },
@@ -42,7 +43,24 @@ static const BenchmarkScene sBenchmarkScenes[] = {
     { ENTRANCE(GREAT_BAY_COAST, 0), "Great Bay Coast", 120, 300 },
     { ENTRANCE(IKANA_CANYON, 0), "Ikana Canyon", 120, 300 },
 };
-static constexpr int BENCHMARK_SCENE_COUNT = sizeof(sBenchmarkScenes) / sizeof(sBenchmarkScenes[0]);
+static constexpr int BENCHMARK_FULL_COUNT = sizeof(sBenchmarkScenesFull) / sizeof(sBenchmarkScenesFull[0]);
+
+// Quick benchmark: 2 most demanding scenes for fast regression checks
+static const BenchmarkScene sBenchmarkScenesQuick[] = {
+    { ENTRANCE(EAST_CLOCK_TOWN, 0), "East Clock Town", 120, 300 },
+    { ENTRANCE(GREAT_BAY_COAST, 0), "Great Bay Coast", 120, 300 },
+};
+static constexpr int BENCHMARK_QUICK_COUNT = sizeof(sBenchmarkScenesQuick) / sizeof(sBenchmarkScenesQuick[0]);
+
+enum BenchmarkMode {
+    BENCH_MODE_FULL,
+    BENCH_MODE_QUICK,
+};
+
+// Active scene list (set when benchmark starts)
+static BenchmarkMode sBenchMode = BENCH_MODE_FULL;
+static const BenchmarkScene* sActiveScenes = sBenchmarkScenesFull;
+static int sActiveSceneCount = BENCHMARK_FULL_COUNT;
 
 // Frame time thresholds for color-coded results (ms)
 static constexpr float BENCHMARK_TARGET_60FPS_MS = 1000.0f / 60.0f; // ~16.67ms
@@ -106,6 +124,20 @@ static void BenchmarkWarpToScene(u16 entrance) {
     gSaveContext.nextTransitionType = TRANS_TYPE_FADE_BLACK_FAST;
 }
 
+// ── Start helper ───────────────────────────────────────────────────────
+
+static void StartBenchmark(BenchmarkMode mode) {
+    sBenchMode = mode;
+    if (mode == BENCH_MODE_QUICK) {
+        sActiveScenes = sBenchmarkScenesQuick;
+        sActiveSceneCount = BENCHMARK_QUICK_COUNT;
+    } else {
+        sActiveScenes = sBenchmarkScenesFull;
+        sActiveSceneCount = BENCHMARK_FULL_COUNT;
+    }
+    sState = BENCH_STARTING;
+}
+
 // ── Hook callbacks ─────────────────────────────────────────────────────
 
 static void OnBenchmarkSceneInit(s8 sceneId, s8 spawnNum) {
@@ -135,7 +167,7 @@ static void OnBenchmarkUpdate() {
             sResults.clear();
             sState = BENCH_WARPING;
             sSceneReady = false;
-            BenchmarkWarpToScene(sBenchmarkScenes[sCurrentScene].entrance);
+            BenchmarkWarpToScene(sActiveScenes[sCurrentScene].entrance);
             break;
         }
         case BENCH_WARPING: {
@@ -148,7 +180,7 @@ static void OnBenchmarkUpdate() {
         }
         case BENCH_SETTLING: {
             sFrameCounter++;
-            if (sFrameCounter >= sBenchmarkScenes[sCurrentScene].settleFrames) {
+            if (sFrameCounter >= sActiveScenes[sCurrentScene].settleFrames) {
                 sFrameCounter = 0;
                 ResetAccum();
                 sState = BENCH_MEASURING;
@@ -177,11 +209,11 @@ static void OnBenchmarkUpdate() {
             sAccum.frameCount++;
 
             sFrameCounter++;
-            if (sFrameCounter >= sBenchmarkScenes[sCurrentScene].measureFrames) {
+            if (sFrameCounter >= sActiveScenes[sCurrentScene].measureFrames) {
                 // Store averaged results for this scene
                 int n = sAccum.frameCount > 0 ? sAccum.frameCount : 1;
                 BenchmarkResult result;
-                result.name = sBenchmarkScenes[sCurrentScene].name;
+                result.name = sActiveScenes[sCurrentScene].name;
                 for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
                     result.phases[i] = (float)(sAccum.phases[i] / n);
                 }
@@ -201,12 +233,12 @@ static void OnBenchmarkUpdate() {
                 sResults.push_back(result);
 
                 sCurrentScene++;
-                if (sCurrentScene >= BENCHMARK_SCENE_COUNT) {
+                if (sCurrentScene >= sActiveSceneCount) {
                     sState = BENCH_DONE;
                 } else {
                     sState = BENCH_WARPING;
                     sSceneReady = false;
-                    BenchmarkWarpToScene(sBenchmarkScenes[sCurrentScene].entrance);
+                    BenchmarkWarpToScene(sActiveScenes[sCurrentScene].entrance);
                 }
             }
             break;
@@ -299,6 +331,7 @@ static void ExportBenchmarkReport() {
     }
 
     out << "=== 2S2H Benchmark Report ===" << std::endl;
+    out << "Mode: " << (sBenchMode == BENCH_MODE_QUICK ? "Quick" : "Full") << std::endl;
     out << "Timestamp: " << timeBuf << std::endl;
     out << "Branch: " << branch << std::endl;
     out << "Commit: " << commitFull << std::endl;
@@ -595,8 +628,12 @@ void BenchmarkWindow::DrawElement() {
     if (!canStart) {
         ImGui::BeginDisabled();
     }
-    if (ImGui::Button("Run Benchmark")) {
-        sState = BENCH_STARTING;
+    if (ImGui::Button("Full Benchmark")) {
+        StartBenchmark(BENCH_MODE_FULL);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Quick Benchmark")) {
+        StartBenchmark(BENCH_MODE_QUICK);
     }
     if (!canStart) {
         ImGui::EndDisabled();
@@ -605,12 +642,14 @@ void BenchmarkWindow::DrawElement() {
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f), "Load a save file first");
         }
     }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Full: %d scenes, Quick: %d scenes)", BENCHMARK_FULL_COUNT, BENCHMARK_QUICK_COUNT);
 
     // Progress display
     if (isRunning) {
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Text("Status: Running...");
+        ImGui::Text("Status: Running %s benchmark...", sBenchMode == BENCH_MODE_QUICK ? "Quick" : "Full");
 
         const char* stateStr = "Unknown";
         switch (sState) {
@@ -630,22 +669,22 @@ void BenchmarkWindow::DrawElement() {
                 break;
         }
 
-        ImGui::Text("Scene %d/%d: %s", sCurrentScene + 1, BENCHMARK_SCENE_COUNT,
-                     (sCurrentScene < BENCHMARK_SCENE_COUNT) ? sBenchmarkScenes[sCurrentScene].name : "Done");
+        ImGui::Text("Scene %d/%d: %s", sCurrentScene + 1, sActiveSceneCount,
+                     (sCurrentScene < sActiveSceneCount) ? sActiveScenes[sCurrentScene].name : "Done");
         ImGui::Text("Phase: %s", stateStr);
 
-        if (sCurrentScene < BENCHMARK_SCENE_COUNT) {
+        if (sCurrentScene < sActiveSceneCount) {
             if (sState == BENCH_SETTLING) {
-                float pct = (float)sFrameCounter / sBenchmarkScenes[sCurrentScene].settleFrames;
+                float pct = (float)sFrameCounter / sActiveScenes[sCurrentScene].settleFrames;
                 ImGui::ProgressBar(pct, ImVec2(-1, 0), "Settling");
             } else if (sState == BENCH_MEASURING) {
-                float pct = (float)sFrameCounter / sBenchmarkScenes[sCurrentScene].measureFrames;
+                float pct = (float)sFrameCounter / sActiveScenes[sCurrentScene].measureFrames;
                 ImGui::ProgressBar(pct, ImVec2(-1, 0), "Measuring");
             }
         }
 
         // Overall progress
-        float overallPct = (float)sResults.size() / BENCHMARK_SCENE_COUNT;
+        float overallPct = (float)sResults.size() / sActiveSceneCount;
         ImGui::ProgressBar(overallPct, ImVec2(-1, 0), "Overall");
     }
 
@@ -653,7 +692,7 @@ void BenchmarkWindow::DrawElement() {
     if (!sResults.empty()) {
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::Text("Results:");
+        ImGui::Text("Results (%s):", sBenchMode == BENCH_MODE_QUICK ? "Quick" : "Full");
 
         // Summary table
         if (ImGui::BeginTable("BenchmarkSummary", 8,
@@ -810,10 +849,17 @@ void BenchmarkWindow::DrawElement() {
     }
 
     // Scene list reference
-    if (ImGui::TreeNode("Benchmark Scenes")) {
-        for (int i = 0; i < BENCHMARK_SCENE_COUNT; i++) {
-            ImGui::BulletText("%s (settle: %d frames, measure: %d frames)", sBenchmarkScenes[i].name,
-                              sBenchmarkScenes[i].settleFrames, sBenchmarkScenes[i].measureFrames);
+    if (ImGui::TreeNode("Full Scenes")) {
+        for (int i = 0; i < BENCHMARK_FULL_COUNT; i++) {
+            ImGui::BulletText("%s (settle: %d, measure: %d)", sBenchmarkScenesFull[i].name,
+                              sBenchmarkScenesFull[i].settleFrames, sBenchmarkScenesFull[i].measureFrames);
+        }
+        ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("Quick Scenes")) {
+        for (int i = 0; i < BENCHMARK_QUICK_COUNT; i++) {
+            ImGui::BulletText("%s (settle: %d, measure: %d)", sBenchmarkScenesQuick[i].name,
+                              sBenchmarkScenesQuick[i].settleFrames, sBenchmarkScenesQuick[i].measureFrames);
         }
         ImGui::TreePop();
     }

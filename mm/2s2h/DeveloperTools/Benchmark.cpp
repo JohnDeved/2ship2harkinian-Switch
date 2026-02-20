@@ -55,6 +55,10 @@ static const BenchmarkScene sBenchmarkScenes[] = {
 };
 static constexpr int BENCHMARK_SCENE_COUNT = sizeof(sBenchmarkScenes) / sizeof(sBenchmarkScenes[0]);
 
+// Frame time thresholds for color-coded results (ms)
+static constexpr float BENCHMARK_TARGET_60FPS_MS = 1000.0f / 60.0f; // ~16.67ms
+static constexpr float BENCHMARK_WARN_40FPS_MS = 1000.0f / 40.0f;   // 25.0ms
+
 // ── Per-scene result storage ───────────────────────────────────────────
 
 struct BenchmarkResult {
@@ -81,7 +85,6 @@ enum BenchmarkState {
     BENCH_WARPING,    // scene transition triggered, waiting for load
     BENCH_SETTLING,   // scene loaded, waiting for stabilization
     BENCH_MEASURING,  // collecting profiler data
-    BENCH_NEXT_SCENE, // transitioning to next scene
     BENCH_DONE,       // all scenes measured, results ready
 };
 
@@ -396,23 +399,22 @@ void BenchmarkWindow::DrawElement() {
             case BENCH_MEASURING:
                 stateStr = "Measuring...";
                 break;
-            case BENCH_NEXT_SCENE:
-                stateStr = "Next scene...";
-                break;
             default:
                 break;
         }
 
         ImGui::Text("Scene %d/%d: %s", sCurrentScene + 1, BENCHMARK_SCENE_COUNT,
-                     (sCurrentScene < BENCHMARK_SCENE_COUNT) ? sBenchmarkScenes[sCurrentScene].name : "");
+                     (sCurrentScene < BENCHMARK_SCENE_COUNT) ? sBenchmarkScenes[sCurrentScene].name : "Done");
         ImGui::Text("Phase: %s", stateStr);
 
-        if (sState == BENCH_SETTLING) {
-            float pct = (float)sFrameCounter / sBenchmarkScenes[sCurrentScene].settleFrames;
-            ImGui::ProgressBar(pct, ImVec2(-1, 0), "Settling");
-        } else if (sState == BENCH_MEASURING) {
-            float pct = (float)sFrameCounter / sBenchmarkScenes[sCurrentScene].measureFrames;
-            ImGui::ProgressBar(pct, ImVec2(-1, 0), "Measuring");
+        if (sCurrentScene < BENCHMARK_SCENE_COUNT) {
+            if (sState == BENCH_SETTLING) {
+                float pct = (float)sFrameCounter / sBenchmarkScenes[sCurrentScene].settleFrames;
+                ImGui::ProgressBar(pct, ImVec2(-1, 0), "Settling");
+            } else if (sState == BENCH_MEASURING) {
+                float pct = (float)sFrameCounter / sBenchmarkScenes[sCurrentScene].measureFrames;
+                ImGui::ProgressBar(pct, ImVec2(-1, 0), "Measuring");
+            }
         }
 
         // Overall progress
@@ -442,9 +444,9 @@ void BenchmarkWindow::DrawElement() {
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", r.name);
                 ImGui::TableNextColumn();
-                // Color code: green < 16.67ms, yellow < 25ms, red >= 25ms
-                ImVec4 color = (r.totalFrameMs < 16.67f)  ? ImVec4(0.2f, 1.0f, 0.2f, 1.0f)
-                               : (r.totalFrameMs < 25.0f) ? ImVec4(1.0f, 1.0f, 0.2f, 1.0f)
+                // Color code: green = within 60 FPS, yellow = within 40 FPS, red = below 40 FPS
+                ImVec4 color = (r.totalFrameMs < BENCHMARK_TARGET_60FPS_MS)  ? ImVec4(0.2f, 1.0f, 0.2f, 1.0f)
+                               : (r.totalFrameMs < BENCHMARK_WARN_40FPS_MS) ? ImVec4(1.0f, 1.0f, 0.2f, 1.0f)
                                                            : ImVec4(1.0f, 0.3f, 0.2f, 1.0f);
                 ImGui::TextColored(color, "%.2f", r.totalFrameMs);
                 ImGui::TableNextColumn();

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cmath>
 #include <fstream>
+#include <sstream>
 #include <iomanip>
 #include <ctime>
 #include <string>
@@ -98,6 +99,217 @@ static bool sHooksRegistered = false;
 static std::vector<BenchmarkResult> sResults;
 static std::string sLastExportPath;
 static float sExportMsgTimer = 0.0f;
+
+// ── Baseline comparison ────────────────────────────────────────────────
+
+struct BaselineData {
+    std::string branch;
+    std::string commit;
+    std::string timestamp;
+    std::string mode; // "Full" or "Quick"
+    std::vector<BenchmarkResult> results;
+    // Scene names stored separately for serialization (since BenchmarkResult::name is a const char*)
+    std::vector<std::string> sceneNames;
+    bool loaded = false;
+};
+static BaselineData sBaseline;
+static std::string sBaselineMsgText;
+static float sBaselineMsgTimer = 0.0f;
+
+static const char* BASELINE_FILENAME = "benchmark_baseline.txt";
+
+// Find matching baseline result for a scene name (returns nullptr if not found)
+static const BenchmarkResult* FindBaselineForScene(const char* sceneName) {
+    if (!sBaseline.loaded) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < sBaseline.results.size(); i++) {
+        if (sBaseline.sceneNames[i] == sceneName) {
+            return &sBaseline.results[i];
+        }
+    }
+    return nullptr;
+}
+
+static void SaveBaseline() {
+    if (sResults.empty()) {
+        return;
+    }
+
+    std::string filepath = Ship::Context::GetPathRelativeToAppDirectory(BASELINE_FILENAME);
+    std::ofstream out(filepath);
+    if (!out.is_open()) {
+        sBaselineMsgText = "ERROR: Could not write baseline";
+        sBaselineMsgTimer = 5.0f;
+        return;
+    }
+
+    std::string branch = (gGitBranch[0] != '\0') ? gGitBranch : "unknown";
+    std::string commit = (gGitCommitHash[0] != '\0') ? gGitCommitHash : "unknown";
+
+    time_t now = std::time(nullptr);
+    struct tm tmBuf;
+#ifdef _WIN32
+    localtime_s(&tmBuf, &now);
+#else
+    localtime_r(&now, &tmBuf);
+#endif
+    char timeBuf[64];
+    std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tmBuf);
+
+    out << "BASELINE_V1" << std::endl;
+    out << "branch=" << branch << std::endl;
+    out << "commit=" << commit << std::endl;
+    out << "timestamp=" << timeBuf << std::endl;
+    out << "mode=" << (sBenchMode == BENCH_MODE_QUICK ? "Quick" : "Full") << std::endl;
+    out << "scene_count=" << sResults.size() << std::endl;
+
+    for (const auto& r : sResults) {
+        out << "SCENE=" << r.name << std::endl;
+        // Write all phases
+        out << "phases=";
+        for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
+            if (i > 0) out << ",";
+            out << std::fixed << std::setprecision(6) << r.phases[i];
+        }
+        out << std::endl;
+        // Write all counters
+        out << "counters=";
+        for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
+            if (i > 0) out << ",";
+            out << std::fixed << std::setprecision(6) << r.counters[i];
+        }
+        out << std::endl;
+    }
+
+    out.close();
+
+    // Also store in memory
+    sBaseline.branch = branch;
+    sBaseline.commit = commit;
+    sBaseline.timestamp = timeBuf;
+    sBaseline.mode = (sBenchMode == BENCH_MODE_QUICK ? "Quick" : "Full");
+    sBaseline.results = sResults;
+    sBaseline.sceneNames.clear();
+    for (const auto& r : sResults) {
+        sBaseline.sceneNames.push_back(r.name);
+    }
+    // Fix name pointers to point to our owned strings
+    for (size_t i = 0; i < sBaseline.results.size(); i++) {
+        sBaseline.results[i].name = sBaseline.sceneNames[i].c_str();
+    }
+    sBaseline.loaded = true;
+
+    sBaselineMsgText = "Baseline saved (" + std::string(timeBuf) + ")";
+    sBaselineMsgTimer = 5.0f;
+}
+
+static void LoadBaseline() {
+    std::string filepath = Ship::Context::GetPathRelativeToAppDirectory(BASELINE_FILENAME);
+    std::ifstream in(filepath);
+    if (!in.is_open()) {
+        sBaseline.loaded = false;
+        return;
+    }
+
+    std::string line;
+    // Check header
+    if (!std::getline(in, line) || line != "BASELINE_V1") {
+        sBaseline.loaded = false;
+        return;
+    }
+
+    sBaseline.results.clear();
+    sBaseline.sceneNames.clear();
+    sBaseline.branch.clear();
+    sBaseline.commit.clear();
+    sBaseline.timestamp.clear();
+    sBaseline.mode.clear();
+
+    int expectedScenes = 0;
+
+    while (std::getline(in, line)) {
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+
+        if (key == "branch") {
+            sBaseline.branch = val;
+        } else if (key == "commit") {
+            sBaseline.commit = val;
+        } else if (key == "timestamp") {
+            sBaseline.timestamp = val;
+        } else if (key == "mode") {
+            sBaseline.mode = val;
+        } else if (key == "scene_count") {
+            expectedScenes = std::stoi(val);
+        } else if (key == "SCENE") {
+            sBaseline.sceneNames.push_back(val);
+            BenchmarkResult result;
+            memset(&result, 0, sizeof(result));
+            result.name = nullptr; // set later
+
+            // Read phases line
+            if (std::getline(in, line) && line.substr(0, 7) == "phases=") {
+                std::istringstream ss(line.substr(7));
+                std::string token;
+                int idx = 0;
+                while (std::getline(ss, token, ',') && idx < PROFILE_PHASE_MAX) {
+                    result.phases[idx++] = std::stof(token);
+                }
+            }
+            // Read counters line
+            if (std::getline(in, line) && line.substr(0, 9) == "counters=") {
+                std::istringstream ss(line.substr(9));
+                std::string token;
+                int idx = 0;
+                while (std::getline(ss, token, ',') && idx < PROFILE_COUNTER_MAX) {
+                    result.counters[idx++] = std::stof(token);
+                }
+            }
+
+            sBaseline.results.push_back(result);
+        }
+    }
+
+    // Fix name pointers
+    for (size_t i = 0; i < sBaseline.results.size(); i++) {
+        sBaseline.results[i].name = sBaseline.sceneNames[i].c_str();
+    }
+
+    sBaseline.loaded = !sBaseline.results.empty();
+}
+
+static void ClearBaseline() {
+    sBaseline.results.clear();
+    sBaseline.sceneNames.clear();
+    sBaseline.loaded = false;
+
+    // Also delete the file
+    std::string filepath = Ship::Context::GetPathRelativeToAppDirectory(BASELINE_FILENAME);
+    std::remove(filepath.c_str());
+
+    sBaselineMsgText = "Baseline cleared";
+    sBaselineMsgTimer = 3.0f;
+}
+
+// Delta formatting helper: returns colored text for a delta value
+// For timing values (ms), negative = improvement (green), positive = regression (red)
+static ImVec4 DeltaColor(float delta, bool lowerIsBetter = true) {
+    if (lowerIsBetter) {
+        if (delta < -0.5f) return ImVec4(0.2f, 1.0f, 0.2f, 1.0f);  // green = improved
+        if (delta > 0.5f) return ImVec4(1.0f, 0.3f, 0.2f, 1.0f);   // red = regressed
+    } else {
+        if (delta > 0.5f) return ImVec4(0.2f, 1.0f, 0.2f, 1.0f);   // green = improved (higher is better)
+        if (delta < -0.5f) return ImVec4(1.0f, 0.3f, 0.2f, 1.0f);  // red = regressed
+    }
+    return ImVec4(0.7f, 0.7f, 0.7f, 1.0f); // neutral
+}
+
+static const char* DeltaSign(float delta) {
+    return (delta > 0.0f) ? "+" : "";
+}
 
 // Generic accumulator: captures all phases and counters
 struct MeasureAccum {
@@ -264,6 +476,7 @@ static void RegisterBenchmarkHooks() {
 
 static void RegisterBenchmark() {
     RegisterBenchmarkHooks();
+    LoadBaseline();
 }
 
 RegisterShipInitFunc initFuncBenchmark(RegisterBenchmark, {});
@@ -363,6 +576,37 @@ static void ExportBenchmarkReport() {
     out << "Average FPS:       " << (totalFpsSum / count) << std::endl;
     out << "Average Frame:     " << (totalFrameMsSum / count) << " ms" << std::endl;
     out << std::endl;
+
+    // Baseline comparison
+    if (sBaseline.loaded) {
+        out << "--- Baseline Comparison ---" << std::endl;
+        std::string baseCommit = sBaseline.commit.size() > 7 ? sBaseline.commit.substr(0, 7) : sBaseline.commit;
+        out << "Baseline: " << sBaseline.branch << " @ " << baseCommit
+            << " (" << sBaseline.timestamp << ", " << sBaseline.mode << ")" << std::endl;
+        out << std::endl;
+        out << "  Scene                     Frame ms  Baseline   Delta    Delta %" << std::endl;
+        out << "  -------------------------------------------------------------------------" << std::endl;
+        for (const auto& r : sResults) {
+            float frameMs = ResultRenderFrameMs(r);
+            const BenchmarkResult* base = FindBaselineForScene(r.name);
+            if (base) {
+                float baseMs = ResultRenderFrameMs(*base);
+                float delta = frameMs - baseMs;
+                float deltaPct = (baseMs > 0.01f) ? (delta / baseMs * 100.0f) : 0.0f;
+                const char* indicator = (delta < -0.5f) ? " FASTER" : (delta > 0.5f) ? " SLOWER" : " ~same";
+                char line[256];
+                snprintf(line, sizeof(line), "  %-24s %7.2f  %7.2f  %+7.2f  %+5.1f%%%s",
+                         r.name, frameMs, baseMs, delta, deltaPct, indicator);
+                out << line << std::endl;
+            } else {
+                char line[256];
+                snprintf(line, sizeof(line), "  %-24s %7.2f     -        -       -   (no baseline)",
+                         r.name, frameMs);
+                out << line << std::endl;
+            }
+        }
+        out << std::endl;
+    }
 
     // Per-scene detailed results
     out << "--- Per-Scene Results ---" << std::endl;
@@ -694,13 +938,29 @@ void BenchmarkWindow::DrawElement() {
         ImGui::Separator();
         ImGui::Text("Results (%s):", sBenchMode == BENCH_MODE_QUICK ? "Quick" : "Full");
 
-        // Summary table
-        if (ImGui::BeginTable("BenchmarkSummary", 8,
+        // Baseline info
+        if (sBaseline.loaded) {
+            std::string baseCommit =
+                sBaseline.commit.size() > 7 ? sBaseline.commit.substr(0, 7) : sBaseline.commit;
+            ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Baseline: %s @ %s (%s, %s)",
+                               sBaseline.branch.c_str(), baseCommit.c_str(), sBaseline.timestamp.c_str(),
+                               sBaseline.mode.c_str());
+        }
+
+        // Summary table -- add delta columns when baseline exists
+        int colCount = sBaseline.loaded ? 10 : 8;
+        if (ImGui::BeginTable("BenchmarkSummary", colCount,
                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                                   ImGuiTableFlags_ScrollX)) {
             ImGui::TableSetupColumn("Scene");
             ImGui::TableSetupColumn("Frame ms");
+            if (sBaseline.loaded) {
+                ImGui::TableSetupColumn("vs Base");
+            }
             ImGui::TableSetupColumn("FPS");
+            if (sBaseline.loaded) {
+                ImGui::TableSetupColumn("vs Base");
+            }
             ImGui::TableSetupColumn("DL Process");
             ImGui::TableSetupColumn("GL Draws");
             ImGui::TableSetupColumn("GL Tris");
@@ -711,16 +971,43 @@ void BenchmarkWindow::DrawElement() {
             for (const auto& r : sResults) {
                 float frameMs = ResultRenderFrameMs(r);
                 float fps = ResultFps(r);
+                const BenchmarkResult* base = FindBaselineForScene(r.name);
+
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", r.name);
+
                 ImGui::TableNextColumn();
                 ImVec4 color = (frameMs < BENCHMARK_TARGET_60FPS_MS)  ? ImVec4(0.2f, 1.0f, 0.2f, 1.0f)
                                : (frameMs < BENCHMARK_WARN_40FPS_MS) ? ImVec4(1.0f, 1.0f, 0.2f, 1.0f)
                                                                      : ImVec4(1.0f, 0.3f, 0.2f, 1.0f);
                 ImGui::TextColored(color, "%.2f", frameMs);
+
+                if (sBaseline.loaded) {
+                    ImGui::TableNextColumn();
+                    if (base) {
+                        float baseMs = ResultRenderFrameMs(*base);
+                        float deltaMs = frameMs - baseMs;
+                        ImGui::TextColored(DeltaColor(deltaMs, true), "%s%.2f", DeltaSign(deltaMs), deltaMs);
+                    } else {
+                        ImGui::TextDisabled("-");
+                    }
+                }
+
                 ImGui::TableNextColumn();
                 ImGui::TextColored(color, "%.1f", fps);
+
+                if (sBaseline.loaded) {
+                    ImGui::TableNextColumn();
+                    if (base) {
+                        float baseFps = ResultFps(*base);
+                        float deltaFps = fps - baseFps;
+                        ImGui::TextColored(DeltaColor(deltaFps, false), "%s%.1f", DeltaSign(deltaFps), deltaFps);
+                    } else {
+                        ImGui::TextDisabled("-");
+                    }
+                }
+
                 ImGui::TableNextColumn();
                 ImGui::Text("%.2f", r.phases[PROFILE_PHASE_DL_PROCESS]);
                 ImGui::TableNextColumn();
@@ -845,6 +1132,25 @@ void BenchmarkWindow::DrawElement() {
         if (sExportMsgTimer > 0.0f) {
             sExportMsgTimer -= ImGui::GetIO().DeltaTime;
             ImGui::TextWrapped("%s", sLastExportPath.c_str());
+        }
+
+        // Baseline buttons
+        ImGui::Spacing();
+        if (ImGui::Button("Save as Baseline")) {
+            SaveBaseline();
+        }
+        ImGui::SameLine();
+        if (sBaseline.loaded) {
+            if (ImGui::Button("Clear Baseline")) {
+                ClearBaseline();
+            }
+        } else {
+            ImGui::TextDisabled("No baseline loaded");
+        }
+
+        if (sBaselineMsgTimer > 0.0f) {
+            sBaselineMsgTimer -= ImGui::GetIO().DeltaTime;
+            ImGui::TextWrapped("%s", sBaselineMsgText.c_str());
         }
     }
 

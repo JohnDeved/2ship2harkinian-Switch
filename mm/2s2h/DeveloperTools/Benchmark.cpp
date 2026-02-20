@@ -226,51 +226,57 @@ static void LoadBaseline() {
     sBaseline.timestamp.clear();
     sBaseline.mode.clear();
 
-    int expectedScenes = 0;
+    try {
+        while (std::getline(in, line)) {
+            size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = line.substr(0, eq);
+            std::string val = line.substr(eq + 1);
 
-    while (std::getline(in, line)) {
-        size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
-        std::string key = line.substr(0, eq);
-        std::string val = line.substr(eq + 1);
+            if (key == "branch") {
+                sBaseline.branch = val;
+            } else if (key == "commit") {
+                sBaseline.commit = val;
+            } else if (key == "timestamp") {
+                sBaseline.timestamp = val;
+            } else if (key == "mode") {
+                sBaseline.mode = val;
+            } else if (key == "scene_count") {
+                // Informational only; actual count derived from parsed scenes
+            } else if (key == "SCENE") {
+                sBaseline.sceneNames.push_back(val);
+                BenchmarkResult result;
+                memset(&result, 0, sizeof(result));
+                result.name = nullptr; // set later
 
-        if (key == "branch") {
-            sBaseline.branch = val;
-        } else if (key == "commit") {
-            sBaseline.commit = val;
-        } else if (key == "timestamp") {
-            sBaseline.timestamp = val;
-        } else if (key == "mode") {
-            sBaseline.mode = val;
-        } else if (key == "scene_count") {
-            expectedScenes = std::stoi(val);
-        } else if (key == "SCENE") {
-            sBaseline.sceneNames.push_back(val);
-            BenchmarkResult result;
-            memset(&result, 0, sizeof(result));
-            result.name = nullptr; // set later
-
-            // Read phases line
-            if (std::getline(in, line) && line.substr(0, 7) == "phases=") {
-                std::istringstream ss(line.substr(7));
-                std::string token;
-                int idx = 0;
-                while (std::getline(ss, token, ',') && idx < PROFILE_PHASE_MAX) {
-                    result.phases[idx++] = std::stof(token);
+                // Read phases line
+                if (std::getline(in, line) && line.substr(0, 7) == "phases=") {
+                    std::istringstream ss(line.substr(7));
+                    std::string token;
+                    int idx = 0;
+                    while (std::getline(ss, token, ',') && idx < PROFILE_PHASE_MAX) {
+                        result.phases[idx++] = std::stof(token);
+                    }
                 }
-            }
-            // Read counters line
-            if (std::getline(in, line) && line.substr(0, 9) == "counters=") {
-                std::istringstream ss(line.substr(9));
-                std::string token;
-                int idx = 0;
-                while (std::getline(ss, token, ',') && idx < PROFILE_COUNTER_MAX) {
-                    result.counters[idx++] = std::stof(token);
+                // Read counters line
+                if (std::getline(in, line) && line.substr(0, 9) == "counters=") {
+                    std::istringstream ss(line.substr(9));
+                    std::string token;
+                    int idx = 0;
+                    while (std::getline(ss, token, ',') && idx < PROFILE_COUNTER_MAX) {
+                        result.counters[idx++] = std::stof(token);
+                    }
                 }
-            }
 
-            sBaseline.results.push_back(result);
+                sBaseline.results.push_back(result);
+            }
         }
+    } catch (...) {
+        // Corrupted baseline file — discard partial data
+        sBaseline.results.clear();
+        sBaseline.sceneNames.clear();
+        sBaseline.loaded = false;
+        return;
     }
 
     // Fix name pointers

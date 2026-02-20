@@ -1130,58 +1130,12 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             wnd->HandleEvents();
             const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
             wnd->SetProfilingEnabled(profilerEnabled);
-            // Adaptive sub-frame dropping: predictive budget tracking.
-            // Budget = 1 game frame = 1/original_fps seconds (e.g. 50ms at 20fps).
-            // Uses an EMA (exponential moving average) of per-sub-frame render cost
-            // to predict whether all remaining sub-frames will fit in the budget.
-            // If the predicted total exceeds the budget, skip intermediate sub-frames
-            // to keep game logic running at constant speed.
-            // Always render first and last sub-frames.
-            constexpr float kSubFrameEmaAlpha = 0.3f; // EMA smoothing factor (0-1, higher = more responsive)
-            static thread_local float sSubFrameCostEma = 0.0f; // EMA of per-sub-frame cost in ns
-            const auto frameBudget = std::chrono::nanoseconds(1000000000LL / original_fps);
-            const auto frameStart = std::chrono::steady_clock::now();
 
             for (size_t i = 0; i < sub_frames.size(); i++) {
-                // Skip intermediate sub-frames if predicted total exceeds budget
-                if (i > 0 && i < sub_frames.size() - 1) {
-                    auto elapsed = std::chrono::steady_clock::now() - frameStart;
-                    // Predict remaining cost: (sub_frames remaining) × EMA cost
-                    size_t remaining = sub_frames.size() - i;
-                    float predictedRemaining = remaining * sSubFrameCostEma;
-                    auto predictedTotal = elapsed + std::chrono::nanoseconds((int64_t)predictedRemaining);
-                    if (predictedTotal >= frameBudget) {
-                        continue;
-                    }
-                }
-                // For the last sub-frame (identity at fraction=1.0), ensure we use
-                // the correct empty matrix replacement even if we skipped intermediates.
-                if (i == sub_frames.size() - 1 && sub_frames[i].isIdentity) {
-                    current_m.clear();
-                }
-                // Set interpolation index to the actual sub-frame index (not sequential).
-                // DL commands (G_MW_SEGMENT_INTERP, tile size interp) check this index
-                // to apply per-sub-frame state. Must match even when sub-frames are skipped.
                 if (intp) { intp->mInterpolationIndex = (int)i; }
 
-                // Start async interpolation for the NEXT non-skipped sub-frame (if any).
-                // Note: The async submit + wait pair are always in the same iteration body
-                // (iteration i submits work for the next frame and waits for it at the end),
-                // so there's no leaked async work when sub-frames are skipped.
-                // Find the next sub-frame index that won't be skipped:
-                // - Last sub-frame is never skipped
-                // - Intermediate sub-frames are skipped when predicted total exceeds budget
+                // Start async interpolation for the NEXT sub-frame (if any).
                 size_t nextIdx = i + 1;
-                {
-                    auto elapsed = std::chrono::steady_clock::now() - frameStart;
-                    // Predict: if rendering this sub-frame + remaining would exceed budget, skip intermediates
-                    size_t futureRemaining = sub_frames.size() - nextIdx;
-                    float predictedFutureTotal = (float)elapsed.count() + sSubFrameCostEma + futureRemaining * sSubFrameCostEma;
-                    bool willExceedBudget = predictedFutureTotal >= (float)frameBudget.count();
-                    while (nextIdx > 0 && nextIdx < sub_frames.size() - 1 && willExceedBudget) {
-                        nextIdx++;
-                    }
-                }
                 AsyncInterpJob nextJob;
                 bool hasNext = (nextIdx < sub_frames.size());
                 if (hasNext && !sub_frames[nextIdx].isIdentity) {
@@ -1195,36 +1149,23 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
 
                 bool isLastSubFrame = !hasNext;
-                auto renderStart = std::chrono::steady_clock::now();
                 wnd->SubmitRenderWork(commands, std::move(current_m));
 
-                if (isLastSubFrame) {
-                    // Frame-ahead: don't wait for the last sub-frame to finish.
-                    // Core 0 returns to game logic while Core 1 renders.
-                    // SubmitRenderWork() owns the matrix data (moved above),
-                    // so it's safe even after this function returns.
-                    // The next call to SubmitRenderWork() will wait internally.
-                    // Profiler stats will be collected at the start of the next tick.
-                    if (profilerEnabled) {
-                        FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
-                    }
+                // Frame-ahead: skip the wait for the last sub-frame when the
+                // profiler is disabled. Core 0 returns to game logic while
+                // Core 1 renders. SubmitRenderWork() owns the matrix data
+                // (moved above), so it's safe after this function returns.
+                // The next call to SubmitRenderWork() will wait internally.
+                // When the profiler IS enabled, fall through to WaitForRenderDone
+                // so that detailed GL stats are collected for every sub-frame.
+                if (isLastSubFrame && !profilerEnabled) {
                     FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
                     FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
-                    break; // exit the sub-frame loop — rendering continues on Core 1
+                    break; // exit loop — rendering continues on Core 1
                 }
 
                 // Wait for render thread to finish this sub-frame's GL work
                 wnd->WaitForRenderDone();
-                // Update EMA of per-sub-frame render cost
-                {
-                    auto renderEnd = std::chrono::steady_clock::now();
-                    float costNs = (float)(renderEnd - renderStart).count();
-                    if (sSubFrameCostEma <= 0.0f) {
-                        sSubFrameCostEma = costNs; // seed on first measurement
-                    } else {
-                        sSubFrameCostEma = (1.0f - kSubFrameEmaAlpha) * sSubFrameCostEma + kSubFrameEmaAlpha * costNs;
-                    }
-                }
 
                 if (profilerEnabled) {
                     const auto& stats = wnd->GetFrameStats();
@@ -1263,8 +1204,6 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                         FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)stats.batchHistogram[b]);
                     }
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
-                }
-                if (profilerEnabled) {
                     FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
                 }
 
@@ -1281,8 +1220,6 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                         current_m.clear();
                     }
                     FrameProfiler_EndPhase(PROFILE_PHASE_FRAME_INTERP);
-                    // Advance loop index to the next sub-frame we prepared for
-                    i = nextIdx - 1; // loop will increment to nextIdx
                 }
             }
 

@@ -757,8 +757,6 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     // Per-iteration VBO batching: orphan the VBO once per DL iteration,
     // then use glBufferSubData for each draw. This reduces ~320 glBufferData
     // allocations per iteration to just 1 orphan.
-    // All triangles in a batch use the same shader (shader changes trigger a
-    // flush), so uploadBytes is always stride-aligned — no modulo needed.
     size_t strideBytes = mCurrentShaderProgram ? (size_t)mCurrentShaderProgram->numFloats * sizeof(float) : 0;
     if (__builtin_expect(strideBytes == 0, 0)) {
         // Fallback: no valid shader, use simple upload
@@ -779,7 +777,13 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
                 mVboIterActive = true;
             }
 
-            // Re-orphan if data doesn't fit
+            // Align offset to vertex stride — required because shader changes
+            // can produce different strides between consecutive draws.
+            if ((mVboIterOffset % strideBytes) != 0) {
+                mVboIterOffset += strideBytes - (mVboIterOffset % strideBytes);
+            }
+
+            // Re-orphan if data doesn't fit after alignment
             if (__builtin_expect(mVboIterOffset + uploadBytes > VBO_ITER_SIZE, 0)) {
                 glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
                 mVboIterOffset = 0;
@@ -787,9 +791,6 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
 
             glBufferSubData(GL_ARRAY_BUFFER, mVboIterOffset, uploadBytes, buf_vbo);
         }
-        // Compute first vertex using multiplication instead of division:
-        // firstVertex = offset / stride = offset / (numFloats * 4)
-        // Since offset is always stride-aligned, use integer division.
         GLint firstVertex = (GLint)(mVboIterOffset / strideBytes);
         {
             Fast3DScopedTimer t(drawTarget, profiling);

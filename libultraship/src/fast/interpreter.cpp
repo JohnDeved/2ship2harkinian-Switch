@@ -2931,20 +2931,24 @@ fast_path_vertex_processing:
 }
 
 void Interpreter::GfxSpGeometryMode(uint32_t clear, uint32_t set) {
-    mRsp->geometry_mode &= ~clear;
-    mRsp->geometry_mode |= set;
-    mRdp->geometry_mode_changed = true;
+    uint32_t new_mode = (mRsp->geometry_mode & ~clear) | set;
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    if (mRsp->geometry_mode != new_mode) {
+        mTriStateDirty = true;
+    }
 #endif
+    mRsp->geometry_mode = new_mode;
+    mRdp->geometry_mode_changed = true;
 }
 
 void Interpreter::GfxSpExtraGeometryMode(uint32_t clear, uint32_t set) {
-    mRsp->extra_geometry_mode &= ~clear;
-    mRsp->extra_geometry_mode |= set;
+    uint32_t new_mode = (mRsp->extra_geometry_mode & ~clear) | set;
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    if (mRsp->extra_geometry_mode != new_mode) {
+        mTriStateDirty = true;
+    }
 #endif
+    mRsp->extra_geometry_mode = new_mode;
 }
 
 void Interpreter::AdjustVIewportOrScissor(XYWidthHeight* area) {
@@ -2995,7 +2999,9 @@ void Interpreter::CalcAndSetViewport(const F3DVp_t* viewport) {
 
     mRdp->viewport_or_scissor_changed = true;
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    if (!mRepeatIteration) {
+        mTriStateDirty = true;
+    }
 #endif
 }
 
@@ -3096,12 +3102,12 @@ void Interpreter::GfxSpTexture(uint16_t sc, uint16_t tc, uint8_t level, uint8_t 
     if (mRdp->first_tile_index != tile) {
         mRdp->textures_changed[0] = true;
         mRdp->textures_changed[1] = true;
+#ifdef __SWITCH__
+        mTriStateDirty = true;
+#endif
     }
 
     mRdp->first_tile_index = tile;
-#ifdef __SWITCH__
-    mTriStateDirty = true;
-#endif
 }
 
 void Interpreter::GfxDpSetScissor(uint32_t mode, uint32_t ulx, uint32_t uly, uint32_t lrx, uint32_t lry) {
@@ -3119,7 +3125,9 @@ void Interpreter::GfxDpSetScissor(uint32_t mode, uint32_t ulx, uint32_t uly, uin
 
     mRdp->viewport_or_scissor_changed = true;
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    if (!mRepeatIteration) {
+        mTriStateDirty = true;
+    }
 #endif
 }
 
@@ -3165,7 +3173,12 @@ void Interpreter::GfxDpSetTile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_
     mRdp->textures_changed[0] = true;
     mRdp->textures_changed[1] = true;
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    // On repeat iterations, the same texture commands execute with same values.
+    // textures_changed will be caught by the redundant-texture-skip in GfxSpTri1,
+    // so we only need to mark dirty on the first iteration.
+    if (!mRepeatIteration) {
+        mTriStateDirty = true;
+    }
 #endif
 }
 
@@ -3177,7 +3190,9 @@ void Interpreter::GfxDpSetTileSize(uint8_t tile, uint16_t uls, uint16_t ult, uin
     mRdp->textures_changed[0] = true;
     mRdp->textures_changed[1] = true;
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    if (!mRepeatIteration) {
+        mTriStateDirty = true;
+    }
 #endif
 }
 
@@ -3193,7 +3208,9 @@ void Interpreter::GfxDpLoadTlut(uint8_t tile, uint32_t high_index) {
         mRdp->palettes[1] = mRdp->texture_to_load.addr;
     }
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    if (!mRepeatIteration) {
+        mTriStateDirty = true;
+    }
 #endif
 }
 
@@ -3253,7 +3270,9 @@ void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint3
 
     mRdp->textures_changed[mRdp->texture_tile[tile].tmem_index] = true;
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    if (!mRepeatIteration) {
+        mTriStateDirty = true;
+    }
 #endif
 }
 
@@ -3331,7 +3350,9 @@ void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32
 
     mRdp->textures_changed[mRdp->texture_tile[tile].tmem_index] = true;
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    if (!mRepeatIteration) {
+        mTriStateDirty = true;
+    }
 #endif
 }
 
@@ -3368,10 +3389,13 @@ static void GfxDpSetCombineMode(uint32_t rgb, uint32_t alpha) {
 }*/
 
 void Interpreter::GfxDpSetCombineMode(uint32_t rgb, uint32_t alpha, uint32_t rgb_cyc2, uint32_t alpha_cyc2) {
-    mRdp->combine_mode = rgb | (alpha << 16) | ((uint64_t)rgb_cyc2 << 28) | ((uint64_t)alpha_cyc2 << 44);
+    uint64_t new_mode = rgb | (alpha << 16) | ((uint64_t)rgb_cyc2 << 28) | ((uint64_t)alpha_cyc2 << 44);
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    if (mRdp->combine_mode != new_mode) {
+        mTriStateDirty = true;
+    }
 #endif
+    mRdp->combine_mode = new_mode;
 }
 
 static inline uint32_t color_comb(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
@@ -3383,44 +3407,57 @@ static inline uint32_t alpha_comb(uint32_t a, uint32_t b, uint32_t c, uint32_t d
 }
 
 void Interpreter::GfxDpSetGrayscaleColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+#ifdef __SWITCH__
+    if (mRdp->grayscale_color.r != r || mRdp->grayscale_color.g != g ||
+        mRdp->grayscale_color.b != b || mRdp->grayscale_color.a != a) {
+        mTriStateDirty = true;
+    }
+#endif
     mRdp->grayscale_color.r = r;
     mRdp->grayscale_color.g = g;
     mRdp->grayscale_color.b = b;
     mRdp->grayscale_color.a = a;
-#ifdef __SWITCH__
-    mTriStateDirty = true;
-#endif
 }
 
 void Interpreter::GfxDpSetEnvColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+#ifdef __SWITCH__
+    if (mRdp->env_color.r != r || mRdp->env_color.g != g ||
+        mRdp->env_color.b != b || mRdp->env_color.a != a) {
+        mTriStateDirty = true;
+    }
+#endif
     mRdp->env_color.r = r;
     mRdp->env_color.g = g;
     mRdp->env_color.b = b;
     mRdp->env_color.a = a;
-#ifdef __SWITCH__
-    mTriStateDirty = true;
-#endif
 }
 
 void Interpreter::GfxDpSetPrimColor(uint8_t m, uint8_t l, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+#ifdef __SWITCH__
+    if (mRdp->prim_color.r != r || mRdp->prim_color.g != g ||
+        mRdp->prim_color.b != b || mRdp->prim_color.a != a ||
+        mRdp->prim_lod_fraction != l) {
+        mTriStateDirty = true;
+    }
+#endif
     mRdp->prim_lod_fraction = l;
     mRdp->prim_color.r = r;
     mRdp->prim_color.g = g;
     mRdp->prim_color.b = b;
     mRdp->prim_color.a = a;
-#ifdef __SWITCH__
-    mTriStateDirty = true;
-#endif
 }
 
 void Interpreter::GfxDpSetFogColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+#ifdef __SWITCH__
+    if (mRdp->fog_color.r != r || mRdp->fog_color.g != g ||
+        mRdp->fog_color.b != b || mRdp->fog_color.a != a) {
+        mTriStateDirty = true;
+    }
+#endif
     mRdp->fog_color.r = r;
     mRdp->fog_color.g = g;
     mRdp->fog_color.b = b;
     mRdp->fog_color.a = a;
-#ifdef __SWITCH__
-    mTriStateDirty = true;
-#endif
 }
 
 void Interpreter::GfxDpSetBlendColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
@@ -3685,22 +3722,26 @@ void Interpreter::GfxDpSetColorImage(uint32_t format, uint32_t size, uint32_t wi
 void Interpreter::GfxSpSetOtherMode(uint32_t shift, uint32_t num_bits, uint64_t mode) {
     uint64_t mask = (((uint64_t)1 << num_bits) - 1) << shift;
     uint64_t om = mRdp->other_mode_l | ((uint64_t)mRdp->other_mode_h << 32);
-    om = (om & ~mask) | mode;
-    mRdp->other_mode_l = (uint32_t)om;
-    mRdp->other_mode_h = (uint32_t)(om >> 32);
-    mRdp->other_mode_changed = true;
+    uint64_t new_om = (om & ~mask) | mode;
 #ifdef __SWITCH__
-    mTriStateDirty = true;
+    if (om != new_om) {
+        mTriStateDirty = true;
+    }
 #endif
+    mRdp->other_mode_l = (uint32_t)new_om;
+    mRdp->other_mode_h = (uint32_t)(new_om >> 32);
+    mRdp->other_mode_changed = true;
 }
 
 void Interpreter::GfxDpSetOtherMode(uint32_t h, uint32_t l) {
+#ifdef __SWITCH__
+    if (mRdp->other_mode_h != h || mRdp->other_mode_l != l) {
+        mTriStateDirty = true;
+    }
+#endif
     mRdp->other_mode_h = h;
     mRdp->other_mode_l = l;
     mRdp->other_mode_changed = true;
-#ifdef __SWITCH__
-    mTriStateDirty = true;
-#endif
 }
 
 void Interpreter::Gfxs2dexBgCopy(F3DuObjBg* bg) {

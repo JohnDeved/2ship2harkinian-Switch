@@ -668,6 +668,12 @@ class Interpreter {
     ColorCombiner* mCachedCombiner = nullptr;
 
 #ifdef __SWITCH__
+    // Repeat-iteration mode: on 2nd/3rd DL iterations within the same frame,
+    // state-setting commands produce the same values. When true, change-guarded
+    // dirty markers suppress redundant mTriStateDirty = true, keeping more
+    // triangles on the fast path. Set by BenPort.cpp before each Run() call.
+    bool mRepeatIteration = false;
+
     // Tri-state dirty flag: set by ANY command that changes rendering state
     // consumed by GfxSpTri1. When clean, consecutive triangles skip all state
     // validation (depth, viewport, combiner, texture, shader, alpha checks)

@@ -1197,6 +1197,14 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 }
                 if (intp) { intp->mInterpolationIndex = (int)i; }
 
+#ifdef __SWITCH__
+                // On repeat iterations (2nd, 3rd DL passes), the display list command
+                // sequence is identical. Enable repeat-iteration mode to suppress
+                // redundant dirty marking in texture-related handlers, improving
+                // fast-path hit rate.
+                if (intp) { intp->mRepeatIteration = (i > 0); }
+#endif
+
                 // Start async interpolation for the NEXT sub-frame on Core 3
                 size_t nextIdx = i + 1;
                 AsyncInterpJob nextJob;

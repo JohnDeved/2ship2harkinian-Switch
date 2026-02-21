@@ -4316,8 +4316,6 @@ bool gfx_dl_handler_common(F3DGfx** cmd0) {
     F3DGfx* cmd = *cmd0;
     F3DGfx* subGFX = (F3DGfx*)gfx->SegAddr(cmd->words.w1);
 
-    Fast3DScopedTimer timer(gfx->mFrameStats.timeDisplayListOps, gfx->mProfilingEnabled);
-
     if (C0(16, 1) == 0) {
         // Push return address
         if (subGFX != nullptr) {
@@ -4832,7 +4830,6 @@ bool gfx_load_block_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *cmd0;
 
-    Fast3DScopedTimer timer(gfx->mFrameStats.timeTextureLoading, gfx->mProfilingEnabled);
     gfx->GfxDpLoadBlock(C1(24, 3), C0(12, 12), C0(0, 12), C1(12, 12), C1(0, 12));
     return false;
 }
@@ -4841,7 +4838,6 @@ bool gfx_load_tile_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *cmd0;
 
-    Fast3DScopedTimer timer(gfx->mFrameStats.timeTextureLoading, gfx->mProfilingEnabled);
     gfx->GfxDpLoadTile(C1(24, 3), C0(12, 12), C0(0, 12), C1(12, 12), C1(0, 12));
     return false;
 }
@@ -4896,7 +4892,6 @@ bool gfx_load_tlut_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *cmd0;
 
-    Fast3DScopedTimer timer(gfx->mFrameStats.timeTextureLoading, gfx->mProfilingEnabled);
     gfx->GfxDpLoadTlut(C1(24, 3), C1(14, 10));
     return false;
 }
@@ -4953,7 +4948,6 @@ bool gfx_set_combine_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *cmd0;
 
-    Fast3DScopedTimer timer(gfx->mFrameStats.timeCombinerSetup, gfx->mProfilingEnabled);
     gfx->GfxDpSetCombineMode(
         color_comb(C0(20, 4), C1(28, 4), C0(15, 5), C1(15, 3)), alpha_comb(C0(12, 3), C1(12, 3), C0(9, 3), C1(9, 3)),
         color_comb(C0(5, 4), C1(24, 4), C0(0, 5), C1(6, 3)), alpha_comb(C1(21, 3), C1(3, 3), C1(18, 3), C1(0, 3)));
@@ -4966,8 +4960,6 @@ bool gfx_tex_rect_and_flip_handler_rdp(F3DGfx** cmd0) {
     int8_t opcode = (int8_t)(cmd->words.w0 >> 24);
     int32_t lrx, lry, tile, ulx, uly;
     uint32_t uls, ult, dsdx, dtdy;
-
-    Fast3DScopedTimer timer(gfx->mFrameStats.timeRectDrawing, gfx->mProfilingEnabled);
 
     lrx = C0(12, 12);
     lry = C0(0, 12);
@@ -5040,7 +5032,6 @@ bool gfx_fill_rect_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *(cmd0);
 
-    Fast3DScopedTimer timer(gfx->mFrameStats.timeRectDrawing, gfx->mProfilingEnabled);
     gfx->GfxDpFillRectangle(C1(12, 12), C1(0, 12), C0(12, 12), C0(0, 12));
     return false;
 }
@@ -5080,7 +5071,6 @@ bool gfx_set_c_img_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *(cmd0);
 
-    Fast3DScopedTimer timer(gfx->mFrameStats.timeFramebufferOps, gfx->mProfilingEnabled);
     gfx->GfxDpSetColorImage(C0(21, 3), C0(19, 2), C0(0, 11), gfx->SegAddr(cmd->words.w1));
     return false;
 }
@@ -5717,123 +5707,12 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
 #endif
 
 #ifdef __SWITCH__
-            // Fast-path: inline trivial GBI commands to avoid function pointer dispatch overhead.
-            // Uses switch for better branch prediction than if-else chain.
-            // C0/C1 macros require a local `cmd` pointer.
-            {
-                F3DGfx* cmd = stepCmd;
-                switch (opcode) {
-                    // No-op RDP sync commands (0xe6-0xe9): ~109+ per iteration
-                    case 0xe6: case 0xe7: case 0xe8: case 0xe9:
-                        ++stepCmd;
-                        continue;
-
-                    case 0xe2: {  // F3DEX2_G_SETOTHERMODE_L
-                        uint32_t shift = 31 - C0(8, 8) - C0(0, 8);
-                        uint32_t num_bits = C0(0, 8) + 1;
-                        uint64_t mode = cmd->words.w1;
-                        uint64_t mask = (((uint64_t)1 << num_bits) - 1) << shift;
-                        uint64_t om = mRdp->other_mode_l | ((uint64_t)mRdp->other_mode_h << 32);
-                        om = (om & ~mask) | mode;
-                        mRdp->other_mode_l = (uint32_t)om;
-                        mRdp->other_mode_h = (uint32_t)(om >> 32);
-                        mRdp->other_mode_changed = true;
-                        mTriStateDirty = true;
-                        ++stepCmd;
-                        continue;
-                    }
-                    case 0xe3: {  // F3DEX2_G_SETOTHERMODE_H
-                        uint32_t shift = 63 - C0(8, 8) - C0(0, 8);
-                        uint32_t num_bits = C0(0, 8) + 1;
-                        uint64_t mode = (uint64_t)cmd->words.w1 << 32;
-                        uint64_t mask = (((uint64_t)1 << num_bits) - 1) << shift;
-                        uint64_t om = mRdp->other_mode_l | ((uint64_t)mRdp->other_mode_h << 32);
-                        om = (om & ~mask) | mode;
-                        mRdp->other_mode_l = (uint32_t)om;
-                        mRdp->other_mode_h = (uint32_t)(om >> 32);
-                        mRdp->other_mode_changed = true;
-                        mTriStateDirty = true;
-                        ++stepCmd;
-                        continue;
-                    }
-                    case 0xef: {  // RDP_G_RDPSETOTHERMODE — combined other mode (h + l)
-                        mRdp->other_mode_h = C0(0, 24);
-                        mRdp->other_mode_l = (uint32_t)cmd->words.w1;
-                        mRdp->other_mode_changed = true;
-                        mTriStateDirty = true;
-                        ++stepCmd;
-                        continue;
-                    }
-                    case 0xf2: {  // RDP_G_SETTILESIZE
-                        uint8_t tile = C1(24, 3);
-                        mRdp->texture_tile[tile].uls = C0(12, 12);
-                        mRdp->texture_tile[tile].ult = C0(0, 12);
-                        mRdp->texture_tile[tile].lrs = C1(12, 12);
-                        mRdp->texture_tile[tile].lrt = C1(0, 12);
-                        mRdp->textures_changed[0] = true;
-                        mRdp->textures_changed[1] = true;
-                        mTriStateDirty = true;
-                        ++stepCmd;
-                        continue;
-                    }
-                    case 0xf7: {  // RDP_G_SETFILLCOLOR
-                        uint16_t col16 = (uint16_t)cmd->words.w1;
-                        uint32_t r = col16 >> 11;
-                        uint32_t g = (col16 >> 6) & 0x1f;
-                        uint32_t b = (col16 >> 1) & 0x1f;
-                        uint32_t a = col16 & 1;
-                        mRdp->fill_color.r = SCALE_5_8(r);
-                        mRdp->fill_color.g = SCALE_5_8(g);
-                        mRdp->fill_color.b = SCALE_5_8(b);
-                        mRdp->fill_color.a = a * 255;
-                        ++stepCmd;
-                        continue;
-                    }
-                    case 0xf8: {  // RDP_G_SETFOGCOLOR
-                        mRdp->fog_color.r = C1(24, 8);
-                        mRdp->fog_color.g = C1(16, 8);
-                        mRdp->fog_color.b = C1(8, 8);
-                        mRdp->fog_color.a = C1(0, 8);
-                        mTriStateDirty = true;
-                        ++stepCmd;
-                        continue;
-                    }
-                    case 0xfa: {  // RDP_G_SETPRIMCOLOR
-                        mRdp->prim_lod_fraction = C0(0, 8);
-                        mRdp->prim_color.r = C1(24, 8);
-                        mRdp->prim_color.g = C1(16, 8);
-                        mRdp->prim_color.b = C1(8, 8);
-                        mRdp->prim_color.a = C1(0, 8);
-                        mTriStateDirty = true;
-                        ++stepCmd;
-                        continue;
-                    }
-                    case 0xfb: {  // RDP_G_SETENVCOLOR
-                        mRdp->env_color.r = C1(24, 8);
-                        mRdp->env_color.g = C1(16, 8);
-                        mRdp->env_color.b = C1(8, 8);
-                        mRdp->env_color.a = C1(0, 8);
-                        mTriStateDirty = true;
-                        ++stepCmd;
-                        continue;
-                    }
-                    case 0xfe: {  // RDP_G_SETZIMG
-                        uintptr_t w1 = cmd->words.w1;
-                        void* addr;
-                        if (w1 & 1) {
-                            uint32_t segNum = (uint32_t)(w1 >> 24);
-                            uint32_t offset = w1 & 0x00FFFFFE;
-                            addr = (mSegmentPointers[segNum] != 0) ? (void*)(mSegmentPointers[segNum] + offset) : (void*)w1;
-                        } else {
-                            addr = (void*)w1;
-                        }
-                        mRdp->z_buf_address = addr;
-                        ++stepCmd;
-                        continue;
-                    }
-                    default:
-                        break;  // Fall through to normal handler dispatch
-                }
+            // Fast-path: skip sync no-ops without function pointer dispatch.
+            // These are the most frequent commands (~109+ per iteration) and do nothing.
+            // Keeping only sync commands here avoids I-cache bloat from a larger switch.
+            if (opcode >= 0xe6 && opcode <= 0xe9) {
+                ++stepCmd;
+                continue;
             }
 #endif
 

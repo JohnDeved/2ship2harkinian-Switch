@@ -440,13 +440,21 @@ void Fast3dWindow::RenderThreadLoop() {
         // Capture work parameters
         Gfx* commands = mRenderCommands;
         std::unordered_map<Mtx*, MtxF> mtxReplacements = std::move(mRenderMtxReplacements);
+        bool renderImGui = mRenderImGui;
         lock.unlock();
 
-        // Execute the full render pipeline on Core 1 (with GL context)
-        gui->StartDraw();
+        // Execute the render pipeline on Core 1 (with GL context).
+        // ImGui (StartDraw/EndDraw) only runs on the sub-frame that requested it
+        // (typically the first). Skipping ImGui on other sub-frames reduces GL
+        // command time from ~15ms to ~10ms, widening the vsync gap for frame-ahead.
+        if (renderImGui) {
+            gui->StartDraw();
+        }
         mInterpreter->StartFrame();
         mInterpreter->Run(commands, mtxReplacements);
-        gui->EndDraw();
+        if (renderImGui) {
+            gui->EndDraw();
+        }
 
         // Signal that GL commands are done BEFORE SwapBuffers.
         // Core 0 can proceed here — with vsync off, SwapBuffers is a quick
@@ -505,7 +513,8 @@ void Fast3dWindow::DestroyRenderThread() {
     mWindowManagerApi->MakeContextCurrent();
 }
 
-bool Fast3dWindow::SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF> mtxReplacements) {
+bool Fast3dWindow::SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF> mtxReplacements,
+                                    bool renderImGui) {
     {
         std::unique_lock<std::mutex> lock(mRenderMutex);
         if (!mRenderThreadRunning) {
@@ -519,6 +528,7 @@ bool Fast3dWindow::SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF
         }
         mRenderCommands = commands;
         mRenderMtxReplacements = std::move(mtxReplacements);
+        mRenderImGui = renderImGui;
         mRenderHasWork = true;
         mRenderWorkDone = false;
         mGlCommandsDone = false;

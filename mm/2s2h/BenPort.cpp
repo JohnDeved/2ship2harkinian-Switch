@@ -1198,7 +1198,15 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
 
                 const bool isLastSubFrame = !hasNext;
 
-                wnd->SubmitRenderWork(commands, std::move(current_m));
+                // Render ImGui on the FIRST sub-frame, skip on the last.
+                // Sub-frames 0,1 wait for full vsync (16.67ms) anyway, so ImGui
+                // overhead (~5ms) doesn't add to the critical path there. But the
+                // last sub-frame uses WaitForGlCommandsDone (frame-ahead), so
+                // skipping ImGui reduces GL commands from ~15ms to ~10ms, giving
+                // a 6.67ms vsync gap for game logic overlap instead of 1.67ms.
+                const bool renderImGui = (i == 0);
+
+                wnd->SubmitRenderWork(commands, std::move(current_m), renderImGui);
 
                 // Process PREVIOUS iteration's saved stats while Core 1 renders.
                 // This overlaps stats processing (~2ms) with rendering, hiding it

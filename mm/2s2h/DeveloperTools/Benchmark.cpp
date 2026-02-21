@@ -66,6 +66,7 @@ static int sActiveSceneCount = BENCHMARK_FULL_COUNT;
 // Frame time thresholds for color-coded results (ms)
 static constexpr float BENCHMARK_TARGET_60FPS_MS = 1000.0f / 60.0f; // ~16.67ms
 static constexpr float BENCHMARK_WARN_40FPS_MS = 1000.0f / 40.0f;   // 25.0ms
+static constexpr u16 BENCHMARK_LOCKED_TIME = CLOCK_TIME(8, 0);
 
 // ── Per-scene result storage ───────────────────────────────────────────
 // Stores ALL profiler phases and counters for complete data capture.
@@ -95,6 +96,8 @@ static bool sSceneReady = false;
 static HOOK_ID sSceneInitHookId = 0;
 static HOOK_ID sUpdateHookId = 0;
 static bool sHooksRegistered = false;
+static bool sTimeSpeedLocked = false;
+static s16 sTimeSpeedBeforeBenchmark = 0;
 
 static std::vector<BenchmarkResult> sResults;
 static std::string sLastExportPath;
@@ -330,6 +333,23 @@ static void ResetAccum() {
     memset(&sAccum, 0, sizeof(sAccum));
 }
 
+static void ApplyDeterministicTimeLock() {
+    if (!sTimeSpeedLocked) {
+        sTimeSpeedBeforeBenchmark = R_TIME_SPEED;
+        sTimeSpeedLocked = true;
+    }
+    R_TIME_SPEED = 0;
+    gSaveContext.save.day = 1;
+    gSaveContext.save.time = BENCHMARK_LOCKED_TIME;
+}
+
+static void ReleaseDeterministicTimeLock() {
+    if (sTimeSpeedLocked) {
+        R_TIME_SPEED = sTimeSpeedBeforeBenchmark;
+        sTimeSpeedLocked = false;
+    }
+}
+
 // ── Scene transition helper ────────────────────────────────────────────
 
 static void BenchmarkWarpToScene(u16 entrance) {
@@ -366,6 +386,7 @@ static void OnBenchmarkSceneInit(s8 sceneId, s8 spawnNum) {
 
 static void OnBenchmarkUpdate() {
     if (sState == BENCH_IDLE || sState == BENCH_DONE) {
+        ReleaseDeterministicTimeLock();
         return;
     }
 
@@ -379,8 +400,7 @@ static void OnBenchmarkUpdate() {
     switch (sState) {
         case BENCH_STARTING: {
             // Initialize a clean save state for deterministic conditions
-            gSaveContext.save.time = CLOCK_TIME(8, 0);
-            gSaveContext.save.day = 1;
+            ApplyDeterministicTimeLock();
             sCurrentScene = 0;
             sResults.clear();
             sState = BENCH_WARPING;
@@ -397,6 +417,7 @@ static void OnBenchmarkUpdate() {
             break;
         }
         case BENCH_SETTLING: {
+            ApplyDeterministicTimeLock();
             sFrameCounter++;
             if (sFrameCounter >= sActiveScenes[sCurrentScene].settleFrames) {
                 sFrameCounter = 0;
@@ -406,6 +427,7 @@ static void OnBenchmarkUpdate() {
             break;
         }
         case BENCH_MEASURING: {
+            ApplyDeterministicTimeLock();
             // Collect ALL profiler phases and counters each frame
             for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
                 sAccum.phases[i] += FrameProfiler_GetPhaseAvgMs((ProfilePhase)i);
@@ -869,7 +891,8 @@ void BenchmarkWindow::DrawElement() {
     ImGui::Text("Automated Performance Benchmark");
     ImGui::Separator();
     ImGui::TextWrapped("Warps through a set of heavy scenes, collects profiler data for each, "
-                       "and produces a deterministic performance report for comparison across builds.");
+                       "and produces a deterministic performance report for comparison across builds. "
+                       "Time is locked to Day 1, 08:00 while settling and measuring.");
     ImGui::Spacing();
 
     bool isRunning = (sState != BENCH_IDLE && sState != BENCH_DONE);

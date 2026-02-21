@@ -12,7 +12,7 @@ on:
 jobs:
   # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
   copilot-setup-steps:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     permissions:
@@ -39,73 +39,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-otr
           max-size: "500M"
-
-      - name: Restore cached deps folder
-        uses: actions/cache/restore@v5
-        with:
-          key: ${{ runner.os }}-deps-${{ hashFiles('CMakeLists.txt', 'mm/**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-deps-
-          path: deps
-
-      - name: Build and install SDL2 from source
-        run: |
-          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
-          mkdir -p deps
-          if [ ! -f "deps/SDL2-2.30.3/.install-complete" ]; then
-            if [ ! -d "deps/SDL2-2.30.3" ]; then
-              wget -q https://github.com/libsdl-org/SDL/releases/download/release-2.30.3/SDL2-2.30.3.tar.gz
-              tar -xzf SDL2-2.30.3.tar.gz -C deps
-            fi
-            cd deps/SDL2-2.30.3
-            ./configure --enable-hidapi-libusb
-            make -j $(nproc)
-            sudo make install
-            sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
-            touch .install-complete
-          else
-            echo "SDL2 already built (from cache)"
-            cd deps/SDL2-2.30.3
-            sudo make install
-            sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
-          fi
-
-      - name: Build and install tinyxml2 from source
-        run: |
-          sudo apt-get remove -y libtinyxml2-dev
-          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
-          mkdir -p deps
-          if [ ! -f "deps/tinyxml2-10.0.0/.install-complete" ]; then
-            if [ ! -d "deps/tinyxml2-10.0.0" ]; then
-              wget -q https://github.com/leethomason/tinyxml2/archive/refs/tags/10.0.0.tar.gz
-              tar -xzf 10.0.0.tar.gz -C deps
-            fi
-            cd deps/tinyxml2-10.0.0
-            mkdir -p build
-            cd build
-            cmake ..
-            make -j $(nproc)
-            sudo make install
-            touch ../.install-complete
-          else
-            echo "tinyxml2 already built (from cache)"
-            cd deps/tinyxml2-10.0.0/build
-            sudo make install
-          fi
-          sudo ldconfig
-
-      - name: Pre-configure cmake build
-        run: |
-          export CCACHE_COMPILERCHECK=content
-          export CCACHE_SLOPPINESS=include_file_ctime,include_file_mtime,time_macros,pch_defines,system_headers
-          export CCACHE_BASEDIR=/home/runner/work/2ship2harkinian-Switch/2ship2harkinian-Switch
-          export CCACHE_NOHASHDIR="1"
-          cmake --no-warn-unused-cli \
-            -H. -Bbuild-cmake \
-            -GNinja \
-            -DCMAKE_BUILD_TYPE:STRING=Release \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
       - name: Show ccache stats
         run: ccache --show-stats

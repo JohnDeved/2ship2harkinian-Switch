@@ -1180,7 +1180,31 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
                 FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
 
-                wnd->SubmitRenderWork(commands, current_m);
+                const bool isLastSubFrame = !hasNext;
+
+                wnd->SubmitRenderWork(commands, std::move(current_m));
+
+                // Frame-ahead: for the last sub-frame, skip WaitForRenderDone.
+                // Core 0 returns to game logic while Core 1 finishes rendering +
+                // vsync wait. Game logic (6-12ms) fits within the vsync period
+                // (16.67ms), so no contention. SubmitRenderWork owns the matrix
+                // data (passed by value above), so it's safe after this returns.
+                // The next call to SubmitRenderWork will wait internally for the
+                // previous work to complete.
+                if (isLastSubFrame) {
+                    if (profilerEnabled) {
+                        FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
+                    }
+                    FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
+                    FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
+                    // Deferred stats: the profiler will miss this sub-frame's GL
+                    // stats since we haven't waited. They will be collected at the
+                    // start of the next tick's first SubmitRenderWork (which waits
+                    // internally). This is acceptable: the profiler still sees
+                    // DL_ITERATIONS and the timing for the first N-1 sub-frames.
+                    break;
+                }
+
                 // Wait for render thread to finish this sub-frame's GL work
                 wnd->WaitForRenderDone();
 

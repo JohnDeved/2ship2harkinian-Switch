@@ -723,21 +723,23 @@ void GfxWindowBackendSDL2::SyncFramerateWithTime() const {
 
 void GfxWindowBackendSDL2::SwapBuffersBegin() {
 #ifdef __SWITCH__
-    // Force vsync on Switch and skip SyncFramerateWithTime.
-    // Vsync provides frame pacing; the nanosleep-based limiter adds unnecessary latency.
-    // Re-apply SDL_GL_SetSwapInterval from the GL thread on first call, since the context
-    // may have been transferred from the main thread to the render thread after init.
-    // Thread safety: SwapBuffersBegin is only called from the single render thread.
+    // Disable vsync on Switch to remove the 16.67ms floor per sub-frame.
+    // With vsync ON, each SDL_GL_SwapWindow blocks until the next vsync boundary,
+    // making 3 sub-frames take at least 50ms. Fast3D processing (~10ms/iter) fits
+    // well within 16.67ms, but the remaining ~6.67ms per frame is wasted in vsync
+    // sleep — totaling ~20ms wasted per tick. With vsync OFF, SwapBuffers returns
+    // immediately after the buffer swap. Frame pacing is handled by explicit timing
+    // in the game loop (BenPort.cpp). The system compositor handles tear-free
+    // presentation at 60Hz regardless of the app's swap interval.
     {
-        static bool vsyncForced = false;
-        if (!vsyncForced) {
-            int result = SDL_GL_SetSwapInterval(1);
+        static bool swapIntervalConfigured = false;
+        if (!swapIntervalConfigured) {
+            int result = SDL_GL_SetSwapInterval(0);
             if (result == 0) {
-                mVsyncEnabled = true;
-                vsyncForced = true;
+                mVsyncEnabled = false;
+                swapIntervalConfigured = true;
             } else {
-                SPDLOG_ERROR("SDL_GL_SetSwapInterval(1) failed: {}", SDL_GetError());
-                // Will retry on next frame since vsyncForced stays false
+                SPDLOG_ERROR("SDL_GL_SetSwapInterval(0) failed: {}", SDL_GetError());
             }
         }
     }

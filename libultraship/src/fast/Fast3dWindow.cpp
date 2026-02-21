@@ -448,16 +448,16 @@ void Fast3dWindow::RenderThreadLoop() {
         mInterpreter->Run(commands, mtxReplacements);
         gui->EndDraw();
 
-        // Signal that GL commands are done BEFORE vsync wait.
-        // Core 0 can start game logic here — Core 1 will be sleeping
-        // in SwapBuffers (vsync), so no memory bus contention.
+        // Signal that GL commands are done BEFORE SwapBuffers.
+        // Core 0 can proceed here — with vsync off, SwapBuffers is a quick
+        // buffer swap (~1ms). Core 0 uses this to start frame pacing sleep.
         {
             std::unique_lock<std::mutex> glLock(mRenderMutex);
             mGlCommandsDone = true;
         }
         mGlDoneCV.notify_one();
 
-        // This calls SwapBuffersBegin → SDL_GL_SwapWindow (vsync wait ~6.67ms)
+        // This calls SwapBuffersBegin → SDL_GL_SwapWindow (~1ms with vsync off)
         mInterpreter->EndFrame();
 
         lock.lock();

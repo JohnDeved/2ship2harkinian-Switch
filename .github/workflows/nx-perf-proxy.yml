@@ -1,0 +1,42 @@
+name: nx-perf-proxy
+
+on:
+  workflow_dispatch:
+    inputs:
+      switch_ref:
+        description: "Path to Switch reference benchmark_baseline.txt (relative to repo)"
+        required: true
+        default: "benchmarks/switch_ref/benchmark_baseline.txt"
+      local_ref:
+        description: "Path to local reference benchmark_baseline.txt (relative to repo)"
+        required: true
+        default: "benchmarks/local_ref/benchmark_baseline.txt"
+      local_candidate:
+        description: "Path to local candidate benchmark_baseline.txt (relative to repo)"
+        required: true
+        default: "benchmarks/local_candidate/benchmark_baseline.txt"
+      fail_regression_ms:
+        description: "Fail threshold in ms for estimated average Switch regression"
+        required: true
+        default: "0.75"
+
+jobs:
+  estimate-switch-regression:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate benchmark files exist
+        run: |
+          test -f "${{ github.event.inputs.switch_ref }}"
+          test -f "${{ github.event.inputs.local_ref }}"
+          test -f "${{ github.event.inputs.local_candidate }}"
+
+      - name: Run NX performance proxy
+        run: |
+          python3 scripts/nx_perf_proxy.py \
+            --switch-ref "${{ github.event.inputs.switch_ref }}" \
+            --local-ref "${{ github.event.inputs.local_ref }}" \
+            --local-candidate "${{ github.event.inputs.local_candidate }}" \
+            --fail-regression-ms "${{ github.event.inputs.fail_regression_ms }}"

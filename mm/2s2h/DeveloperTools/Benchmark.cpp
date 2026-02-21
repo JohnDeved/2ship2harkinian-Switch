@@ -99,6 +99,8 @@ static bool sHooksRegistered = false;
 static std::vector<BenchmarkResult> sResults;
 static std::string sLastExportPath;
 static float sExportMsgTimer = 0.0f;
+static bool sHeadlessStarted = false;
+static bool sHeadlessFinalized = false;
 
 // ── Baseline comparison ────────────────────────────────────────────────
 
@@ -330,6 +332,8 @@ static void ResetAccum() {
     memset(&sAccum, 0, sizeof(sAccum));
 }
 
+static void ExportBenchmarkReport();
+
 // ── Scene transition helper ────────────────────────────────────────────
 
 static void BenchmarkWarpToScene(u16 entrance) {
@@ -345,6 +349,7 @@ static void BenchmarkWarpToScene(u16 entrance) {
 // ── Start helper ───────────────────────────────────────────────────────
 
 static void StartBenchmark(BenchmarkMode mode) {
+    sHeadlessFinalized = false;
     sBenchMode = mode;
     if (mode == BENCH_MODE_QUICK) {
         sActiveScenes = sBenchmarkScenesQuick;
@@ -365,6 +370,28 @@ static void OnBenchmarkSceneInit(s8 sceneId, s8 spawnNum) {
 }
 
 static void OnBenchmarkUpdate() {
+    int headlessMode = CVarGetInteger("gDeveloperTools.Benchmark.HeadlessMode", 0);
+    bool headlessEnabled = (headlessMode == 1 || headlessMode == 2);
+
+    if (sState == BENCH_IDLE && headlessEnabled && !sHeadlessStarted && gPlayState != NULL) {
+        StartBenchmark(headlessMode == 1 ? BENCH_MODE_QUICK : BENCH_MODE_FULL);
+        sHeadlessStarted = true;
+    }
+
+    if (sState == BENCH_DONE && sHeadlessStarted && !sHeadlessFinalized) {
+        if (CVarGetInteger("gDeveloperTools.Benchmark.HeadlessExportReport", 1)) {
+            ExportBenchmarkReport();
+        }
+        if (CVarGetInteger("gDeveloperTools.Benchmark.HeadlessSaveBaseline", 1)) {
+            SaveBaseline();
+        }
+        sHeadlessFinalized = true;
+
+        if (CVarGetInteger("gDeveloperTools.Benchmark.HeadlessAutoQuit", 1)) {
+            Ship::Context::GetInstance()->GetWindow()->Close();
+        }
+    }
+
     if (sState == BENCH_IDLE || sState == BENCH_DONE) {
         return;
     }

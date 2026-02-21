@@ -385,6 +385,31 @@ the configured threshold (`--fail-regression-ms`, default `0.75` ms).
 > This is a **simulation/proxy**, not a replacement for real Switch validation. Use it to quickly filter regressions locally,
 > then confirm significant wins/losses on hardware.
 
+### Headless in-game benchmark run (no UI interaction)
+
+Set these CVars in your config before launching:
+
+- `gDeveloperTools.Benchmark.HeadlessMode` (`1` = Quick, `2` = Full)
+- `gDeveloperTools.Benchmark.HeadlessExportReport` (`1` to write benchmark report)
+- `gDeveloperTools.Benchmark.HeadlessSaveBaseline` (`1` to write `benchmark_baseline.txt`)
+- `gDeveloperTools.Benchmark.HeadlessAutoQuit` (`1` to quit app when benchmark completes)
+
+With those set, benchmark starts automatically once gameplay is active, exports files, and can auto-exit.
+
+### GitHub Actions (CI) entry point
+
+A manual CI workflow is provided at:
+
+- `.github/workflows/nx-perf-proxy.yml`
+
+Run it with `workflow_dispatch` inputs pointing to three baseline files in the repo checkout:
+
+- Switch reference baseline
+- Local reference baseline
+- Local candidate baseline
+
+The job runs `scripts/nx_perf_proxy.py` headlessly and fails if estimated Switch regression exceeds threshold.
+
 ---
 
 ## Success Criteria

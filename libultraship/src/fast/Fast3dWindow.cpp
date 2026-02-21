@@ -20,6 +20,10 @@
 #include <fstream>
 #include <imgui.h>
 
+#ifdef ENABLE_OPENGL
+#include <imgui_impl_opengl3.h>
+#endif
+
 namespace Fast {
 
 extern void GfxSetInstance(std::shared_ptr<Interpreter> gfx);
@@ -460,10 +464,12 @@ void Fast3dWindow::RenderThreadLoop() {
         } else {
             // Replay previous ImGui draw data (overlay only, no computation).
             // ImGui::GetDrawData() is valid after Render() until next NewFrame().
+#ifdef ENABLE_OPENGL
             ImDrawData* drawData = ImGui::GetDrawData();
             if (drawData) {
-                gui->ImGuiRenderDrawData(drawData);
+                ImGui_ImplOpenGL3_RenderDrawData(drawData);
             }
+#endif
         }
 
         // Signal that GL commands are done BEFORE SwapBuffers.

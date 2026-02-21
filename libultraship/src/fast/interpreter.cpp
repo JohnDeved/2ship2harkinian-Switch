@@ -5766,17 +5766,15 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             // Sync commands (0xe6-0xe9) are the most frequent no-ops (~109+ per iter).
             // G_NOOP (0x00) is used for OpenDisp/CloseDisp debug markers only.
             // G_SETPRIMDEPTH (0xee) is an unimplemented stub (TODO in handler).
-            if (opcode >= 0xe6 && opcode <= 0xe9) {
-                ++stepCmd;
-                continue;
-            }
-            if (opcode == 0x00 || opcode == 0xee) {
+            if ((opcode >= 0xe6 && opcode <= 0xe9) || opcode == 0x00 || opcode == 0xee) {
                 ++stepCmd;
                 continue;
             }
             // Inline G_ENDDL (0xdf): pop the DL stack directly instead of going
             // through function pointer dispatch + handler wrapper. Saves ~3-5µs per
             // DL return (~31-43 per iteration) by avoiding indirect call overhead.
+            // mMarkerOn = false mirrors gfx_end_dl_handler_common behavior (disables
+            // the active marker region when returning from a display list).
             if (opcode == 0xdf) {
                 mMarkerOn = false;
                 stepCmd = g_exec_stack.ret();

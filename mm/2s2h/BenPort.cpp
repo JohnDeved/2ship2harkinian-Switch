@@ -949,6 +949,126 @@ extern "C" void Graph_StartFrame() {
 #endif
 }
 
+#if defined(__SWITCH__)
+struct SwitchTelemetrySample {
+    bool hasIdleBaseline = false;
+    u64 lastSystemTick = 0;
+    u64 lastIdleTickCount[4] = {};
+    float cpuUsagePct = 0.0f;
+    float ramUsagePct = 0.0f;
+    float ramUsedMb = 0.0f;
+    float ramTotalMb = 0.0f;
+    float cpuClockMhz = 0.0f;
+    float gpuClockMhz = 0.0f;
+    float emcClockMhz = 0.0f;
+};
+static SwitchTelemetrySample sSwitchTelemetry;
+
+static bool QueryClockRateHz(PcvModule legacyModule, PcvModuleId moduleId, u32* outHz) {
+    if (outHz == nullptr) {
+        return false;
+    }
+    *outHz = 0;
+
+    if (hosversionBefore(8, 0, 0)) {
+        return R_SUCCEEDED(pcvGetClockRate(legacyModule, outHz));
+    }
+
+    ClkrstSession session = {};
+    Result rc = clkrstOpenSession(&session, moduleId, 3);
+    if (R_FAILED(rc)) {
+        return false;
+    }
+    rc = clkrstGetClockRate(&session, outHz);
+    clkrstCloseSession(&session);
+    return R_SUCCEEDED(rc);
+}
+
+static void SampleSwitchSystemTelemetry() {
+    // Process RAM usage (relative to process memory budget).
+    u64 usedMemory = 0;
+    u64 totalMemory = 0;
+    if (R_SUCCEEDED(svcGetInfo(&usedMemory, InfoType_UsedMemorySize, INVALID_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&totalMemory, InfoType_TotalMemorySize, INVALID_HANDLE, 0)) && totalMemory > 0) {
+        sSwitchTelemetry.ramUsedMb = (float)usedMemory / (1024.0f * 1024.0f);
+        sSwitchTelemetry.ramTotalMb = (float)totalMemory / (1024.0f * 1024.0f);
+        sSwitchTelemetry.ramUsagePct = (float)usedMemory * 100.0f / (float)totalMemory;
+    }
+
+    // CPU usage from per-core idle tick deltas.
+    const u64 nowTick = armGetSystemTick();
+    u64 idleTickCount[4] = {};
+    bool gotAllIdle = true;
+    for (int core = 0; core < 4; core++) {
+        if (R_FAILED(svcGetInfo(&idleTickCount[core], InfoType_IdleTickCount, INVALID_HANDLE, core))) {
+            gotAllIdle = false;
+            break;
+        }
+    }
+
+    bool updatedCpuFromIdleTicks = false;
+    if (gotAllIdle) {
+        if (sSwitchTelemetry.hasIdleBaseline && nowTick > sSwitchTelemetry.lastSystemTick) {
+            const double elapsedTicks = (double)(nowTick - sSwitchTelemetry.lastSystemTick);
+            double busySum = 0.0;
+            for (int core = 0; core < 4; core++) {
+                u64 idleDelta = 0;
+                if (idleTickCount[core] >= sSwitchTelemetry.lastIdleTickCount[core]) {
+                    idleDelta = idleTickCount[core] - sSwitchTelemetry.lastIdleTickCount[core];
+                }
+                const double idleRatio = std::clamp((double)idleDelta / elapsedTicks, 0.0, 1.0);
+                busySum += (1.0 - idleRatio);
+            }
+            sSwitchTelemetry.cpuUsagePct = (float)(busySum * 25.0); // average across 4 cores, in percent
+            updatedCpuFromIdleTicks = true;
+        }
+
+        sSwitchTelemetry.hasIdleBaseline = true;
+        sSwitchTelemetry.lastSystemTick = nowTick;
+        for (int core = 0; core < 4; core++) {
+            sSwitchTelemetry.lastIdleTickCount[core] = idleTickCount[core];
+        }
+    }
+
+    // Fallback when idle tick sampling is unavailable or still warming up.
+    if (!updatedCpuFromIdleTicks) {
+        const float core0Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_UPDATE) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_DRAW) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_SCENE_DRAW) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_AUDIO_WAIT);
+        const float workerMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC);
+        const float frameBudgetMs = 1000.0f / 60.0f;
+        const float core0Pct = std::clamp(core0Ms / frameBudgetMs * 100.0f, 0.0f, 100.0f);
+        const float workerPct = std::clamp(workerMs / frameBudgetMs * 100.0f, 0.0f, 100.0f);
+        sSwitchTelemetry.cpuUsagePct = (core0Pct + workerPct) * 0.25f; // normalize across 4 Switch CPU cores
+    }
+
+    // Current operating clocks (good context for performance runs).
+    u32 hz = 0;
+    if (QueryClockRateHz(PcvModule_CpuBus, PcvModuleId_CpuBus, &hz)) {
+        sSwitchTelemetry.cpuClockMhz = (float)hz / 1000000.0f;
+    }
+    if (QueryClockRateHz(PcvModule_GPU, PcvModuleId_GPU, &hz)) {
+        sSwitchTelemetry.gpuClockMhz = (float)hz / 1000000.0f;
+    }
+    if (QueryClockRateHz(PcvModule_EMC, PcvModuleId_EMC, &hz)) {
+        sSwitchTelemetry.emcClockMhz = (float)hz / 1000000.0f;
+    }
+
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_USAGE_PCT, sSwitchTelemetry.cpuUsagePct);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_RAM_USAGE_PCT, sSwitchTelemetry.ramUsagePct);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_RAM_USED_MB, sSwitchTelemetry.ramUsedMb);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_RAM_TOTAL_MB, sSwitchTelemetry.ramTotalMb);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ, sSwitchTelemetry.cpuClockMhz);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ, sSwitchTelemetry.gpuClockMhz);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ, sSwitchTelemetry.emcClockMhz);
+}
+#endif
+
 void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>>& mtx_replacements) {
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(OTRGlobals::Instance->context->GetWindow());
 
@@ -1017,6 +1137,14 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
                 FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)stats.batchHistogram[b]);
             }
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
+
+            // Proxy metric: time spent blocked in GL driver calls vs a 60 FPS frame budget.
+            const float gpuDriverMs =
+                ((float)stats.timeVboUpload + (float)stats.timeGlDraw + (float)stats.timeFrameSetup +
+                 (float)stats.timePixelDepth) /
+                1000000.0f;
+            const float gpuUsageEstimatePct = std::clamp((gpuDriverMs / (1000.0f / 60.0f)) * 100.0f, 0.0f, 100.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_GPU_USAGE_EST_PCT, gpuUsageEstimatePct);
         }
 
         intp->mInterpolationIndex++;
@@ -1043,6 +1171,12 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
         audio.processing = true;
     }
     audio.cv_to_thread.notify_one();
+
+#if defined(__SWITCH__)
+    if (FrameProfiler_IsEnabled() != 0) {
+        SampleSwitchSystemTelemetry();
+    }
+#endif
 
     thread_local std::vector<std::unordered_map<Mtx*, MtxF>> mtx_replacements;
     mtx_replacements.clear();

@@ -672,6 +672,35 @@ static void ExportBenchmarkReport() {
         }
         out << std::endl;
 
+        // System telemetry (usage + clocks). GPU usage is an estimate proxy from GL driver blocking time.
+        float sysCpuUsage = r.counters[PROFILE_COUNTER_SYS_CPU_USAGE_PCT];
+        float sysGpuUsageEst = r.counters[PROFILE_COUNTER_SYS_GPU_USAGE_EST_PCT];
+        float sysRamUsage = r.counters[PROFILE_COUNTER_SYS_RAM_USAGE_PCT];
+        float sysRamUsedMb = r.counters[PROFILE_COUNTER_SYS_RAM_USED_MB];
+        float sysRamTotalMb = r.counters[PROFILE_COUNTER_SYS_RAM_TOTAL_MB];
+        float sysCpuClockMhz = r.counters[PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ];
+        float sysGpuClockMhz = r.counters[PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ];
+        float sysEmcClockMhz = r.counters[PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ];
+
+        bool hasSystemTelemetry =
+            sysGpuUsageEst > 0.01f || sysCpuUsage > 0.01f || sysRamTotalMb > 0.01f || sysCpuClockMhz > 0.01f ||
+            sysGpuClockMhz > 0.01f || sysEmcClockMhz > 0.01f;
+        if (hasSystemTelemetry) {
+            out << "  System Telemetry:" << std::endl;
+            out << "    CPU Usage (avg cores):       " << std::setprecision(1) << sysCpuUsage << "%" << std::endl;
+            out << "    GPU Usage (estimate):        " << std::setprecision(1) << sysGpuUsageEst
+                << "% (proxy)" << std::endl;
+            if (sysRamTotalMb > 0.01f) {
+                out << "    RAM Usage:                   " << std::setprecision(0) << sysRamUsedMb << " / "
+                    << sysRamTotalMb << " MB (" << std::setprecision(1) << sysRamUsage << "%)" << std::endl;
+            }
+            if (sysCpuClockMhz > 0.01f || sysGpuClockMhz > 0.01f || sysEmcClockMhz > 0.01f) {
+                out << "    Clocks (CPU/GPU/EMC):        " << std::setprecision(0) << sysCpuClockMhz << " / "
+                    << sysGpuClockMhz << " / " << sysEmcClockMhz << " MHz" << std::endl;
+            }
+            out << std::endl;
+        }
+
         // Per-phase breakdown
         out << "  Per-Phase Breakdown:" << std::endl;
         for (int i = 0; i < PROFILE_PHASE_MAX; i++) {

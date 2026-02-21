@@ -99,6 +99,16 @@ typedef enum {
     PROFILE_COUNTER_GL_BATCH_HIST_4,       // 129+ tris
     PROFILE_COUNTER_GL_MAX_BATCH_SIZE,     // max batch size seen this frame
 
+    // System telemetry (Switch: real values where available, otherwise proxy/zero)
+    PROFILE_COUNTER_SYS_CPU_USAGE_PCT,     // CPU usage across CPU cores (0-100)
+    PROFILE_COUNTER_SYS_GPU_USAGE_EST_PCT, // estimated GPU usage proxy (0-100)
+    PROFILE_COUNTER_SYS_RAM_USAGE_PCT,     // process RAM usage percentage (0-100)
+    PROFILE_COUNTER_SYS_RAM_USED_MB,       // process RAM used (MB)
+    PROFILE_COUNTER_SYS_RAM_TOTAL_MB,      // process RAM budget/total (MB)
+    PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ,     // CPU clock (MHz)
+    PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ,     // GPU clock (MHz)
+    PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ,     // memory controller clock (MHz)
+
     PROFILE_COUNTER_MAX
 } ProfileCounter;
 

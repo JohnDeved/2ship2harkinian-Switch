@@ -3109,7 +3109,9 @@ void Interpreter::GfxDpLoadTlut(uint8_t tile, uint32_t high_index) {
 #ifdef __SWITCH__
     mTriStateDirty = true;
 #endif
-}(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t dxt) {
+}
+
+void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t dxt) {
     SUPPORT_CHECK(uls == 0);
     SUPPORT_CHECK(ult == 0);
 

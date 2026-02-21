@@ -439,11 +439,11 @@ struct Fast3DStats {
         usPerTriangle = trianglesSubmitted > 0 ? (float)timeTotal / (float)trianglesSubmitted / 1000.0f : 0.0f;
         usPerDrawCall = drawCalls > 0 ? (float)timeTotal / (float)drawCalls / 1000.0f : 0.0f;
 
-        // Note: timeDrawSubmit is NOT in accounted because it is nested inside
-        // timeTriProcessing (Flush->DrawTriangles called from GfxSpTri1).
-        // Including it would double-count, inflating dispatch artificially.
-        const uint64_t accounted = timeTriProcessing + timeTextureSetup + timeShaderSetup +
-                                    timeVertexLoad + timeMatrixOps +
+        // Note: timeDrawSubmit, timeTextureSetup, and timeShaderSetup are NOT
+        // in accounted because they are nested inside timeTriProcessing
+        // (Flush/DrawTriangles, ImportTexture, and LoadShader are only called
+        // from within GfxSpTri1). Including them would double-count.
+        const uint64_t accounted = timeTriProcessing + timeVertexLoad + timeMatrixOps +
                                     timePixelDepth + timeFrameSetup;
         timeGbiDispatch = timeTotal > accounted ? (timeTotal - accounted) : 0;
     }
@@ -657,6 +657,42 @@ class Interpreter {
     // Cached combiner key + result (skip LookupOrCreateColorCombiner on ~85% of triangles)
     ColorCombinerKey mCachedCombinerKey{};
     ColorCombiner* mCachedCombiner = nullptr;
+
+#ifdef __SWITCH__
+    // Tri-state dirty flag: set by ANY command that changes rendering state
+    // consumed by GfxSpTri1. When clean, consecutive triangles skip all state
+    // validation (depth, viewport, combiner, texture, shader, alpha checks)
+    // and reuse cached vertex-processing parameters — saving ~400-600ns per tri.
+    bool mTriStateDirty = true;
+
+    // Cached vertex-processing parameters for the fast-path (valid when !mTriStateDirty).
+    // Populated by the slow path in GfxSpTri1 after full state validation.
+    struct CachedTriParams {
+        uint64_t cc_options;
+        uint32_t tm;
+        ColorCombiner* comb;
+        struct ShaderProgram* prg;
+        uint8_t numInputs;
+        int numAlphaPasses;
+        bool usedTextures[2];
+        bool useFog;
+        bool useGrayscale;
+        // Per-texture tile parameters
+        struct {
+            uint32_t tex_width, tex_height, tex_width2, tex_height2;
+            float invTexWidth, invTexHeight;
+            bool clampS, clampT;
+            float clampSVal, clampTVal;
+            float shiftsMul, shifttMul;
+            float ulsOffset, ultOffset;
+        } tex[2];
+        // Precomputed combiner inputs (constant across vertices)
+        struct { float r, g, b, a; bool isShade; } precomputed[2][7];
+        // Fog/grayscale constants
+        float fogR, fogG, fogB;
+        float grayR, grayG, grayB, grayA;
+    } mCachedTriParams{};
+#endif
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

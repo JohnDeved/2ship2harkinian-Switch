@@ -996,6 +996,13 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)stats.pixelDepthQueries);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
 
+            // Command handler timing breakdown
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEXTURE_LOADING_MS, (float)stats.timeTextureLoading / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_RECT_DRAWING_MS, (float)stats.timeRectDrawing / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DL_OPS_MS, (float)stats.timeDisplayListOps / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_COMBINER_SETUP_MS, (float)stats.timeCombinerSetup / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_FRAMEBUFFER_OPS_MS, (float)stats.timeFramebufferOps / 1000000.0f);
+
             // Flush cause breakdown
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE, (float)stats.flushCauseTexture);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER, (float)stats.flushCauseSampler);
@@ -1165,6 +1172,11 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SETUP_MS, (float)s.timeFrameSetup / 1000000.0f);
                 FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)s.pixelDepthQueries);
                 FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, s.avgBatchSize);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEXTURE_LOADING_MS, (float)s.timeTextureLoading / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_RECT_DRAWING_MS, (float)s.timeRectDrawing / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DL_OPS_MS, (float)s.timeDisplayListOps / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_COMBINER_SETUP_MS, (float)s.timeCombinerSetup / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_FRAMEBUFFER_OPS_MS, (float)s.timeFramebufferOps / 1000000.0f);
                 FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE, (float)s.flushCauseTexture);
                 FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER, (float)s.flushCauseSampler);
                 FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER, (float)s.flushCauseShader);
@@ -1320,6 +1332,11 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SETUP_MS, (float)stats.timeFrameSetup / 1000000.0f);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)stats.pixelDepthQueries);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEXTURE_LOADING_MS, (float)stats.timeTextureLoading / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_RECT_DRAWING_MS, (float)stats.timeRectDrawing / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DL_OPS_MS, (float)stats.timeDisplayListOps / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_COMBINER_SETUP_MS, (float)stats.timeCombinerSetup / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_FRAMEBUFFER_OPS_MS, (float)stats.timeFramebufferOps / 1000000.0f);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE, (float)stats.flushCauseTexture);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER, (float)stats.flushCauseSampler);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER, (float)stats.flushCauseShader);

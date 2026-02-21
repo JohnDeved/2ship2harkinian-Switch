@@ -771,6 +771,22 @@ static void ExportBenchmarkReport() {
         out << "    Texture Setup:              " << std::setprecision(2) << glTimeTex << " ms" << std::endl;
         out << "    Matrix Operations:          " << std::setprecision(2) << glTimeMtx << " ms" << std::endl;
         out << "    Dispatch (command walk):    " << std::setprecision(2) << glTimeDispatch << " ms" << std::endl;
+
+        // Dispatch handler breakdown
+        float glTimeTexLoading = r.counters[PROFILE_COUNTER_GL_TIME_TEXTURE_LOADING_MS];
+        float glTimeRectDraw = r.counters[PROFILE_COUNTER_GL_TIME_RECT_DRAWING_MS];
+        float glTimeDlOps = r.counters[PROFILE_COUNTER_GL_TIME_DL_OPS_MS];
+        float glTimeCombSetup = r.counters[PROFILE_COUNTER_GL_TIME_COMBINER_SETUP_MS];
+        float glTimeFbOps = r.counters[PROFILE_COUNTER_GL_TIME_FRAMEBUFFER_OPS_MS];
+        float glTimeHandlersAccounted = glTimeTexLoading + glTimeRectDraw + glTimeDlOps + glTimeCombSetup + glTimeFbOps;
+        float glTimeDispatchOther = glTimeDispatch > glTimeHandlersAccounted ? glTimeDispatch - glTimeHandlersAccounted : 0.0f;
+        out << "      Texture Loading:          " << std::setprecision(2) << glTimeTexLoading << " ms" << std::endl;
+        out << "      Rectangle Drawing:        " << std::setprecision(2) << glTimeRectDraw << " ms" << std::endl;
+        out << "      Display List Ops:         " << std::setprecision(2) << glTimeDlOps << " ms" << std::endl;
+        out << "      Combiner Setup:           " << std::setprecision(2) << glTimeCombSetup << " ms" << std::endl;
+        out << "      Framebuffer Ops:          " << std::setprecision(2) << glTimeFbOps << " ms" << std::endl;
+        out << "      Other (trivial cmds):     " << std::setprecision(2) << glTimeDispatchOther << " ms" << std::endl;
+
         out << "    Pixel Depth Readback:       " << std::setprecision(2) << glTimeDepth << " ms" << std::endl;
         out << "    Frame Setup:                " << std::setprecision(2) << glTimeSetup << " ms" << std::endl;
         out << "    Shader Compile/Switch:      " << std::setprecision(2) << glTimeShader << " ms" << std::endl;

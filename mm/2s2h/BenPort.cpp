@@ -1198,12 +1198,12 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
 
                 const bool isLastSubFrame = !hasNext;
 
-                // Render ImGui on the FIRST sub-frame, skip on the last.
-                // Sub-frames 0,1 wait for full vsync (16.67ms) anyway, so ImGui
-                // overhead (~5ms) doesn't add to the critical path there. But the
-                // last sub-frame uses WaitForGlCommandsDone (frame-ahead), so
-                // skipping ImGui reduces GL commands from ~15ms to ~10ms, giving
-                // a 6.67ms vsync gap for game logic overlap instead of 1.67ms.
+                // Render ImGui only on the FIRST sub-frame, skip it on all subsequent ones.
+                // Earlier sub-frames still wait for full vsync (16.67ms), so ImGui overhead
+                // (~5ms) there doesn't add to the critical path. The last sub-frame, however,
+                // uses WaitForGlCommandsDone (frame-ahead) instead of a full vsync wait, so
+                // skipping ImGui on that and other later sub-frames reduces GL work from
+                // ~15ms to ~10ms, increasing the vsync gap available for game logic overlap.
                 const bool renderImGui = (i == 0);
 
                 wnd->SubmitRenderWork(commands, std::move(current_m), renderImGui);
@@ -1218,7 +1218,11 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 // while Core 1 sleeps in SDL_GL_SwapWindow (vsync).
                 if (isLastSubFrame) {
                     wnd->WaitForGlCommandsDone();
+                    // Capture last sub-frame stats for deferred processing next tick.
+                    // GL commands are done so interpreter stats are final and safe to read.
                     if (profilerEnabled) {
+                        savedStats = wnd->GetFrameStats();
+                        hasSavedStats = true;
                         FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
                     }
                     FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);

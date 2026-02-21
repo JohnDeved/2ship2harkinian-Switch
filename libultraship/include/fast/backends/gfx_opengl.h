@@ -156,6 +156,13 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
 
     // Cache z-fighting CVar per frame to avoid hash map lookup per draw call.
     int mCachedZFightingMode = 0;
+
+    // Texture bind deduplication: skip glBindTexture/glActiveTexture when unchanged.
+    GLuint mLastBoundTexture[2] = { 0, 0 };
+    int mLastActiveTextureTile = -1;
+
+    // Shader switch deduplication: skip glUseProgram+VAO bind when same program.
+    GLuint mLastShaderProgramId = 0;
 #endif
 
     uint32_t mFrameCount = 0;

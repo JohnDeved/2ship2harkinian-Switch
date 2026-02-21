@@ -121,6 +121,13 @@ void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     if (mStats != nullptr) {
         mStats->shaderSwitches++;
     }
+#if defined(__SWITCH__)
+    // Skip redundant shader switches — same program already active
+    if (new_prg->openglProgramId == mLastShaderProgramId) {
+        return;
+    }
+    mLastShaderProgramId = new_prg->openglProgramId;
+#endif
     glUseProgram(new_prg->openglProgramId);
     // Invalidate uniform cache on shader switch (uniform locations differ per program)
     mLastUniformTextureIds[0] = UINT32_MAX;
@@ -595,8 +602,27 @@ void GfxRenderingAPIOGL::SelectTexture(int tile, GLuint texture_id) {
         mStats->textureBinds++;
     }
 
+#if defined(__SWITCH__)
+    // Skip redundant texture binds — same texture already bound to this tile
+    if (mLastBoundTexture[tile] == texture_id) {
+        if (mLastActiveTextureTile != tile) {
+            glActiveTexture(GL_TEXTURE0 + tile);
+            mLastActiveTextureTile = tile;
+        }
+        mCurrentTextureIds[tile] = texture_id;
+        mCurrentTile = tile;
+        return;
+    }
+    if (mLastActiveTextureTile != tile) {
+        glActiveTexture(GL_TEXTURE0 + tile);
+        mLastActiveTextureTile = tile;
+    }
+    glBindTexture(GL_TEXTURE_2D, texture_id);
+    mLastBoundTexture[tile] = texture_id;
+#else
     glActiveTexture(GL_TEXTURE0 + tile);
     glBindTexture(GL_TEXTURE_2D, texture_id);
+#endif
     mCurrentTextureIds[tile] = texture_id;
     mCurrentTile = tile;
 }
@@ -874,6 +900,11 @@ void GfxRenderingAPIOGL::StartFrame() {
     mVboIterActive = false;
     // Cache z-fighting CVar once per frame instead of per draw call
     mCachedZFightingMode = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_Z_FIGHTING_MODE, 0);
+    // Reset texture/shader caches for new frame (ImGui may have changed GL state)
+    mLastBoundTexture[0] = 0;
+    mLastBoundTexture[1] = 0;
+    mLastActiveTextureTile = -1;
+    mLastShaderProgramId = 0;
 #endif
 }
 

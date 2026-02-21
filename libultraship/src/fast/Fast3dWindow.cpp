@@ -472,12 +472,15 @@ void Fast3dWindow::RenderThreadLoop() {
 #endif
         }
 
-        // Signal that GL commands are done BEFORE SwapBuffers.
-        // Uses atomic store+acquire/release to avoid mutex overhead.
-        // Core 0 spin-waits on this in WaitForGlCommandsDone().
+        // Signal that GL commands are done BEFORE the buffer swap.
+        // Core 0 can proceed here and start game logic while the render thread
+        // may still be blocked in the swap. On Switch, the SDL backend forces
+        // vsync on and SDL_GL_SwapWindow can block for the vsync interval.
         mGlCommandsDone.store(true, std::memory_order_release);
 
-        // This calls SwapBuffersBegin → SDL_GL_SwapWindow (~1ms with vsync off)
+        // This calls SwapBuffersBegin → SDL_GL_SwapWindow. On Switch (SDL
+        // backend) vsync is forced on, so SDL_GL_SwapWindow can block for the
+        // duration of the vsync interval instead of returning quickly.
         mInterpreter->EndFrame();
 
         lock.lock();

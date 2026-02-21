@@ -437,19 +437,19 @@ struct InterpolateCtx {
 } // anonymous namespace
 
 unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step) {
-    // Cache previous map size to pre-allocate buckets, avoiding repeated
-    // rehashing as entries are inserted. Thread-local because this is called
-    // from both Core 0 (sync) and Core 3 (async TaskWorker).
-    static thread_local size_t prev_bucket_count = 0;
+    // Cache previous element count to pre-allocate capacity via reserve(),
+    // avoiding repeated rehashing as entries are inserted. Thread-local
+    // because this is called from both Core 0 (sync) and Core 3 (async TaskWorker).
+    static thread_local size_t prev_element_count = 0;
 
     InterpolateCtx ctx;
     ctx.step = step;
     ctx.w = 1.0f - step;
-    if (prev_bucket_count > 0) {
-        ctx.mtx_replacements.reserve(prev_bucket_count);
+    if (prev_element_count > 0) {
+        ctx.mtx_replacements.reserve(prev_element_count);
     }
     ctx.interpolate_branch(&previous_recording.root_path, &current_recording.root_path);
-    prev_bucket_count = ctx.mtx_replacements.size();
+    prev_element_count = ctx.mtx_replacements.size();
     return ctx.mtx_replacements;
 }
 

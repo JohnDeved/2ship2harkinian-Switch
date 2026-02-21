@@ -96,6 +96,11 @@ static HOOK_ID sSceneInitHookId = 0;
 static HOOK_ID sUpdateHookId = 0;
 static bool sHooksRegistered = false;
 
+// Saved clock state to restore after benchmark completes
+static s32 sSavedTimeSpeed = 0;
+static u16 sSavedTime = 0;
+static bool sClockSaved = false;
+
 static std::vector<BenchmarkResult> sResults;
 static std::string sLastExportPath;
 static float sExportMsgTimer = 0.0f;
@@ -397,6 +402,12 @@ static void OnBenchmarkUpdate() {
             break;
         }
         case BENCH_SETTLING: {
+            // Save clock state on first entry so we can restore after benchmark
+            if (!sClockSaved) {
+                sSavedTimeSpeed = R_TIME_SPEED;
+                sSavedTime = gSaveContext.save.time;
+                sClockSaved = true;
+            }
             // Freeze the in-game clock so game state (NPC schedules, actor load)
             // stays consistent regardless of tick rate. Without this, frame-ahead
             // makes the game tick faster, advancing MM's day cycle and loading
@@ -462,6 +473,12 @@ static void OnBenchmarkUpdate() {
                 sCurrentScene++;
                 if (sCurrentScene >= sActiveSceneCount) {
                     sState = BENCH_DONE;
+                    // Restore clock state that was frozen during benchmark
+                    if (sClockSaved) {
+                        R_TIME_SPEED = sSavedTimeSpeed;
+                        gSaveContext.save.time = sSavedTime;
+                        sClockSaved = false;
+                    }
                 } else {
                     sState = BENCH_WARPING;
                     sSceneReady = false;
@@ -871,12 +888,15 @@ static void ExportBenchmarkReport() {
         }
         out << std::endl;
 
-        // Unaccounted time — time not attributed to any measured phase
+        // Estimated unaccounted time — total frame time minus selected phases (phases may overlap)
         float accountedMs =
             r.phases[PROFILE_PHASE_PLAY_UPDATE] + r.phases[PROFILE_PHASE_PLAY_DRAW] +
             r.phases[PROFILE_PHASE_AUDIO_WAIT] + r.phases[PROFILE_PHASE_FRAME_INTERP] +
             r.phases[PROFILE_PHASE_DL_PROCESS];
         float unaccountedMs = totalMs - accountedMs;
+        if (unaccountedMs < 0.0f) {
+            unaccountedMs = 0.0f;
+        }
         float unaccountedPct = (totalMs > 0.01f) ? (unaccountedMs / totalMs * 100.0f) : 0.0f;
         out << "  Unaccounted Time:             " << std::setprecision(2) << unaccountedMs
             << " ms (" << std::setprecision(1) << unaccountedPct << "%)" << std::endl;

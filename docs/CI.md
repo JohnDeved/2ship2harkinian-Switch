@@ -9,7 +9,7 @@ The main CI/CD workflow (`.github/workflows/main.yml`) builds 2Ship2Harkinian fo
 ```
 ┌─────────────────────┐
 │ generate-2ship-otr  │ ──┐
-│ (Ubuntu 22.04)      │   │
+│ (Ubuntu 24.04)      │   │
 └─────────────────────┘   │
                           ├──> ┌──────────────────┐
 ┌─────────────────────┐   │    │ combine-artifacts│
@@ -19,12 +19,12 @@ The main CI/CD workflow (`.github/workflows/main.yml`) builds 2Ship2Harkinian fo
 ```
 
 #### Job 1: generate-2ship-otr
-- **Platform**: Ubuntu 22.04
+- **Platform**: Ubuntu 24.04
 - **Purpose**: Extracts game assets and generates the `2ship.o2r` file
 - **Runtime**: ~5-10 minutes (with cache)
 - **Key optimizations**:
   - ccache for C/C++ compilation caching (500MB limit)
-  - Dependency caching (SDL2, tinyxml2) with build skip logic
+  - Uses prebuilt distro packages for SDL2 and tinyxml2 (no source bootstrap step)
   - Artifact: `2ship.o2r` (retained for 3 days)
 
 #### Job 2: build-switch
@@ -56,12 +56,6 @@ The main CI/CD workflow (`.github/workflows/main.yml`) builds 2Ship2Harkinian fo
    - Key: `${{ runner.os }}-{timestamp}`
    - Size limit: 1GB
    - Stores compiled object files from Switch cross-compilation
-
-#### Dependency Caches
-1. **deps folder (OTR build)**:
-   - Key: `${{ runner.os }}-deps-${{ hashFiles('CMakeLists.txt', 'mm/**/CMakeLists.txt') }}`
-   - Contents: SDL2-2.30.3 and tinyxml2-10.0.0 source and build artifacts
-   - Optimization: Uses `.install-complete` marker files to skip rebuilds when cached
 
 #### Docker Image Caching
 - The `devkitpro/devkita64:latest` container is automatically cached by GitHub Actions when using the `container:` key
@@ -106,13 +100,13 @@ The workflow produces three artifact sets:
 Compared to the previous sequential workflow:
 
 1. **Parallel Execution**: OTR generation and Switch compilation now run simultaneously, cutting total build time roughly in half
-2. **Improved Dependency Caching**: SDL and tinyxml2 skip rebuild when cached, saving 2-3 minutes per build
+2. **Faster Dependency Setup**: SDL2 and tinyxml2 come from prebuilt Ubuntu packages, removing custom source build/install steps
 3. **Better Resource Utilization**: Both jobs can use full CPU resources without waiting
 4. **Cleaner Artifact Management**: Intermediate artifacts are separated, making debugging easier
 
 ### Maintenance Notes
 
 - Cache keys use timestamps for incremental versioning
-- The `deps` cache is keyed on CMakeLists.txt changes, so it invalidates when build configuration changes
+- The OTR job now relies on prebuilt Ubuntu packages for SDL2/tinyxml2 instead of a separate dependency source-build cache
 - Docker image pulls are handled automatically by GitHub Actions
 - All three jobs must complete successfully for the workflow to succeed

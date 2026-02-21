@@ -15,6 +15,10 @@ import argparse
 import math
 from dataclasses import dataclass
 
+PROFILE_PHASE_TOTAL_FRAME_INDEX = 13
+PROFILE_COUNTER_DL_ITERATIONS_INDEX = 8
+MIN_VALID_RENDER_MS = 0.01
+
 
 @dataclass
 class BaselineScene:
@@ -24,8 +28,10 @@ class BaselineScene:
 
     @property
     def render_ms(self) -> float:
-        total_ms = self.phases[13] if len(self.phases) > 13 else 0.0  # PROFILE_PHASE_TOTAL_FRAME
-        dl_iterations = self.counters[8] if len(self.counters) > 8 else 1.0  # PROFILE_COUNTER_DL_ITERATIONS
+        total_ms = self.phases[PROFILE_PHASE_TOTAL_FRAME_INDEX] if len(self.phases) > PROFILE_PHASE_TOTAL_FRAME_INDEX else 0.0
+        dl_iterations = (
+            self.counters[PROFILE_COUNTER_DL_ITERATIONS_INDEX] if len(self.counters) > PROFILE_COUNTER_DL_ITERATIONS_INDEX else 1.0
+        )
         if dl_iterations < 1.0:
             dl_iterations = 1.0
         return total_ms / dl_iterations
@@ -120,13 +126,13 @@ def main() -> int:
 
         ref_local_ms = l_ref.render_ms
         new_local_ms = l_new.render_ms
-        if ref_local_ms <= 0.01 or not math.isfinite(ref_local_ms) or not math.isfinite(new_local_ms):
+        if ref_local_ms <= MIN_VALID_RENDER_MS or not math.isfinite(ref_local_ms) or not math.isfinite(new_local_ms):
             continue
 
         speed_ratio = new_local_ms / ref_local_ms
         est_switch_ms = s_ref.render_ms * speed_ratio
         delta_ms = est_switch_ms - s_ref.render_ms
-        delta_pct = (delta_ms / s_ref.render_ms * 100.0) if s_ref.render_ms > 0.01 else 0.0
+        delta_pct = (delta_ms / s_ref.render_ms * 100.0) if s_ref.render_ms > MIN_VALID_RENDER_MS else 0.0
 
         print(f"{scene_name:24} {s_ref.render_ms:10.2f} {est_switch_ms:10.2f} {delta_ms:9.2f} {delta_pct:8.1f}%")
 
@@ -140,7 +146,7 @@ def main() -> int:
     avg_ref = ref_sum / counted
     avg_est = est_sum / counted
     avg_delta = avg_est - avg_ref
-    avg_delta_pct = (avg_delta / avg_ref * 100.0) if avg_ref > 0.01 else 0.0
+    avg_delta_pct = (avg_delta / avg_ref * 100.0) if avg_ref > MIN_VALID_RENDER_MS else 0.0
 
     print("-" * 68)
     print(f"{'Average':24} {avg_ref:10.2f} {avg_est:10.2f} {avg_delta:9.2f} {avg_delta_pct:8.1f}%")

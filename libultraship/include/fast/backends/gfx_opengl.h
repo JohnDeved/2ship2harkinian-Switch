@@ -170,6 +170,68 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
 
     // Shader switch deduplication: skip glUseProgram+VAO bind when same program.
     GLuint mLastShaderProgramId = UINT32_MAX;
+    
+    struct DeferredDraw {
+        size_t vboOffset; // Index in mDeferredVbo
+        size_t numTris;
+        
+        ShaderProgram* prg;
+        GLuint textureIds[2];
+        uint16_t texFiltering[2];
+        uint32_t texCms[2];
+        uint32_t texCmt[2];
+        
+        int8_t alphaBlend;
+        bool depthTest;
+        bool depthMask;
+        bool zmodeDecal;
+        GLfloat polygonOffsetSSDB;
+        GLint viewport[4];
+        GLint scissor[4];
+
+        bool operator<(const DeferredDraw& other) const {
+            if (prg != other.prg) return prg < other.prg;
+            if (textureIds[0] != other.textureIds[0]) return textureIds[0] < other.textureIds[0];
+            if (textureIds[1] != other.textureIds[1]) return textureIds[1] < other.textureIds[1];
+            if (texFiltering[0] != other.texFiltering[0]) return texFiltering[0] < other.texFiltering[0];
+            if (texFiltering[1] != other.texFiltering[1]) return texFiltering[1] < other.texFiltering[1];
+            if (alphaBlend != other.alphaBlend) return alphaBlend < other.alphaBlend;
+            if (depthTest != other.depthTest) return depthTest < other.depthTest;
+            if (depthMask != other.depthMask) return depthMask < other.depthMask;
+            if (zmodeDecal != other.zmodeDecal) return zmodeDecal < other.zmodeDecal; // false (0) < true (1) -> base geom first
+            for (int i = 0; i < 4; i++) {
+                if (viewport[i] != other.viewport[i]) return viewport[i] < other.viewport[i];
+                if (scissor[i] != other.scissor[i]) return scissor[i] < other.scissor[i];
+            }
+            return false;
+        }
+
+        bool StateEquals(const DeferredDraw& other) const {
+            return prg == other.prg &&
+                   textureIds[0] == other.textureIds[0] &&
+                   textureIds[1] == other.textureIds[1] &&
+                   texFiltering[0] == other.texFiltering[0] &&
+                   texFiltering[1] == other.texFiltering[1] &&
+                   texCms[0] == other.texCms[0] &&
+                   texCmt[0] == other.texCmt[0] &&
+                   texCms[1] == other.texCms[1] &&
+                   texCmt[1] == other.texCmt[1] &&
+                   alphaBlend == other.alphaBlend &&
+                   depthTest == other.depthTest &&
+                   depthMask == other.depthMask &&
+                   zmodeDecal == other.zmodeDecal &&
+                   polygonOffsetSSDB == other.polygonOffsetSSDB &&
+                   viewport[0] == other.viewport[0] && viewport[1] == other.viewport[1] &&
+                   viewport[2] == other.viewport[2] && viewport[3] == other.viewport[3] &&
+                   scissor[0] == other.scissor[0] && scissor[1] == other.scissor[1] &&
+                   scissor[2] == other.scissor[2] && scissor[3] == other.scissor[3];
+        }
+    };
+    
+    std::vector<DeferredDraw> mDeferredDraws;
+    std::vector<float> mDeferredVbo;
+    
+    void FlushDeferredDraws();
 #endif
 
     uint32_t mFrameCount = 0;

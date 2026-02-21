@@ -150,11 +150,7 @@ void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     // if (!new_prg) return;
     mCurrentShaderProgram = new_prg;
 #if defined(__SWITCH__)
-    // Skip redundant shader switches — same program already active
-    if (new_prg->openglProgramId == mLastShaderProgramId) {
-        return;
-    }
-    mLastShaderProgramId = new_prg->openglProgramId;
+    return; // Defer OpenGL state changes to FlushDeferredDraws
 #endif
     if (mStats != nullptr) {
         mStats->shaderSwitches++;
@@ -630,16 +626,9 @@ void GfxRenderingAPIOGL::DeleteTexture(uint32_t texID) {
 
 void GfxRenderingAPIOGL::SelectTexture(int tile, GLuint texture_id) {
 #if defined(__SWITCH__)
-    // Skip redundant texture binds — same texture already bound to this tile
-    if (mLastBoundTexture[tile] == texture_id) {
-        if (mLastActiveTextureTile != tile) {
-            glActiveTexture(GL_TEXTURE0 + tile);
-            mLastActiveTextureTile = tile;
-        }
-        mCurrentTextureIds[tile] = texture_id;
-        mCurrentTile = tile;
-        return;
-    }
+    mCurrentTextureIds[tile] = texture_id;
+    mCurrentTile = tile;
+    return; // Defer OpenGL state changes
 #endif
     if (mStats != nullptr) {
         mStats->textureBinds++;
@@ -689,6 +678,18 @@ static uint32_t gfx_cm_to_opengl(uint32_t val) {
 }
 
 void GfxRenderingAPIOGL::SetSamplerParameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
+#if defined(__SWITCH__)
+    auto& tex = textures[mCurrentTextureIds[tile]];
+    const uint16_t filtering = !linear_filter ? FILTER_LINEAR : FILTER_THREE_POINT;
+    if (tex.filtering != filtering) {
+        tex.filtering = filtering;
+        tex.uniformsVersion++;
+    }
+    // We can't call glTexParameteri directly without glActiveTexture and glBindTexture,
+    // so we just record the desired state in `textures` and apply it in FlushDeferredDraws.
+    tex.pad = (cms & 0xFF) | ((cmt & 0xFF) << 8); // temporary storage for wrap params
+    return;
+#endif
     glActiveTexture(GL_TEXTURE0 + tile);
 #if defined(__SWITCH__)
     mLastActiveTextureTile = tile;
@@ -717,13 +718,11 @@ void GfxRenderingAPIOGL::SetZmodeDecal(bool zmode_decal) {
 
 void GfxRenderingAPIOGL::SetViewport(int x, int y, int width, int height) {
 #if defined(__SWITCH__)
-    if (x != mLastViewport[0] || y != mLastViewport[1] || width != mLastViewport[2] || height != mLastViewport[3]) {
-        glViewport(x, y, width, height);
-        mLastViewport[0] = x;
-        mLastViewport[1] = y;
-        mLastViewport[2] = width;
-        mLastViewport[3] = height;
-    }
+    mLastViewport[0] = x;
+    mLastViewport[1] = y;
+    mLastViewport[2] = width;
+    mLastViewport[3] = height;
+    return; // Defer GL call
 #else
     glViewport(x, y, width, height);
 #endif
@@ -731,13 +730,11 @@ void GfxRenderingAPIOGL::SetViewport(int x, int y, int width, int height) {
 
 void GfxRenderingAPIOGL::SetScissor(int x, int y, int width, int height) {
 #if defined(__SWITCH__)
-    if (x != mLastScissor[0] || y != mLastScissor[1] || width != mLastScissor[2] || height != mLastScissor[3]) {
-        glScissor(x, y, width, height);
-        mLastScissor[0] = x;
-        mLastScissor[1] = y;
-        mLastScissor[2] = width;
-        mLastScissor[3] = height;
-    }
+    mLastScissor[0] = x;
+    mLastScissor[1] = y;
+    mLastScissor[2] = width;
+    mLastScissor[3] = height;
+    return; // Defer GL call
 #else
     glScissor(x, y, width, height);
 #endif
@@ -757,6 +754,88 @@ void GfxRenderingAPIOGL::SetUseAlpha(bool use_alpha) {
 }
 
 void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
+#if defined(__SWITCH__)
+    if (buf_vbo_num_tris == 0) return;
+    
+    DeferredDraw d;
+    d.prg = mCurrentShaderProgram;
+    d.textureIds[0] = mCurrentShaderProgram->usedTextures[0] ? mCurrentTextureIds[0] : 0;
+    d.textureIds[1] = mCurrentShaderProgram->usedTextures[1] ? mCurrentTextureIds[1] : 0;
+    if (d.textureIds[0]) {
+        d.textureVersions[0] = textures[d.textureIds[0]].uniformsVersion;
+        d.texFiltering[0] = textures[d.textureIds[0]].filtering;
+        uint32_t wrap = textures[d.textureIds[0]].pad;
+        d.texCms[0] = wrap & 0xFF;
+        d.texCmt[0] = (wrap >> 8) & 0xFF;
+    } else {
+        d.textureVersions[0] = 0;
+        d.texFiltering[0] = 0;
+        d.texCms[0] = 0;
+        d.texCmt[0] = 0;
+    }
+    if (d.textureIds[1]) {
+        d.textureVersions[1] = textures[d.textureIds[1]].uniformsVersion;
+        d.texFiltering[1] = textures[d.textureIds[1]].filtering;
+        uint32_t wrap = textures[d.textureIds[1]].pad;
+        d.texCms[1] = wrap & 0xFF;
+        d.texCmt[1] = (wrap >> 8) & 0xFF;
+    } else {
+        d.textureVersions[1] = 0;
+        d.texFiltering[1] = 0;
+        d.texCms[1] = 0;
+        d.texCmt[1] = 0;
+    }
+    
+    d.alphaBlend = mCurrentAlphaBlend;
+    d.depthTest = mCurrentDepthTest;
+    d.depthMask = mCurrentDepthMask;
+    d.zmodeDecal = mCurrentZmodeDecal;
+    
+    for (int i = 0; i < 4; i++) {
+        d.viewport[i] = mLastViewport[i];
+        d.scissor[i] = mLastScissor[i];
+    }
+    
+    if (mCurrentZmodeDecal) {
+        if (mCachedPolygonOffsetFbId != mCurrentFrameBuffer ||
+            mCachedPolygonOffsetZMode != mCachedZFightingMode) {
+            const int n64modeFactor = 120;
+            const int noVanishFactor = 100;
+            GLfloat SSDB = -2;
+            switch (mCachedZFightingMode) {
+                case 1:
+                    if (mFrameBuffers.size() > mCurrentFrameBuffer) {
+                        SSDB = -1.0f * (GLfloat)mFrameBuffers[mCurrentFrameBuffer].height / n64modeFactor;
+                    }
+                    break;
+                case 2:
+                    if (mFrameBuffers.size() > mCurrentFrameBuffer) {
+                        SSDB = -1.0f * (GLfloat)mFrameBuffers[mCurrentFrameBuffer].height / noVanishFactor;
+                    }
+                    break;
+                default:
+                    SSDB = -2;
+            }
+            mCachedPolygonOffsetSSDB = SSDB;
+            mCachedPolygonOffsetFbId = mCurrentFrameBuffer;
+            mCachedPolygonOffsetZMode = mCachedZFightingMode;
+        }
+        d.polygonOffsetSSDB = mCachedPolygonOffsetSSDB;
+    } else {
+        d.polygonOffsetSSDB = 0.0f;
+    }
+
+    d.numTris = buf_vbo_num_tris;
+    d.vboOffset = mDeferredVbo.size();
+    
+    // Ensure we have space to avoid constant reallocations
+    if (mDeferredVbo.capacity() < mDeferredVbo.size() + buf_vbo_len) {
+        mDeferredVbo.reserve(std::max(mDeferredVbo.capacity() * 2, (size_t)(1024 * 1024)));
+    }
+    mDeferredVbo.insert(mDeferredVbo.end(), buf_vbo, buf_vbo + buf_vbo_len);
+    mDeferredDraws.push_back(d);
+#else
+
 #if defined(__SWITCH__)
     // Apply deferred alpha blend state change
     if (mCurrentAlphaBlend != mLastAlphaBlend) {
@@ -915,6 +994,211 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
 #endif
 }
 
+
+#endif
+}
+
+
+#if defined(__SWITCH__)
+#include <algorithm>
+
+void GfxRenderingAPIOGL::FlushDeferredDraws() {
+    if (mDeferredDraws.empty()) return;
+
+    const bool profiling = (mStats != nullptr);
+    uint64_t dummyTarget = 0;
+    uint64_t& dispatchTarget = profiling ? mStats->timeDisplayListOps : dummyTarget;
+    uint64_t& vboTarget = profiling ? mStats->timeVboUpload : dummyTarget;
+    uint64_t& drawTarget = profiling ? mStats->timeGlDraw : dummyTarget;
+
+    Fast3DScopedTimer t(dispatchTarget, profiling);
+
+    // Identify and sort contiguous runs of opaque draws
+    size_t runStart = 0;
+    while (runStart < mDeferredDraws.size()) {
+        bool isOpaqueRun = (mDeferredDraws[runStart].alphaBlend == 0) && mDeferredDraws[runStart].depthMask;
+        
+        size_t runEnd = runStart + 1;
+        while (runEnd < mDeferredDraws.size()) {
+            bool nextIsOpaque = (mDeferredDraws[runEnd].alphaBlend == 0) && mDeferredDraws[runEnd].depthMask;
+            if (nextIsOpaque != isOpaqueRun) break;
+            runEnd++;
+        }
+
+        if (isOpaqueRun && (runEnd - runStart) > 1) {
+            std::stable_sort(mDeferredDraws.begin() + runStart, mDeferredDraws.begin() + runEnd);
+        }
+        
+        runStart = runEnd;
+    }
+
+    // Repack VBO and execute
+    std::vector<float> sortedVbo;
+    sortedVbo.reserve(mDeferredVbo.size());
+    
+    // We will build merged draw calls on the fly
+    struct MergedDraw {
+        DeferredDraw state;
+        size_t firstVertex;
+        size_t numTris;
+    };
+    std::vector<MergedDraw> mergedDraws;
+    mergedDraws.reserve(mDeferredDraws.size());
+
+    for (const auto& d : mDeferredDraws) {
+        size_t floatsPerVertex = d.prg ? d.prg->numFloats : 0;
+        size_t numFloats = d.numTris * 3 * floatsPerVertex;
+        
+        size_t newFirstVertex = sortedVbo.size() / floatsPerVertex;
+        sortedVbo.insert(sortedVbo.end(), 
+                         mDeferredVbo.begin() + d.vboOffset, 
+                         mDeferredVbo.begin() + d.vboOffset + numFloats);
+                         
+        if (!mergedDraws.empty() && mergedDraws.back().state.StateEquals(d)) {
+            // Merge into previous
+            mergedDraws.back().numTris += d.numTris;
+        } else {
+            MergedDraw md;
+            md.state = d;
+            md.firstVertex = newFirstVertex;
+            md.numTris = d.numTris;
+            mergedDraws.push_back(md);
+        }
+    }
+
+    // Upload sorted VBO
+    const size_t uploadBytes = sortedVbo.size() * sizeof(float);
+    if (uploadBytes > 0) {
+        Fast3DScopedTimer tVbo(vboTarget, profiling);
+        if (!mVboIterActive) {
+            glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
+            mVboIterOffset = 0;
+            mVboIterActive = true;
+        }
+
+        if ((mVboIterOffset % 32) != 0) {
+            mVboIterOffset += 32 - (mVboIterOffset % 32);
+        }
+
+        if (mVboIterOffset + uploadBytes > VBO_ITER_SIZE) {
+            glBufferData(GL_ARRAY_BUFFER, VBO_ITER_SIZE, NULL, GL_STREAM_DRAW);
+            mVboIterOffset = 0;
+        }
+
+        glBufferSubData(GL_ARRAY_BUFFER, mVboIterOffset, uploadBytes, sortedVbo.data());
+    }
+
+    size_t currentVboIterOffset = mVboIterOffset;
+    mVboIterOffset += uploadBytes;
+
+    // Execute merged draws
+    for (const auto& md : mergedDraws) {
+        const auto& d = md.state;
+        
+        // 1. Alpha Blend
+        if (d.alphaBlend != mLastAlphaBlend) {
+            mLastAlphaBlend = d.alphaBlend;
+            if (d.alphaBlend) glEnable(GL_BLEND);
+            else glDisable(GL_BLEND);
+        }
+        
+        // 2. Depth Test / Mask
+        if (d.depthTest != mLastDepthTest || d.depthMask != mLastDepthMask) {
+            mLastDepthTest = d.depthTest;
+            mLastDepthMask = d.depthMask;
+            if (d.depthTest || d.depthMask) {
+                glEnable(GL_DEPTH_TEST);
+                glDepthMask(d.depthMask ? GL_TRUE : GL_FALSE);
+            } else {
+                glDisable(GL_DEPTH_TEST);
+            }
+        }
+        if (d.depthTest) {
+            glDepthFunc(d.zmodeDecal ? GL_LEQUAL : GL_LESS);
+        }
+        
+        // 3. Decal
+        if (d.zmodeDecal != mLastZmodeDecal) {
+            mLastZmodeDecal = d.zmodeDecal;
+            if (d.zmodeDecal) {
+                glEnable(GL_POLYGON_OFFSET_FILL);
+            } else {
+                glPolygonOffset(0, 0);
+                glDisable(GL_POLYGON_OFFSET_FILL);
+            }
+        }
+        if (d.zmodeDecal) {
+            glPolygonOffset(d.polygonOffsetSSDB, -2);
+        }
+        
+        // 4. Viewport & Scissor
+        glViewport(d.viewport[0], d.viewport[1], d.viewport[2], d.viewport[3]);
+        glScissor(d.scissor[0], d.scissor[1], d.scissor[2], d.scissor[3]);
+        
+        // 5. Shader
+        if (d.prg != nullptr) {
+            if (d.prg->openglProgramId != mLastShaderProgramId) {
+                mLastShaderProgramId = d.prg->openglProgramId;
+                if (profiling) mStats->shaderSwitches++;
+                glUseProgram(d.prg->openglProgramId);
+                glBindVertexArray(d.prg->vao);
+                SetUniforms(d.prg);
+                mLastUniformTextureIds[0] = UINT32_MAX;
+                mLastUniformTextureIds[1] = UINT32_MAX;
+                mLastUniformTextureVersions[0] = UINT32_MAX;
+                mLastUniformTextureVersions[1] = UINT32_MAX;
+            }
+            
+            // 6. Textures & Samplers
+            for (int i = 0; i < 2; i++) {
+                if (!d.prg->usedTextures[i]) continue;
+                GLuint tex = d.textureIds[i];
+                if (tex == 0) continue;
+                
+                if (mLastBoundTexture[i] != tex) {
+                    if (mLastActiveTextureTile != i) {
+                        glActiveTexture(GL_TEXTURE0 + i);
+                        mLastActiveTextureTile = i;
+                    }
+                    glBindTexture(GL_TEXTURE_2D, tex);
+                    mLastBoundTexture[i] = tex;
+                    if (profiling) mStats->textureBinds++;
+                }
+                
+                // Set sampler parameters
+                const GLint filter = d.texFiltering[i] == FILTER_LINEAR ? GL_LINEAR : GL_NEAREST;
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gfx_cm_to_opengl(d.texCms[i]));
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gfx_cm_to_opengl(d.texCmt[i]));
+            }
+            
+            // Uniforms
+            mCurrentShaderProgram = d.prg;
+            mCurrentTextureIds[0] = d.textureIds[0];
+            mCurrentTextureIds[1] = d.textureIds[1];
+            textures[mCurrentTextureIds[0]].uniformsVersion = d.textureVersions[0];
+            textures[mCurrentTextureIds[1]].uniformsVersion = d.textureVersions[1];
+            textures[mCurrentTextureIds[0]].filtering = d.texFiltering[0];
+            textures[mCurrentTextureIds[1]].filtering = d.texFiltering[1];
+            SetPerDrawUniforms();
+            
+            // 7. Draw
+            size_t strideBytes = d.prg->numFloats * sizeof(float);
+            GLint firstVertexGL = (GLint)((currentVboIterOffset / strideBytes) + md.firstVertex);
+            {
+                Fast3DScopedTimer tDraw(drawTarget, profiling);
+                glDrawArrays(GL_TRIANGLES, firstVertexGL, 3 * md.numTris);
+            }
+        }
+    }
+    
+    // Clear deferred state
+    mDeferredDraws.clear();
+    mDeferredVbo.clear();
+}
+#endif
+
 void GfxRenderingAPIOGL::Init() {
 #if !defined(__SWITCH__) && !defined(__linux__)
     glewInit();
@@ -972,6 +1256,10 @@ void GfxRenderingAPIOGL::StartFrame() {
 }
 
 void GfxRenderingAPIOGL::EndFrame() {
+#if defined(__SWITCH__)
+    FlushDeferredDraws();
+#endif
+
     glFlush();
 }
 
@@ -1073,6 +1361,10 @@ void GfxRenderingAPIOGL::UpdateFramebufferParameters(int fb_id, uint32_t width, 
 }
 
 void GfxRenderingAPIOGL::StartDrawToFramebuffer(int fb_id, float noise_scale) {
+#if defined(__SWITCH__)
+    FlushDeferredDraws();
+#endif
+
     FramebufferOGL& fb = mFrameBuffers[fb_id];
 
     if (noise_scale != 0.0f) {
@@ -1083,6 +1375,10 @@ void GfxRenderingAPIOGL::StartDrawToFramebuffer(int fb_id, float noise_scale) {
 }
 
 void GfxRenderingAPIOGL::ClearFramebuffer(bool color, bool depth) {
+#if defined(__SWITCH__)
+    FlushDeferredDraws();
+#endif
+
     glDisable(GL_SCISSOR_TEST);
     glDepthMask(GL_TRUE);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -1092,6 +1388,10 @@ void GfxRenderingAPIOGL::ClearFramebuffer(bool color, bool depth) {
 }
 
 void GfxRenderingAPIOGL::ResolveMSAAColorBuffer(int fb_id_target, int fb_id_source) {
+#if defined(__SWITCH__)
+    FlushDeferredDraws();
+#endif
+
     FramebufferOGL& fb_dst = mFrameBuffers[fb_id_target];
     FramebufferOGL& fb_src = mFrameBuffers[fb_id_source];
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb_dst.fbo);
@@ -1112,6 +1412,10 @@ void* GfxRenderingAPIOGL::GetFramebufferTextureId(int fb_id) {
 }
 
 void GfxRenderingAPIOGL::SelectTextureFb(int fb_id) {
+#if defined(__SWITCH__)
+    FlushDeferredDraws();
+#endif
+
     // glDisable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0 + 0);
 #if defined(__SWITCH__)
@@ -1123,6 +1427,9 @@ void GfxRenderingAPIOGL::SelectTextureFb(int fb_id) {
 
 void GfxRenderingAPIOGL::CopyFramebuffer(int fb_dst_id, int fb_src_id, int srcX0, int srcY0, int srcX1, int srcY1,
                                          int dstX0, int dstY0, int dstX1, int dstY1) {
+#if defined(__SWITCH__)
+    FlushDeferredDraws();
+#endif
     if (fb_dst_id >= (int)mFrameBuffers.size() || fb_src_id >= (int)mFrameBuffers.size()) {
         return;
     }
@@ -1188,6 +1495,10 @@ void GfxRenderingAPIOGL::CopyFramebuffer(int fb_dst_id, int fb_src_id, int srcX0
 }
 
 void GfxRenderingAPIOGL::ReadFramebufferToCPU(int fb_id, uint32_t width, uint32_t height, uint16_t* rgba16_buf) {
+#if defined(__SWITCH__)
+    FlushDeferredDraws();
+#endif
+
     if (fb_id >= (int)mFrameBuffers.size()) {
         return;
     }
@@ -1199,6 +1510,10 @@ void GfxRenderingAPIOGL::ReadFramebufferToCPU(int fb_id, uint32_t width, uint32_
 
 std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff>
 GfxRenderingAPIOGL::GetPixelDepth(int fb_id, const std::set<std::pair<float, float>>& coordinates) {
+#if defined(__SWITCH__)
+    FlushDeferredDraws();
+#endif
+
     std::unordered_map<std::pair<float, float>, uint16_t, hash_pair_ff> res;
 
     FramebufferOGL& fb = mFrameBuffers[fb_id];

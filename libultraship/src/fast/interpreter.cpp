@@ -113,7 +113,7 @@ static std::string GetPathWithoutFileName(char* filePath) {
 #if defined(__SWITCH__)
 // Larger batch size on Switch reduces draw-call frequency and GL driver
 // overhead, which is the dominant CPU bottleneck on the A57 cores.
-constexpr size_t MAX_TRI_BUFFER = 1024;
+constexpr size_t MAX_TRI_BUFFER = 4096;
 #else
 constexpr size_t MAX_TRI_BUFFER = 256;
 #endif

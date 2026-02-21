@@ -18,6 +18,7 @@
 #endif
 
 #include <fstream>
+#include <imgui.h>
 
 namespace Fast {
 
@@ -444,9 +445,11 @@ void Fast3dWindow::RenderThreadLoop() {
         lock.unlock();
 
         // Execute the render pipeline on Core 1 (with GL context).
-        // ImGui (StartDraw/EndDraw) only runs on the sub-frame that requested it
-        // (typically the first). Skipping ImGui on other sub-frames reduces GL
-        // command time from ~15ms to ~10ms, widening the vsync gap for frame-ahead.
+        // Full ImGui (StartDraw/EndDraw) only runs on the first sub-frame.
+        // Non-first sub-frames replay the cached ImGui draw data from the first
+        // sub-frame's ImGui::Render() call — this is a cheap GL-only operation
+        // (~1ms vs ~5ms) that avoids widget recomputation while preventing
+        // flicker. The draw data persists until the next ImGui::NewFrame().
         if (renderImGui) {
             gui->StartDraw();
         }
@@ -454,6 +457,13 @@ void Fast3dWindow::RenderThreadLoop() {
         mInterpreter->Run(commands, mtxReplacements);
         if (renderImGui) {
             gui->EndDraw();
+        } else {
+            // Replay previous ImGui draw data (overlay only, no computation).
+            // ImGui::GetDrawData() is valid after Render() until next NewFrame().
+            ImDrawData* drawData = ImGui::GetDrawData();
+            if (drawData) {
+                gui->ImGuiRenderDrawData(drawData);
+            }
         }
 
         // Signal that GL commands are done BEFORE SwapBuffers.

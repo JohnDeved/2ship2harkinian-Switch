@@ -2212,11 +2212,13 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     uint8_t numInputs;
     const bool* usedTextures;
     struct GfxClipParameters clip_parameters;
+    bool usedFastPath;
     bool linearFilter;
     float linearOffset;
     int numAlphaPasses;
 
     if (!mTriStateDirty) {
+        usedFastPath = true;
         // Jump directly to vertex processing using cached parameters.
         // Clear accumulated textures_changed flags that were set by
         // repeat-iteration handlers (SetTile, LoadBlock, etc.) — they
@@ -2228,6 +2230,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRdp->viewport_or_scissor_changed = false;
         goto fast_path_vertex_processing;
     }
+    usedFastPath = false;
 #endif
 
     // --- State check section: depth, viewport, texture, shader, alpha ---
@@ -2752,10 +2755,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
 fast_path_vertex_processing:
 #ifdef __SWITCH__
-    // Fast-path entry: load cached parameters instead of recomputing state
-    if (mTriStateDirty) {
-        // Slow path already populated these above
-    } else {
+    // Only restore from cache on fast-path entry (skipped slow-path validation).
+    // On slow-path, the local variables were already populated above.
+    if (usedFastPath) {
         // Fast path: restore variables from cache
         cc_options = mCachedTriParams.cc_options;
         tm = mCachedTriParams.tm;

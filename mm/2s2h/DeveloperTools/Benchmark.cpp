@@ -378,6 +378,14 @@ static void OnBenchmarkUpdate() {
     FrameProfiler_KeepAlive();
 
     if (gPlayState == NULL) {
+        // Restore clock state if benchmark was running when play state became NULL
+        // (e.g., during a scene transition or shutdown) to avoid leaving the clock frozen
+        if (sClockSaved) {
+            R_TIME_SPEED = sSavedTimeSpeed;
+            gSaveContext.save.time = sSavedTime;
+            sClockSaved = false;
+        }
+        sState = BENCH_DONE;
         return;
     }
 

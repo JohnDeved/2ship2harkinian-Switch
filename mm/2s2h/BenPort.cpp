@@ -1279,7 +1279,15 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             static Fast::Fast3DStats savedStats;
             static bool hasSavedStats = false;
             auto processSavedStats = [&]() {
-                if (!hasSavedStats || !profilerEnabled) return;
+                if (!hasSavedStats) {
+                    return;
+                }
+                if (!profilerEnabled) {
+                    // Discard any queued stats when profiling is disabled to avoid
+                    // stale stats being attributed to a later frame.
+                    hasSavedStats = false;
+                    return;
+                }
                 hasSavedStats = false;
                 const auto& s = savedStats;
                 FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, (float)s.drawCalls);

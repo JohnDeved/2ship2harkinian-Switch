@@ -563,7 +563,11 @@ void Fast3dWindow::WaitForGlCommandsDone() {
     // Spin-wait on atomic flag — avoids mutex+CV kernel overhead.
     // The wait is short (~10ms while GL commands run on Core 1),
     // and Core 0 needs to proceed immediately after (game logic).
+    // Also break if the render thread has stopped to avoid hanging.
     while (!mGlCommandsDone.load(std::memory_order_acquire)) {
+        if (!mRenderThreadRunning) {
+            break;
+        }
         std::this_thread::yield();
     }
 }

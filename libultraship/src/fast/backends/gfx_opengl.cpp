@@ -659,6 +659,9 @@ static uint32_t gfx_cm_to_opengl(uint32_t val) {
 
 void GfxRenderingAPIOGL::SetSamplerParameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
     glActiveTexture(GL_TEXTURE0 + tile);
+#if defined(__SWITCH__)
+    mLastActiveTextureTile = tile;
+#endif
     const GLint filter = linear_filter && mCurrentFilterMode == FILTER_LINEAR ? GL_LINEAR : GL_NEAREST;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
@@ -1043,6 +1046,10 @@ void* GfxRenderingAPIOGL::GetFramebufferTextureId(int fb_id) {
 void GfxRenderingAPIOGL::SelectTextureFb(int fb_id) {
     // glDisable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0 + 0);
+#if defined(__SWITCH__)
+    mLastActiveTextureTile = 0;
+    mLastBoundTexture[0] = UINT32_MAX; // FB texture — invalidate bind cache
+#endif
     glBindTexture(GL_TEXTURE_2D, mFrameBuffers[fb_id].clrbuf);
 }
 

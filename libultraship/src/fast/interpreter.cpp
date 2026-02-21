@@ -4227,6 +4227,9 @@ bool gfx_dl_handler_common(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *cmd0;
     F3DGfx* subGFX = (F3DGfx*)gfx->SegAddr(cmd->words.w1);
+
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeDisplayListOps, gfx->mProfilingEnabled);
+
     if (C0(16, 1) == 0) {
         // Push return address
         if (subGFX != nullptr) {
@@ -4741,6 +4744,7 @@ bool gfx_load_block_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *cmd0;
 
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeTextureLoading, gfx->mProfilingEnabled);
     gfx->GfxDpLoadBlock(C1(24, 3), C0(12, 12), C0(0, 12), C1(12, 12), C1(0, 12));
     return false;
 }
@@ -4749,6 +4753,7 @@ bool gfx_load_tile_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *cmd0;
 
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeTextureLoading, gfx->mProfilingEnabled);
     gfx->GfxDpLoadTile(C1(24, 3), C0(12, 12), C0(0, 12), C1(12, 12), C1(0, 12));
     return false;
 }
@@ -4803,6 +4808,7 @@ bool gfx_load_tlut_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *cmd0;
 
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeTextureLoading, gfx->mProfilingEnabled);
     gfx->GfxDpLoadTlut(C1(24, 3), C1(14, 10));
     return false;
 }
@@ -4859,6 +4865,7 @@ bool gfx_set_combine_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *cmd0;
 
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeCombinerSetup, gfx->mProfilingEnabled);
     gfx->GfxDpSetCombineMode(
         color_comb(C0(20, 4), C1(28, 4), C0(15, 5), C1(15, 3)), alpha_comb(C0(12, 3), C1(12, 3), C0(9, 3), C1(9, 3)),
         color_comb(C0(5, 4), C1(24, 4), C0(0, 5), C1(6, 3)), alpha_comb(C1(21, 3), C1(3, 3), C1(18, 3), C1(0, 3)));
@@ -4871,6 +4878,8 @@ bool gfx_tex_rect_and_flip_handler_rdp(F3DGfx** cmd0) {
     int8_t opcode = (int8_t)(cmd->words.w0 >> 24);
     int32_t lrx, lry, tile, ulx, uly;
     uint32_t uls, ult, dsdx, dtdy;
+
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeRectDrawing, gfx->mProfilingEnabled);
 
     lrx = C0(12, 12);
     lry = C0(0, 12);
@@ -4943,6 +4952,7 @@ bool gfx_fill_rect_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *(cmd0);
 
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeRectDrawing, gfx->mProfilingEnabled);
     gfx->GfxDpFillRectangle(C1(12, 12), C1(0, 12), C0(12, 12), C0(0, 12));
     return false;
 }
@@ -4982,6 +4992,7 @@ bool gfx_set_c_img_handler_rdp(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
     F3DGfx* cmd = *(cmd0);
 
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeFramebufferOps, gfx->mProfilingEnabled);
     gfx->GfxDpSetColorImage(C0(21, 3), C0(19, 2), C0(0, 11), gfx->SegAddr(cmd->words.w1));
     return false;
 }

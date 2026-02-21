@@ -418,6 +418,13 @@ struct Fast3DStats {
     uint64_t timePixelDepth;   // pixel depth prepare + readback
     uint64_t timeFrameSetup;   // Run() setup/teardown, framebuffer ops, clear, MSAA resolve
 
+    // Command handler timing breakdown (subset of timeGbiDispatch)
+    uint64_t timeTextureLoading;   // GfxDpLoadBlock, GfxDpLoadTlut, GfxDpLoadTile
+    uint64_t timeRectDrawing;      // GfxDpTextureRectangle, GfxDpFillRectangle
+    uint64_t timeDisplayListOps;   // Display list call/branch (stack push/pop)
+    uint64_t timeCombinerSetup;    // GfxDpSetCombineMode (hash lookup + cache)
+    uint64_t timeFramebufferOps;   // GfxDpSetColorImage (framebuffer changes)
+
     // Batch size histogram: how many draws fall into each size bucket
     // Bucket 0: 1-2 tris, 1: 3-8, 2: 9-32, 3: 33-128, 4: 129+
     static constexpr int BATCH_HISTOGRAM_BUCKETS = 5;
@@ -443,6 +450,8 @@ struct Fast3DStats {
         // in accounted because they are nested inside timeTriProcessing
         // (Flush/DrawTriangles, ImportTexture, and LoadShader are only called
         // from within GfxSpTri1). Including them would double-count.
+        // Similarly, the command handler timings (timeTextureLoading, timeRectDrawing,
+        // etc.) are subtracted from timeGbiDispatch in post-processing, not here.
         const uint64_t accounted = timeTriProcessing + timeVertexLoad + timeMatrixOps +
                                     timePixelDepth + timeFrameSetup;
         timeGbiDispatch = timeTotal > accounted ? (timeTotal - accounted) : 0;

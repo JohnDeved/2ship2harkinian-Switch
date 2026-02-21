@@ -3111,7 +3111,9 @@ void Interpreter::GfxSpTexture(uint16_t sc, uint16_t tc, uint8_t level, uint8_t 
         mRdp->textures_changed[0] = true;
         mRdp->textures_changed[1] = true;
 #ifdef __SWITCH__
-        mTriStateDirty = true;
+        if (!mRepeatIteration) {
+            mTriStateDirty = true;
+        }
 #endif
     }
 

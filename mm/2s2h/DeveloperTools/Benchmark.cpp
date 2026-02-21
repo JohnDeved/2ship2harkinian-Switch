@@ -101,6 +101,9 @@ static std::string sLastExportPath;
 static float sExportMsgTimer = 0.0f;
 static bool sHeadlessStarted = false;
 static bool sHeadlessFinalized = false;
+static bool sHeadlessExportReport = true;
+static bool sHeadlessSaveBaseline = true;
+static bool sHeadlessAutoQuit = true;
 
 // ── Baseline comparison ────────────────────────────────────────────────
 
@@ -370,24 +373,28 @@ static void OnBenchmarkSceneInit(s8 sceneId, s8 spawnNum) {
 }
 
 static void OnBenchmarkUpdate() {
-    int headlessMode = CVarGetInteger("gDeveloperTools.Benchmark.HeadlessMode", 0);
-    bool headlessEnabled = (headlessMode == 1 || headlessMode == 2);
-
-    if (sState == BENCH_IDLE && headlessEnabled && !sHeadlessStarted && gPlayState != NULL) {
-        StartBenchmark(headlessMode == 1 ? BENCH_MODE_QUICK : BENCH_MODE_FULL);
-        sHeadlessStarted = true;
+    if (sState == BENCH_IDLE && !sHeadlessStarted && gPlayState != NULL) {
+        int headlessMode = CVarGetInteger("gDeveloperTools.Benchmark.HeadlessMode", 0);
+        bool headlessEnabled = (headlessMode == 1 || headlessMode == 2);
+        if (headlessEnabled) {
+            sHeadlessExportReport = CVarGetInteger("gDeveloperTools.Benchmark.HeadlessExportReport", 1) != 0;
+            sHeadlessSaveBaseline = CVarGetInteger("gDeveloperTools.Benchmark.HeadlessSaveBaseline", 1) != 0;
+            sHeadlessAutoQuit = CVarGetInteger("gDeveloperTools.Benchmark.HeadlessAutoQuit", 1) != 0;
+            StartBenchmark(headlessMode == 1 ? BENCH_MODE_QUICK : BENCH_MODE_FULL);
+            sHeadlessStarted = true;
+        }
     }
 
     if (sState == BENCH_DONE && sHeadlessStarted && !sHeadlessFinalized) {
-        if (CVarGetInteger("gDeveloperTools.Benchmark.HeadlessExportReport", 1)) {
+        if (sHeadlessExportReport) {
             ExportBenchmarkReport();
         }
-        if (CVarGetInteger("gDeveloperTools.Benchmark.HeadlessSaveBaseline", 1)) {
+        if (sHeadlessSaveBaseline) {
             SaveBaseline();
         }
         sHeadlessFinalized = true;
 
-        if (CVarGetInteger("gDeveloperTools.Benchmark.HeadlessAutoQuit", 1)) {
+        if (sHeadlessAutoQuit) {
             Ship::Context::GetInstance()->GetWindow()->Close();
         }
     }

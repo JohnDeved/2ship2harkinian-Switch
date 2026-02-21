@@ -1227,6 +1227,7 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
                 FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)stats.batchHistogram[b]);
             }
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_COMMANDS_PROCESSED, (float)stats.commandsProcessed);
 
             // Proxy metric: time spent blocked in GL driver calls vs a 60 FPS frame budget.
             const float gpuDriverMs =
@@ -1420,6 +1421,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                     FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)s.batchHistogram[b]);
                 }
                 FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)s.maxBatchSize);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_COMMANDS_PROCESSED, (float)s.commandsProcessed);
             };
 
             for (size_t i = 0; i < sub_frames.size(); i++) {
@@ -1580,6 +1582,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                         FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)stats.batchHistogram[b]);
                     }
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_COMMANDS_PROCESSED, (float)stats.commandsProcessed);
                 }
 
                 if (intp) { intp->mInterpolationIndex++; }

@@ -850,6 +850,8 @@ static void ExportBenchmarkReport() {
             out << "    DL Replay Cooldown Skips:   " << std::setprecision(0) << dlReplayCooldown << std::endl;
         }
         out << "    Total Commands:             " << std::setprecision(0) << dlCmds << std::endl;
+        float cmdsProcessed = r.counters[PROFILE_COUNTER_GL_COMMANDS_PROCESSED];
+        out << "    Commands Processed:         " << std::setprecision(0) << cmdsProcessed << std::endl;
         out << "    Triangles (DL):             " << std::setprecision(0) << tris << std::endl;
         out << "    Vertices:                   " << std::setprecision(0) << verts << std::endl;
         out << "    Texture Loads:              " << std::setprecision(0) << texLoads << std::endl;
@@ -1072,6 +1074,10 @@ static void ExportBenchmarkReport() {
             float dlCmdsLocal = r.counters[PROFILE_COUNTER_DL_COMMANDS];
             if (dlCmdsLocal > 0) {
                 out << "    Cost per DL command:        " << std::setprecision(2) << (dlMs * 1000.0f / dlCmdsLocal) << " us" << std::endl;
+            }
+            float cmdsProc = r.counters[PROFILE_COUNTER_GL_COMMANDS_PROCESSED];
+            if (cmdsProc > 0) {
+                out << "    Cost per dispatched cmd:    " << std::setprecision(2) << (dlMs * 1000.0f / cmdsProc) << " us" << std::endl;
             }
             if (glDrawCalls > 0) {
                 out << "    Cost per GL draw call:      " << std::setprecision(2) << (dlMs * 1000.0f / glDrawCalls) << " us" << std::endl;

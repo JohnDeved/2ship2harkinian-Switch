@@ -1376,6 +1376,11 @@ void Interpreter::ImportTextureMask(int i, int tile) {
         return;
     }
 
+    // Skip string construction + map lookup when no masked textures are registered
+    if (mMaskedTextures.empty()) {
+        return;
+    }
+
     auto maskIter = mMaskedTextures.find(GetBaseTexturePath(metadata.resource->GetInitData()->Path));
     if (maskIter == mMaskedTextures.end()) {
         return;
@@ -3217,6 +3222,7 @@ void Interpreter::GfxDpSetTileSize(uint8_t tile, uint16_t uls, uint16_t ult, uin
 }
 
 void Interpreter::GfxDpLoadTlut(uint8_t tile, uint32_t high_index) {
+    Fast3DScopedTimer timer(mFrameStats.timeTextureLoading, mProfilingEnabled);
     SUPPORT_CHECK(mRdp->texture_to_load.siz == G_IM_SIZ_16b);
 
     if (mRdp->texture_tile[tile].tmem == 256) {
@@ -3233,6 +3239,7 @@ void Interpreter::GfxDpLoadTlut(uint8_t tile, uint32_t high_index) {
 }
 
 void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t dxt) {
+    Fast3DScopedTimer timer(mFrameStats.timeTextureLoading, mProfilingEnabled);
     SUPPORT_CHECK(uls == 0);
     SUPPORT_CHECK(ult == 0);
 
@@ -3260,39 +3267,43 @@ void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint3
         size_bytes *= mRdp->texture_to_load.raw_tex_metadata.h_byte_scale;
         size_bytes *= mRdp->texture_to_load.raw_tex_metadata.v_pixel_scale;
     }
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes = orig_size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes = size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes = size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].full_image_line_size_bytes = size_bytes;
+    uint32_t tmemIdx = mRdp->texture_tile[tile].tmem_index;
+    mRdp->loaded_texture[tmemIdx].orig_size_bytes = orig_size_bytes;
+    mRdp->loaded_texture[tmemIdx].size_bytes = size_bytes;
+    mRdp->loaded_texture[tmemIdx].line_size_bytes = size_bytes;
+    mRdp->loaded_texture[tmemIdx].full_image_line_size_bytes = size_bytes;
     // assert(size_bytes <= 4096 && "bug: too big texture");
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags = mRdp->texture_to_load.tex_flags;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr;
-    // fprintf(stderr, "GfxDpLoadBlock: line_size = 0x%x; orig = 0x%x; bpp=%d; lrs=%d\n", size_bytes,
-    // orig_size_bytes,
-    //         mRdp->texture_to_load.siz, lrs);
+    mRdp->loaded_texture[tmemIdx].tex_flags = mRdp->texture_to_load.tex_flags;
+    mRdp->loaded_texture[tmemIdx].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
+    mRdp->loaded_texture[tmemIdx].addr = mRdp->texture_to_load.addr;
 
-    const std::string& texPath =
-        mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
-            ? GetBaseTexturePath(mRdp->texture_to_load.raw_tex_metadata.resource->GetInitData()->Path)
-            : "";
-    auto maskedTextureIter = mMaskedTextures.find(texPath);
-    if (maskedTextureIter != mMaskedTextures.end()) {
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].masked = true;
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].blended =
-            maskedTextureIter->second.replacementData != nullptr;
+    // Skip expensive string construction + map lookup when no masked textures are registered
+    if (!mMaskedTextures.empty()) {
+        const std::string& texPath =
+            mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
+                ? GetBaseTexturePath(mRdp->texture_to_load.raw_tex_metadata.resource->GetInitData()->Path)
+                : "";
+        auto maskedTextureIter = mMaskedTextures.find(texPath);
+        if (maskedTextureIter != mMaskedTextures.end()) {
+            mRdp->loaded_texture[tmemIdx].masked = true;
+            mRdp->loaded_texture[tmemIdx].blended = maskedTextureIter->second.replacementData != nullptr;
+        } else {
+            mRdp->loaded_texture[tmemIdx].masked = false;
+            mRdp->loaded_texture[tmemIdx].blended = false;
+        }
     } else {
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].masked = false;
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].blended = false;
+        mRdp->loaded_texture[tmemIdx].masked = false;
+        mRdp->loaded_texture[tmemIdx].blended = false;
     }
 
-    mRdp->textures_changed[mRdp->texture_tile[tile].tmem_index] = true;
+    mRdp->textures_changed[tmemIdx] = true;
 #ifdef __SWITCH__
     mTriStateDirty = true;
 #endif
 }
 
 void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t lrt) {
+    Fast3DScopedTimer timer(mFrameStats.timeTextureLoading, mProfilingEnabled);
     SUPPORT_CHECK(tile == G_TX_LOADTILE);
 
     uint32_t word_size_shift = 0;
@@ -3335,28 +3346,34 @@ void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32
         tile_line_size_bytes *= h_byte_scale;
     }
 
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes = orig_size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes = size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].full_image_line_size_bytes = full_image_line_size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes = tile_line_size_bytes;
+    uint32_t tmemIdx = mRdp->texture_tile[tile].tmem_index;
+    mRdp->loaded_texture[tmemIdx].orig_size_bytes = orig_size_bytes;
+    mRdp->loaded_texture[tmemIdx].size_bytes = size_bytes;
+    mRdp->loaded_texture[tmemIdx].full_image_line_size_bytes = full_image_line_size_bytes;
+    mRdp->loaded_texture[tmemIdx].line_size_bytes = tile_line_size_bytes;
 
     //    assert(size_bytes <= 4096 && "bug: too big texture");
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags = mRdp->texture_to_load.tex_flags;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr + start_offset_bytes;
+    mRdp->loaded_texture[tmemIdx].tex_flags = mRdp->texture_to_load.tex_flags;
+    mRdp->loaded_texture[tmemIdx].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
+    mRdp->loaded_texture[tmemIdx].addr = mRdp->texture_to_load.addr + start_offset_bytes;
 
-    const std::string& texPath =
-        mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
-            ? GetBaseTexturePath(mRdp->texture_to_load.raw_tex_metadata.resource->GetInitData()->Path)
-            : "";
-    auto maskedTextureIter = mMaskedTextures.find(texPath);
-    if (maskedTextureIter != mMaskedTextures.end()) {
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].masked = true;
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].blended =
-            maskedTextureIter->second.replacementData != nullptr;
+    // Skip expensive string construction + map lookup when no masked textures are registered
+    if (!mMaskedTextures.empty()) {
+        const std::string& texPath =
+            mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
+                ? GetBaseTexturePath(mRdp->texture_to_load.raw_tex_metadata.resource->GetInitData()->Path)
+                : "";
+        auto maskedTextureIter = mMaskedTextures.find(texPath);
+        if (maskedTextureIter != mMaskedTextures.end()) {
+            mRdp->loaded_texture[tmemIdx].masked = true;
+            mRdp->loaded_texture[tmemIdx].blended = maskedTextureIter->second.replacementData != nullptr;
+        } else {
+            mRdp->loaded_texture[tmemIdx].masked = false;
+            mRdp->loaded_texture[tmemIdx].blended = false;
+        }
     } else {
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].masked = false;
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].blended = false;
+        mRdp->loaded_texture[tmemIdx].masked = false;
+        mRdp->loaded_texture[tmemIdx].blended = false;
     }
 
     mRdp->texture_tile[tile].uls = uls;
@@ -3364,7 +3381,7 @@ void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32
     mRdp->texture_tile[tile].lrs = lrs;
     mRdp->texture_tile[tile].lrt = lrt;
 
-    mRdp->textures_changed[mRdp->texture_tile[tile].tmem_index] = true;
+    mRdp->textures_changed[tmemIdx] = true;
 #ifdef __SWITCH__
     mTriStateDirty = true;
 #endif
@@ -3403,6 +3420,7 @@ static void GfxDpSetCombineMode(uint32_t rgb, uint32_t alpha) {
 }*/
 
 void Interpreter::GfxDpSetCombineMode(uint32_t rgb, uint32_t alpha, uint32_t rgb_cyc2, uint32_t alpha_cyc2) {
+    Fast3DScopedTimer timer(mFrameStats.timeCombinerSetup, mProfilingEnabled);
     uint64_t new_mode = rgb | (alpha << 16) | ((uint64_t)rgb_cyc2 << 28) | ((uint64_t)alpha_cyc2 << 44);
 #ifdef __SWITCH__
     if (mRdp->combine_mode != new_mode) {
@@ -3574,6 +3592,7 @@ void Interpreter::GfxDrawRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_
 
 void Interpreter::GfxDpTextureRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, uint8_t tile, int16_t uls,
                                         int16_t ult, int16_t dsdx, int16_t dtdy, bool flip) {
+    Fast3DScopedTimer timer(mFrameStats.timeRectDrawing, mProfilingEnabled);
     // printf("render %d at %d\n", tile, lrx);
     uint64_t saved_combine_mode = mRdp->combine_mode;
     if ((mRdp->other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_COPY) {
@@ -3690,6 +3709,7 @@ void Interpreter::GfxDpImageRectangle(int32_t tile, int32_t w, int32_t h, int32_
 }
 
 void Interpreter::GfxDpFillRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry) {
+    Fast3DScopedTimer timer(mFrameStats.timeRectDrawing, mProfilingEnabled);
     if (mRdp->color_image_address == mRdp->z_buf_address) {
         // Don't clear Z buffer here since we already did it with glClear
         return;
@@ -3730,6 +3750,7 @@ void Interpreter::GfxDpSetZImage(void* zBufAddr) {
 }
 
 void Interpreter::GfxDpSetColorImage(uint32_t format, uint32_t size, uint32_t width, void* address) {
+    Fast3DScopedTimer timer(mFrameStats.timeFramebufferOps, mProfilingEnabled);
     mRdp->color_image_address = address;
 }
 
@@ -4368,6 +4389,7 @@ bool gfx_modify_vtx_handler_f3dex2(F3DGfx** cmd0) {
 // F3D, F3DEX, and F3DEX2 do the same thing but F3DEX2 has its own opcode number
 bool gfx_dl_handler_common(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeDisplayListOps, gfx->mProfilingEnabled);
     F3DGfx* cmd = *cmd0;
     F3DGfx* subGFX = (F3DGfx*)gfx->SegAddr(cmd->words.w1);
 
@@ -4464,6 +4486,7 @@ bool gfx_branch_z_otr_handler_f3dex2(F3DGfx** cmd0) {
 // F3D, F3DEX, and F3DEX2 do the same thing but F3DEX2 has its own opcode number
 bool gfx_end_dl_handler_common(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeDisplayListOps, gfx->mProfilingEnabled);
     gfx->mMarkerOn = false;
     *cmd0 = g_exec_stack.ret();
     return true;
@@ -5752,6 +5775,10 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
         {
             auto& stepCmd = g_exec_stack.currCmd();
             uint8_t opcode = (uint8_t)(stepCmd->words.w0 >> 24);
+
+            if (mProfilingEnabled) {
+                mFrameStats.commandsProcessed++;
+            }
 
 #ifdef USE_GBI_TRACE
             if (stepCmd->words.trace.valid &&

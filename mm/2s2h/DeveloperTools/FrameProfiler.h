@@ -98,6 +98,7 @@ typedef enum {
     PROFILE_COUNTER_GL_BATCH_HIST_3,       // 33-128 tris
     PROFILE_COUNTER_GL_BATCH_HIST_4,       // 129+ tris
     PROFILE_COUNTER_GL_MAX_BATCH_SIZE,     // max batch size seen this frame
+    PROFILE_COUNTER_GL_COMMANDS_PROCESSED, // total commands walked through the dispatch loop (incl. sub-DLs)
 
     // System telemetry (Switch: real values where available, otherwise proxy/zero)
     PROFILE_COUNTER_SYS_CPU_USAGE_PCT,     // CPU usage across CPU cores (0-100)

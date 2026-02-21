@@ -654,22 +654,59 @@ void GfxRenderingAPIOGL::SetZmodeDecal(bool zmode_decal) {
 }
 
 void GfxRenderingAPIOGL::SetViewport(int x, int y, int width, int height) {
+#if defined(__SWITCH__)
+    if (x != mLastViewport[0] || y != mLastViewport[1] || width != mLastViewport[2] || height != mLastViewport[3]) {
+        glViewport(x, y, width, height);
+        mLastViewport[0] = x;
+        mLastViewport[1] = y;
+        mLastViewport[2] = width;
+        mLastViewport[3] = height;
+    }
+#else
     glViewport(x, y, width, height);
+#endif
 }
 
 void GfxRenderingAPIOGL::SetScissor(int x, int y, int width, int height) {
+#if defined(__SWITCH__)
+    if (x != mLastScissor[0] || y != mLastScissor[1] || width != mLastScissor[2] || height != mLastScissor[3]) {
+        glScissor(x, y, width, height);
+        mLastScissor[0] = x;
+        mLastScissor[1] = y;
+        mLastScissor[2] = width;
+        mLastScissor[3] = height;
+    }
+#else
     glScissor(x, y, width, height);
+#endif
 }
 
 void GfxRenderingAPIOGL::SetUseAlpha(bool use_alpha) {
+#if defined(__SWITCH__)
+    // Defer to DrawTriangles to batch with other state changes
+    mCurrentAlphaBlend = use_alpha ? 1 : 0;
+#else
     if (use_alpha) {
         glEnable(GL_BLEND);
     } else {
         glDisable(GL_BLEND);
     }
+#endif
 }
 
 void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
+#if defined(__SWITCH__)
+    // Apply deferred alpha blend state change
+    if (mCurrentAlphaBlend != mLastAlphaBlend) {
+        mLastAlphaBlend = mCurrentAlphaBlend;
+        if (mCurrentAlphaBlend) {
+            glEnable(GL_BLEND);
+        } else {
+            glDisable(GL_BLEND);
+        }
+    }
+#endif
+
     if (mCurrentDepthTest != mLastDepthTest || mCurrentDepthMask != mLastDepthMask) {
         mLastDepthTest = mCurrentDepthTest;
         mLastDepthMask = mCurrentDepthMask;
@@ -691,7 +728,11 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
             const int n64modeFactor = 120;
             const int noVanishFactor = 100;
             GLfloat SSDB = -2;
+#if defined(__SWITCH__)
+            switch (mCachedZFightingMode) {
+#else
             switch (Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_Z_FIGHTING_MODE, 0)) {
+#endif
                 // scaled z-fighting (N64 mode like)
                 case 1:
                     if (mFrameBuffers.size() >
@@ -831,6 +872,8 @@ void GfxRenderingAPIOGL::StartFrame() {
     // Reset per-iteration VBO batching state.
     // The next DrawTriangles call will orphan the VBO.
     mVboIterActive = false;
+    // Cache z-fighting CVar once per frame instead of per draw call
+    mCachedZFightingMode = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_Z_FIGHTING_MODE, 0);
 #endif
 }
 

@@ -902,8 +902,8 @@ static void ExportBenchmarkReport() {
 
         // Flush efficiency analysis
         float stateActualFlushes = glBatchFlushes - glBufferFullFlushes;
-        float emptyFlushes = glBatchFlushes - glDrawCalls;
-        float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
+        emptyFlushes = glBatchFlushes - glDrawCalls;
+        emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
         float effectiveBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
         out << "  Flush Efficiency:" << std::endl;
         out << "    Total Flushes:              " << std::setprecision(0) << glBatchFlushes << std::endl;

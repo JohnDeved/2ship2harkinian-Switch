@@ -3000,6 +3000,11 @@ void Interpreter::CalcAndSetViewport(const F3DVp_t* viewport) {
     float x = (viewport->vtrans[0] / 4.0f) - width / 2.0f;
     float y = ((viewport->vtrans[1] / 4.0f) + height / 2.0f);
 
+#ifdef __SWITCH__
+    float oldX = mRdp->viewport.x, oldY = mRdp->viewport.y;
+    float oldW = mRdp->viewport.width, oldH = mRdp->viewport.height;
+#endif
+
     mRdp->viewport.x = x;
     mRdp->viewport.y = y;
     mRdp->viewport.width = width;
@@ -3009,7 +3014,8 @@ void Interpreter::CalcAndSetViewport(const F3DVp_t* viewport) {
 
     mRdp->viewport_or_scissor_changed = true;
 #ifdef __SWITCH__
-    if (!mRepeatIteration) {
+    if (mRdp->viewport.x != oldX || mRdp->viewport.y != oldY ||
+        mRdp->viewport.width != oldW || mRdp->viewport.height != oldH) {
         mTriStateDirty = true;
     }
 #endif
@@ -3107,15 +3113,18 @@ void Interpreter::GfxSpMovewordF3d(uint8_t index, uint16_t offset, uintptr_t dat
 }
 
 void Interpreter::GfxSpTexture(uint16_t sc, uint16_t tc, uint8_t level, uint8_t tile, uint8_t on) {
+#ifdef __SWITCH__
+    bool changed = (mRsp->texture_scaling_factor.s != sc || mRsp->texture_scaling_factor.t != tc);
+#endif
     mRsp->texture_scaling_factor.s = sc;
     mRsp->texture_scaling_factor.t = tc;
     if (mRdp->first_tile_index != tile) {
         mRdp->textures_changed[0] = true;
         mRdp->textures_changed[1] = true;
 #ifdef __SWITCH__
-        if (!mRepeatIteration) {
-            mTriStateDirty = true;
-        }
+        mTriStateDirty = true;
+    } else if (changed) {
+        mTriStateDirty = true;
 #endif
     }
 
@@ -3128,6 +3137,11 @@ void Interpreter::GfxDpSetScissor(uint32_t mode, uint32_t ulx, uint32_t uly, uin
     float width = (lrx - ulx) / 4.0f;
     float height = (lry - uly) / 4.0f;
 
+#ifdef __SWITCH__
+    float oldX = mRdp->scissor.x, oldY = mRdp->scissor.y;
+    float oldW = mRdp->scissor.width, oldH = mRdp->scissor.height;
+#endif
+
     mRdp->scissor.x = x;
     mRdp->scissor.y = y;
     mRdp->scissor.width = width;
@@ -3137,7 +3151,8 @@ void Interpreter::GfxDpSetScissor(uint32_t mode, uint32_t ulx, uint32_t uly, uin
 
     mRdp->viewport_or_scissor_changed = true;
 #ifdef __SWITCH__
-    if (!mRepeatIteration) {
+    if (mRdp->scissor.x != oldX || mRdp->scissor.y != oldY ||
+        mRdp->scissor.width != oldW || mRdp->scissor.height != oldH) {
         mTriStateDirty = true;
     }
 #endif
@@ -3185,12 +3200,7 @@ void Interpreter::GfxDpSetTile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_
     mRdp->textures_changed[0] = true;
     mRdp->textures_changed[1] = true;
 #ifdef __SWITCH__
-    // On repeat iterations, the same texture commands execute with same values.
-    // textures_changed will be caught by the redundant-texture-skip in GfxSpTri1,
-    // so we only need to mark dirty on the first iteration.
-    if (!mRepeatIteration) {
-        mTriStateDirty = true;
-    }
+    mTriStateDirty = true;
 #endif
 }
 
@@ -3202,9 +3212,7 @@ void Interpreter::GfxDpSetTileSize(uint8_t tile, uint16_t uls, uint16_t ult, uin
     mRdp->textures_changed[0] = true;
     mRdp->textures_changed[1] = true;
 #ifdef __SWITCH__
-    if (!mRepeatIteration) {
-        mTriStateDirty = true;
-    }
+    mTriStateDirty = true;
 #endif
 }
 
@@ -3220,9 +3228,7 @@ void Interpreter::GfxDpLoadTlut(uint8_t tile, uint32_t high_index) {
         mRdp->palettes[1] = mRdp->texture_to_load.addr;
     }
 #ifdef __SWITCH__
-    if (!mRepeatIteration) {
-        mTriStateDirty = true;
-    }
+    mTriStateDirty = true;
 #endif
 }
 
@@ -3282,9 +3288,7 @@ void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint3
 
     mRdp->textures_changed[mRdp->texture_tile[tile].tmem_index] = true;
 #ifdef __SWITCH__
-    if (!mRepeatIteration) {
-        mTriStateDirty = true;
-    }
+    mTriStateDirty = true;
 #endif
 }
 
@@ -3362,9 +3366,7 @@ void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32
 
     mRdp->textures_changed[mRdp->texture_tile[tile].tmem_index] = true;
 #ifdef __SWITCH__
-    if (!mRepeatIteration) {
-        mTriStateDirty = true;
-    }
+    mTriStateDirty = true;
 #endif
 }
 

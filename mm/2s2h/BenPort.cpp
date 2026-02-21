@@ -1339,14 +1339,6 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 }
                 if (intp) { intp->mInterpolationIndex = (int)i; }
 
-#ifdef __SWITCH__
-                // On repeat iterations (2nd, 3rd DL passes), the display list command
-                // sequence is identical. Enable repeat-iteration mode to suppress
-                // redundant dirty marking in texture-related handlers, improving
-                // fast-path hit rate.
-                if (intp) { intp->mRepeatIteration = (i > 0); }
-#endif
-
                 // Start async interpolation for the NEXT sub-frame on Core 3
                 size_t nextIdx = i + 1;
                 AsyncInterpJob nextJob;
@@ -1452,11 +1444,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
 
             FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
             FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
-            int iterIdx = 0;
             for (const auto& m : mtx_replacements) {
-#ifdef __SWITCH__
-                if (intp) { intp->mRepeatIteration = (iterIdx > 0); }
-#endif
                 wnd->SubmitRenderWork(commands, m);
                 wnd->WaitForRenderDone();
 
@@ -1505,7 +1493,6 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 }
 
                 if (intp) { intp->mInterpolationIndex++; }
-                iterIdx++;
                 if (profilerEnabled) {
                     FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
                 }

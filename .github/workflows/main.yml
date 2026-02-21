@@ -93,11 +93,14 @@ jobs:
 
         mv build-switch/mm/*.nro 2ship.nro
         mv README.md readme.txt
+    - name: Derive short SHA
+      id: switch_gitvars
+      run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
     - name: Upload NRO and supporting files
       uses: actions/upload-artifact@v4
       with:
-        name: 2ship-switch-nro[${{ github.sha }}].zip
+        name: 2ship-switch-nro[${{ steps.switch_gitvars.outputs.short_sha }}].zip
         path: |
           2ship.nro
           readme.txt
@@ -108,21 +111,33 @@ jobs:
     needs: [generate-2ship-otr, build-switch]
     runs-on: ubuntu-latest
     steps:
+    - name: Derive short SHA
+      id: combine_gitvars
+      run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
     - name: Download OTR artifact
       uses: actions/download-artifact@v4
       with:
         name: 2ship.o2r
-        path: ./artifacts
+        path: ./artifacts/otr
 
     - name: Download Switch NRO artifact
       uses: actions/download-artifact@v4
       with:
-        name: 2ship-switch-nro[${{ github.sha }}].zip
-        path: ./artifacts
+        name: 2ship-switch-nro[${{ steps.combine_gitvars.outputs.short_sha }}].zip
+        path: ./artifacts/nro
+
+    - name: Stage combined payload
+      run: |
+        mkdir -p ./artifacts/final
+        cp ./artifacts/otr/2ship.o2r ./artifacts/final/
+        cp ./artifacts/nro/2ship.nro ./artifacts/final/
+        cp ./artifacts/nro/readme.txt ./artifacts/final/
+        cp ./artifacts/nro/gamecontrollerdb.txt ./artifacts/final/
 
     - name: Upload combined build
       uses: actions/upload-artifact@v4
       with:
-        name: 2ship-switch[${{ github.sha }}].zip
-        path: ./artifacts
+        name: 2ship-switch[${{ steps.combine_gitvars.outputs.short_sha }}].zip
+        path: ./artifacts/final
         retention-days: 3

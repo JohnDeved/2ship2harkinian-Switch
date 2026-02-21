@@ -136,6 +136,16 @@ void Ship::Switch::ApplyOverclock(void) {
             clkrstOpenSession(&session, PcvModuleId_CpuBus, 3);
             clkrstSetClockRate(&session, SWITCH_CPU_SPEEDS_VALUES[perfMode]);
             clkrstCloseSession(&session);
+
+            // Overclock GPU — reduces GL driver overhead for draw calls
+            clkrstOpenSession(&session, PcvModuleId_GPU, 3);
+            clkrstSetClockRate(&session, SWITCH_GPU_SPEEDS_VALUES[perfMode]);
+            clkrstCloseSession(&session);
+
+            // Overclock EMC (memory controller) — reduces VBO upload and texture fetch latency
+            clkrstOpenSession(&session, PcvModuleId_EMC, 3);
+            clkrstSetClockRate(&session, SWITCH_EMC_SPEEDS_VALUES[perfMode]);
+            clkrstCloseSession(&session);
         }
     }
 }
@@ -177,6 +187,14 @@ static void on_applet_hook(AppletHookType hook, void* param) {
                     ClkrstSession session = { 0 };
                     clkrstOpenSession(&session, PcvModuleId_CpuBus, 3);
                     clkrstSetClockRate(&session, SWITCH_CPU_SPEEDS_VALUES[Ship::STOCK]);
+                    clkrstCloseSession(&session);
+
+                    clkrstOpenSession(&session, PcvModuleId_GPU, 3);
+                    clkrstSetClockRate(&session, SWITCH_GPU_SPEEDS_VALUES[Ship::STOCK]);
+                    clkrstCloseSession(&session);
+
+                    clkrstOpenSession(&session, PcvModuleId_EMC, 3);
+                    clkrstSetClockRate(&session, SWITCH_EMC_SPEEDS_VALUES[Ship::STOCK]);
                     clkrstCloseSession(&session);
                 }
             } else {

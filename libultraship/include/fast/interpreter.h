@@ -700,6 +700,10 @@ class Interpreter {
         // Fog/grayscale constants
         float fogR, fogG, fogB;
         float grayR, grayG, grayB, grayA;
+        // Clip/filter parameters
+        GfxClipParameters clipParams;
+        bool linearFilter;
+        float linearOffset;
     } mCachedTriParams{};
 #endif
 };

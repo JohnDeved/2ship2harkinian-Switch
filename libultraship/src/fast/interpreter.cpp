@@ -2185,6 +2185,37 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     // validation (depth, viewport, combiner, texture, shader, alpha checks) and reuse the
     // cached vertex-processing parameters. This saves ~400-600ns per triangle.
     // Expected hit rate: ~80% (consecutive same-state triangles within a draw call).
+    //
+    // Pre-declare all variables with non-vacuous initialization that the goto would
+    // cross. C++ forbids jumping past a variable's initialization even for trivial types.
+    // Variables without initializers (POD arrays, raw struct declarations) have vacuous
+    // initialization and are safe to jump past.
+    uint8_t depth_test_and_mask;
+    bool depth_changed;
+    bool zmode_decal;
+    bool decal_changed;
+    bool viewport_changed;
+    bool scissor_changed;
+    uint64_t cc_id;
+    uint64_t cc_options;
+    bool use_alpha;
+    bool use_fog;
+    bool texture_edge;
+    bool use_noise;
+    bool use_2cyc;
+    bool alpha_threshold;
+    bool invisible;
+    bool use_grayscale;
+    ShaderMod shader;
+    uint32_t tm;
+    struct ShaderProgram* prg;
+    uint8_t numInputs;
+    const bool* usedTextures;
+    struct GfxClipParameters clip_parameters;
+    bool linearFilter;
+    float linearOffset;
+    int numAlphaPasses;
+
     if (!mTriStateDirty) {
         // Jump directly to vertex processing using cached parameters
         goto fast_path_vertex_processing;
@@ -2221,6 +2252,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRdp->other_mode_changed = false;
     }
 
+#ifndef __SWITCH__
     uint8_t depth_test_and_mask = mCachedModeFlags.depth_test_and_mask;
     bool depth_changed = (depth_test_and_mask != mRenderingState.depth_test_and_mask);
 
@@ -2229,6 +2261,16 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     bool viewport_changed = false;
     bool scissor_changed = false;
+#else
+    depth_test_and_mask = mCachedModeFlags.depth_test_and_mask;
+    depth_changed = (depth_test_and_mask != mRenderingState.depth_test_and_mask);
+
+    zmode_decal = mCachedModeFlags.zmode_decal;
+    decal_changed = (zmode_decal != mRenderingState.decal_mode);
+
+    viewport_changed = false;
+    scissor_changed = false;
+#endif
     if (mRdp->viewport_or_scissor_changed) {
         viewport_changed = memcmp(&mRdp->viewport, &mRenderingState.viewport, sizeof(mRdp->viewport)) != 0;
         scissor_changed = memcmp(&mRdp->scissor, &mRenderingState.scissor, sizeof(mRdp->scissor)) != 0;
@@ -2260,6 +2302,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRdp->viewport_or_scissor_changed = false;
     }
 
+#ifndef __SWITCH__
     uint64_t cc_id = mRdp->combine_mode;
     uint64_t cc_options = 0;
     bool use_alpha = mCachedModeFlags.use_alpha;
@@ -2271,6 +2314,19 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     bool invisible = mCachedModeFlags.invisible;
     bool use_grayscale = mRdp->grayscale;
     auto shader = mRdp->current_shader;
+#else
+    cc_id = mRdp->combine_mode;
+    cc_options = 0;
+    use_alpha = mCachedModeFlags.use_alpha;
+    use_fog = mCachedModeFlags.use_fog;
+    texture_edge = mCachedModeFlags.texture_edge;
+    use_noise = mCachedModeFlags.use_noise;
+    use_2cyc = mCachedModeFlags.use_2cyc;
+    alpha_threshold = mCachedModeFlags.alpha_threshold;
+    invisible = mCachedModeFlags.invisible;
+    use_grayscale = mRdp->grayscale;
+    shader = mRdp->current_shader;
+#endif
 
     if (texture_edge) {
         if (use_alpha) {
@@ -2340,7 +2396,11 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mCachedCombiner = comb;
     }
 
+#ifndef __SWITCH__
     uint32_t tm = 0;
+#else
+    tm = 0;
+#endif
     uint32_t tex_width[2], tex_height[2], tex_width2[2], tex_height2[2];
 
     for (int i = 0; i < 2; i++) {
@@ -2461,7 +2521,11 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         }
     }
 
+#ifndef __SWITCH__
     struct ShaderProgram* prg = comb->prg[tm];
+#else
+    prg = comb->prg[tm];
+#endif
     if (prg == NULL) {
         comb->prg[tm] = prg =
             LookupOrCreateShaderProgram(comb->shader_id0, comb->shader_id1 | tm * SHADER_OPT(TEXEL0_CLAMP_S));
@@ -2485,6 +2549,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRapi->SetUseAlpha(use_alpha);
         mRenderingState.alpha_blend = use_alpha;
     }
+#ifndef __SWITCH__
     uint8_t numInputs = mCachedNumInputs;
     const bool* usedTextures = mCachedUsedTextures;
 
@@ -2493,6 +2558,17 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     // Pre-compute texture parameters that are constant across all 3 vertices
     const bool linearFilter = mCachedModeFlags.linear_filter;
     const float linearOffset = (linearFilter && !is_rect) ? 0.5f : 0.0f;
+#else
+    numInputs = mCachedNumInputs;
+    usedTextures = mCachedUsedTextures;
+
+    clip_parameters = mCachedClipParams;
+
+    // Pre-compute texture parameters that are constant across all 3 vertices
+    linearFilter = mCachedModeFlags.linear_filter;
+    linearOffset = (linearFilter && !is_rect) ? 0.5f : 0.0f;
+#endif
+    // Arrays below have vacuous initialization (POD without initializers) — safe for goto
     float invTexWidth[2], invTexHeight[2];
     float clampSVal[2], clampTVal[2];
     bool clampS[2], clampT[2];
@@ -2524,7 +2600,11 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     // Pre-compute constant color combiner inputs (everything except G_CCMUX_SHADE)
     // These are the same for all 3 vertices, so we compute the float values once
+#ifndef __SWITCH__
     const int numAlphaPasses = use_alpha ? 2 : 1;
+#else
+    numAlphaPasses = use_alpha ? 2 : 1;
+#endif
 
     // Pre-compute per-input colors that don't depend on the vertex
     struct PrecomputedInput {
@@ -2654,6 +2734,9 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mCachedTriParams.grayB = grayB;
         mCachedTriParams.grayA = grayA;
     }
+    mCachedTriParams.clipParams = clip_parameters;
+    mCachedTriParams.linearFilter = linearFilter;
+    mCachedTriParams.linearOffset = linearOffset;
     // Clear the dirty flag — next triangle will use fast-path
     mTriStateDirty = false;
     // Fall through to vertex processing
@@ -2714,6 +2797,9 @@ fast_path_vertex_processing:
             grayB = mCachedTriParams.grayB;
             grayA = mCachedTriParams.grayA;
         }
+        clip_parameters = mCachedTriParams.clipParams;
+        linearFilter = mCachedTriParams.linearFilter;
+        linearOffset = mCachedTriParams.linearOffset;
     }
 #endif
 

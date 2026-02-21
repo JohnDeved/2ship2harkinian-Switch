@@ -1133,8 +1133,10 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
 
             // Lambda to process saved stats (30+ AddCounter calls).
             // Called AFTER SubmitRenderWork so it overlaps with rendering.
-            Fast::Fast3DStats savedStats;
-            bool hasSavedStats = false;
+            // Static so the last sub-frame's stats (captured after WaitForGlCommandsDone)
+            // persist across ticks and get processed at the start of the next tick.
+            static Fast::Fast3DStats savedStats;
+            static bool hasSavedStats = false;
             auto processSavedStats = [&]() {
                 if (!hasSavedStats || !profilerEnabled) return;
                 hasSavedStats = false;

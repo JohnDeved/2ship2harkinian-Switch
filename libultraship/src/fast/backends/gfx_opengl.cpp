@@ -118,9 +118,6 @@ void GfxRenderingAPIOGL::UnloadShader(ShaderProgram* old_prg) {
 void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     // if (!new_prg) return;
     mCurrentShaderProgram = new_prg;
-    if (mStats != nullptr) {
-        mStats->shaderSwitches++;
-    }
 #if defined(__SWITCH__)
     // Skip redundant shader switches — same program already active
     if (new_prg->openglProgramId == mLastShaderProgramId) {
@@ -128,6 +125,9 @@ void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     }
     mLastShaderProgramId = new_prg->openglProgramId;
 #endif
+    if (mStats != nullptr) {
+        mStats->shaderSwitches++;
+    }
     glUseProgram(new_prg->openglProgramId);
     // Invalidate uniform cache on shader switch (uniform locations differ per program)
     mLastUniformTextureIds[0] = UINT32_MAX;
@@ -598,10 +598,6 @@ void GfxRenderingAPIOGL::DeleteTexture(uint32_t texID) {
 }
 
 void GfxRenderingAPIOGL::SelectTexture(int tile, GLuint texture_id) {
-    if (mStats != nullptr) {
-        mStats->textureBinds++;
-    }
-
 #if defined(__SWITCH__)
     // Skip redundant texture binds — same texture already bound to this tile
     if (mLastBoundTexture[tile] == texture_id) {
@@ -613,6 +609,12 @@ void GfxRenderingAPIOGL::SelectTexture(int tile, GLuint texture_id) {
         mCurrentTile = tile;
         return;
     }
+#endif
+    if (mStats != nullptr) {
+        mStats->textureBinds++;
+    }
+
+#if defined(__SWITCH__)
     if (mLastActiveTextureTile != tile) {
         glActiveTexture(GL_TEXTURE0 + tile);
         mLastActiveTextureTile = tile;

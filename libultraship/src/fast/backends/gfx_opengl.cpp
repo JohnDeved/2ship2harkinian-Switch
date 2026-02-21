@@ -402,7 +402,11 @@ std::string GfxRenderingAPIOGL::BuildFsShader(const CCFeatures& cc_features) {
         { "core_opengl", false },
         { "texture", "texture2D" },
         { "vOutColor", "gl_FragColor" },
+#if defined(__SWITCH__)
+        { "o_grayscale_as_uniform", true },
+#else
         { "o_grayscale_as_uniform", false },
+#endif
 #endif
     };
     processor.populate(mContext);
@@ -469,8 +473,13 @@ static std::string BuildVsShader(const CCFeatures& cc_features) {
                                      { "attr", "attribute" },
                                      { "out", "varying" },
                                      { "opengles", false },
+#if defined(__SWITCH__)
+                                     { "o_fog_as_uniform", true },
+                                     { "o_grayscale_as_uniform", true }
+#else
                                      { "o_fog_as_uniform", false },
                                      { "o_grayscale_as_uniform", false }
+#endif
 #endif
     };
     processor.populate(mContext);

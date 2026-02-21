@@ -323,17 +323,18 @@ static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
 };
 
 static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
-    "DL Iterations",      "DL Replay Iters",   "DL Replay Fallback", "DL Replay BranchZ", "DL Replay Cooldown",
-    "DL Commands",        "Triangles",         "Vertices",           "Tex Loads",
-    "Matrix Loads",       "Pipe Syncs",        "DL Subcalls",        "SetCombine",       "GL Draw Calls",
-    "GL Batch Flushes",   "GL BufFull Flushes", "GL State Flushes",  "GL Shader Switches", "GL Shader Compiles", "GL Texture Binds",
-    "GL Tex Cache Miss",  "GL Vert Submitted", "GL Tri Submitted",   "GL Time Total ms", "GL Time Dispatch ms",
-    "GL Time Tri ms",     "GL Time Tex ms",    "GL Time Shader ms",  "GL Time Draw ms",  "GL Time Vtx ms",
-    "GL Time Mtx ms",     "GL Time Depth ms",  "GL Time Setup ms",   "GL Depth Queries", "GL Avg Batch Size",
-    "Flush:Texture",      "Flush:Sampler",     "Flush:Shader",       "Flush:Alpha",      "Flush:Depth/VP",
-    "Flush:Combiner",     "Tex Reload Skips",
-    "Batch:1-2 tris",    "Batch:3-8 tris",   "Batch:9-32 tris",  "Batch:33-128 tris", "Batch:129+ tris",
-    "Max Batch Size",
+    "DL Iterations", "DL Replay Iters", "DL Replay Fallback", "DL Replay BranchZ", "DL Replay Cooldown",
+    "DL Commands", "Triangles", "Vertices", "Tex Loads", "Matrix Loads", "Pipe Syncs", "DL Subcalls", "SetCombine",
+    "GL Draw Calls", "GL Batch Flushes", "GL BufFull Flushes", "GL State Flushes", "GL Shader Switches",
+    "GL Shader Compiles", "GL Texture Binds", "GL Tex Cache Miss", "GL Vert Submitted", "GL Tri Submitted",
+    "GL Time Total ms", "GL Time Dispatch ms", "GL Time Tri ms", "GL Time Tex ms", "GL Time Shader ms",
+    "GL Time Draw ms", "GL Time VBO Upload ms", "GL Time glDraw ms", "GL Time Vtx ms", "GL Time Mtx ms",
+    "GL Time Depth ms", "GL Time Setup ms", "GL Depth Queries", "GL Avg Batch Size",
+    "GL Time TexLoad ms", "GL Time RectDraw ms", "GL Time DLOps ms", "GL Time CombSetup ms", "GL Time FBOps ms",
+    "Flush:Texture", "Flush:Sampler", "Flush:Shader", "Flush:Alpha", "Flush:Depth/VP", "Flush:Combiner",
+    "Tex Reload Skips", "Batch:1-2 tris", "Batch:3-8 tris", "Batch:9-32 tris", "Batch:33-128 tris",
+    "Batch:129+ tris", "Max Batch Size", "Sys CPU Usage %", "Sys GPU Usage Est %", "Sys RAM Usage %",
+    "Sys RAM Used MB", "Sys RAM Total MB", "Sys CPU Clock MHz", "Sys GPU Clock MHz", "Sys EMC Clock MHz",
 };
 
 // ── Helper functions ───────────────────────────────────────────────────

@@ -96,6 +96,11 @@ static HOOK_ID sSceneInitHookId = 0;
 static HOOK_ID sUpdateHookId = 0;
 static bool sHooksRegistered = false;
 
+// Saved clock state to restore after benchmark completes
+static s32 sSavedTimeSpeed = 0;
+static u16 sSavedTime = 0;
+static bool sClockSaved = false;
+
 static std::vector<BenchmarkResult> sResults;
 static std::string sLastExportPath;
 static float sExportMsgTimer = 0.0f;
@@ -373,6 +378,14 @@ static void OnBenchmarkUpdate() {
     FrameProfiler_KeepAlive();
 
     if (gPlayState == NULL) {
+        // Restore clock state if benchmark was running when play state became NULL
+        // (e.g., during a scene transition or shutdown) to avoid leaving the clock frozen
+        if (sClockSaved) {
+            R_TIME_SPEED = sSavedTimeSpeed;
+            gSaveContext.save.time = sSavedTime;
+            sClockSaved = false;
+        }
+        sState = BENCH_DONE;
         return;
     }
 
@@ -397,6 +410,19 @@ static void OnBenchmarkUpdate() {
             break;
         }
         case BENCH_SETTLING: {
+            // Save clock state on first entry so we can restore after benchmark
+            if (!sClockSaved) {
+                sSavedTimeSpeed = R_TIME_SPEED;
+                sSavedTime = gSaveContext.save.time;
+                sClockSaved = true;
+            }
+            // Freeze the in-game clock so game state (NPC schedules, actor load)
+            // stays consistent regardless of tick rate. Without this, frame-ahead
+            // makes the game tick faster, advancing MM's day cycle and loading
+            // different NPCs — causing 40ms+ game logic swings between runs.
+            R_TIME_SPEED = 0;
+            gSaveContext.save.time = CLOCK_TIME(8, 0);
+
             sFrameCounter++;
             if (sFrameCounter >= sActiveScenes[sCurrentScene].settleFrames) {
                 sFrameCounter = 0;
@@ -406,6 +432,8 @@ static void OnBenchmarkUpdate() {
             break;
         }
         case BENCH_MEASURING: {
+            R_TIME_SPEED = 0;
+            gSaveContext.save.time = CLOCK_TIME(8, 0);
             // Collect ALL profiler phases and counters each frame
             for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
                 sAccum.phases[i] += FrameProfiler_GetPhaseAvgMs((ProfilePhase)i);
@@ -453,6 +481,12 @@ static void OnBenchmarkUpdate() {
                 sCurrentScene++;
                 if (sCurrentScene >= sActiveSceneCount) {
                     sState = BENCH_DONE;
+                    // Restore clock state that was frozen during benchmark
+                    if (sClockSaved) {
+                        R_TIME_SPEED = sSavedTimeSpeed;
+                        gSaveContext.save.time = sSavedTime;
+                        sClockSaved = false;
+                    }
                 } else {
                     sState = BENCH_WARPING;
                     sSceneReady = false;
@@ -646,6 +680,35 @@ static void ExportBenchmarkReport() {
         }
         out << std::endl;
 
+        // System telemetry (usage + clocks). GPU usage is an estimate proxy from GL driver blocking time.
+        float sysCpuUsage = r.counters[PROFILE_COUNTER_SYS_CPU_USAGE_PCT];
+        float sysGpuUsageEst = r.counters[PROFILE_COUNTER_SYS_GPU_USAGE_EST_PCT];
+        float sysRamUsage = r.counters[PROFILE_COUNTER_SYS_RAM_USAGE_PCT];
+        float sysRamUsedMb = r.counters[PROFILE_COUNTER_SYS_RAM_USED_MB];
+        float sysRamTotalMb = r.counters[PROFILE_COUNTER_SYS_RAM_TOTAL_MB];
+        float sysCpuClockMhz = r.counters[PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ];
+        float sysGpuClockMhz = r.counters[PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ];
+        float sysEmcClockMhz = r.counters[PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ];
+
+        bool hasSystemTelemetry =
+            sysGpuUsageEst > 0.01f || sysCpuUsage > 0.01f || sysRamTotalMb > 0.01f || sysCpuClockMhz > 0.01f ||
+            sysGpuClockMhz > 0.01f || sysEmcClockMhz > 0.01f;
+        if (hasSystemTelemetry) {
+            out << "  System Telemetry:" << std::endl;
+            out << "    CPU Usage (avg cores):       " << std::setprecision(1) << sysCpuUsage << "%" << std::endl;
+            out << "    GPU Usage (estimate):        " << std::setprecision(1) << sysGpuUsageEst
+                << "% (proxy)" << std::endl;
+            if (sysRamTotalMb > 0.01f) {
+                out << "    RAM Usage:                   " << std::setprecision(0) << sysRamUsedMb << " / "
+                    << sysRamTotalMb << " MB (" << std::setprecision(1) << sysRamUsage << "%)" << std::endl;
+            }
+            if (sysCpuClockMhz > 0.01f || sysGpuClockMhz > 0.01f || sysEmcClockMhz > 0.01f) {
+                out << "    Clocks (CPU/GPU/EMC):        " << std::setprecision(0) << sysCpuClockMhz << " / "
+                    << sysGpuClockMhz << " / " << sysEmcClockMhz << " MHz" << std::endl;
+            }
+            out << std::endl;
+        }
+
         // Per-phase breakdown
         out << "  Per-Phase Breakdown:" << std::endl;
         for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
@@ -667,8 +730,19 @@ static void ExportBenchmarkReport() {
         float subcalls = r.counters[PROFILE_COUNTER_DL_SUBCALLS];
         float setCombine = r.counters[PROFILE_COUNTER_DL_SETCOMBINE];
 
+        float dlReplayIters = r.counters[PROFILE_COUNTER_DL_REPLAY_ITERATIONS];
+        float dlReplayFallbacks = r.counters[PROFILE_COUNTER_DL_REPLAY_FALLBACKS];
+        float dlReplayBranchZ = r.counters[PROFILE_COUNTER_DL_REPLAY_BRANCHZ_FRAMES];
+        float dlReplayCooldown = r.counters[PROFILE_COUNTER_DL_REPLAY_COOLDOWN_SKIPS];
+
         out << "  Display List Statistics:" << std::endl;
         out << "    DL Iterations:              " << std::setprecision(0) << dlIter << std::endl;
+        if (dlReplayIters > 0.0f) {
+            out << "    DL Replay Iterations:       " << std::setprecision(0) << dlReplayIters << std::endl;
+            out << "    DL Replay Fallbacks:        " << std::setprecision(0) << dlReplayFallbacks << std::endl;
+            out << "    DL Replay Branch-Z Blocks:  " << std::setprecision(0) << dlReplayBranchZ << std::endl;
+            out << "    DL Replay Cooldown Skips:   " << std::setprecision(0) << dlReplayCooldown << std::endl;
+        }
         out << "    Total Commands:             " << std::setprecision(0) << dlCmds << std::endl;
         out << "    Triangles (DL):             " << std::setprecision(0) << tris << std::endl;
         out << "    Vertices:                   " << std::setprecision(0) << verts << std::endl;
@@ -734,6 +808,22 @@ static void ExportBenchmarkReport() {
         out << "    Texture Setup:              " << std::setprecision(2) << glTimeTex << " ms" << std::endl;
         out << "    Matrix Operations:          " << std::setprecision(2) << glTimeMtx << " ms" << std::endl;
         out << "    Dispatch (command walk):    " << std::setprecision(2) << glTimeDispatch << " ms" << std::endl;
+
+        // Dispatch handler breakdown
+        float glTimeTexLoading = r.counters[PROFILE_COUNTER_GL_TIME_TEXTURE_LOADING_MS];
+        float glTimeRectDraw = r.counters[PROFILE_COUNTER_GL_TIME_RECT_DRAWING_MS];
+        float glTimeDlOps = r.counters[PROFILE_COUNTER_GL_TIME_DL_OPS_MS];
+        float glTimeCombSetup = r.counters[PROFILE_COUNTER_GL_TIME_COMBINER_SETUP_MS];
+        float glTimeFbOps = r.counters[PROFILE_COUNTER_GL_TIME_FRAMEBUFFER_OPS_MS];
+        float glTimeHandlersAccounted = glTimeTexLoading + glTimeRectDraw + glTimeDlOps + glTimeCombSetup + glTimeFbOps;
+        float glTimeDispatchOther = glTimeDispatch > glTimeHandlersAccounted ? glTimeDispatch - glTimeHandlersAccounted : 0.0f;
+        out << "      Texture Loading:          " << std::setprecision(2) << glTimeTexLoading << " ms" << std::endl;
+        out << "      Rectangle Drawing:        " << std::setprecision(2) << glTimeRectDraw << " ms" << std::endl;
+        out << "      Display List Ops:         " << std::setprecision(2) << glTimeDlOps << " ms" << std::endl;
+        out << "      Combiner Setup:           " << std::setprecision(2) << glTimeCombSetup << " ms" << std::endl;
+        out << "      Framebuffer Ops:          " << std::setprecision(2) << glTimeFbOps << " ms" << std::endl;
+        out << "      Other (trivial cmds):     " << std::setprecision(2) << glTimeDispatchOther << " ms" << std::endl;
+
         out << "    Pixel Depth Readback:       " << std::setprecision(2) << glTimeDepth << " ms" << std::endl;
         out << "    Frame Setup:                " << std::setprecision(2) << glTimeSetup << " ms" << std::endl;
         out << "    Shader Compile/Switch:      " << std::setprecision(2) << glTimeShader << " ms" << std::endl;
@@ -848,6 +938,167 @@ static void ExportBenchmarkReport() {
         if (renderFrameMs > 0.01f) {
             float mbPerSec = (vboKB / 1024.0f) * fps;
             out << "    VBO throughput:             " << std::setprecision(1) << mbPerSec << " MB/s" << std::endl;
+        }
+        out << std::endl;
+
+        // Estimated unaccounted time — total frame time minus selected phases.
+        // Phases may overlap (FrameProfiler accumulates per phase independently),
+        // so accountedMs can exceed totalMs. Clamped to 0 since negative values
+        // indicate overlap, not missing time.
+        float accountedMs =
+            r.phases[PROFILE_PHASE_PLAY_UPDATE] + r.phases[PROFILE_PHASE_PLAY_DRAW] +
+            r.phases[PROFILE_PHASE_AUDIO_WAIT] + r.phases[PROFILE_PHASE_FRAME_INTERP] +
+            r.phases[PROFILE_PHASE_DL_PROCESS];
+        float unaccountedMs = totalMs - accountedMs;
+        if (unaccountedMs < 0.0f) {
+            unaccountedMs = 0.0f;
+        }
+        float unaccountedPct = (totalMs > 0.01f) ? (unaccountedMs / totalMs * 100.0f) : 0.0f;
+        out << "  Unaccounted Time:             " << std::setprecision(2) << unaccountedMs
+            << " ms (" << std::setprecision(1) << unaccountedPct << "%)" << std::endl;
+        out << std::endl;
+
+        // Per-unit cost analysis
+        float dlMs = r.phases[PROFILE_PHASE_DL_PROCESS];
+        out << "  Per-Unit Cost Analysis:" << std::endl;
+        if (dlMs > 0.1f && glTris > 0.0f) {
+            out << "    Cost per GL triangle:       " << std::setprecision(2) << (dlMs * 1000.0f / glTris) << " us" << std::endl;
+            float dlCmdsLocal = r.counters[PROFILE_COUNTER_DL_COMMANDS];
+            if (dlCmdsLocal > 0) {
+                out << "    Cost per DL command:        " << std::setprecision(2) << (dlMs * 1000.0f / dlCmdsLocal) << " us" << std::endl;
+            }
+            if (glDrawCalls > 0) {
+                out << "    Cost per GL draw call:      " << std::setprecision(2) << (dlMs * 1000.0f / glDrawCalls) << " us" << std::endl;
+            }
+            if (glShaderSwitches > 0) {
+                out << "    Cost per shader switch:     " << std::setprecision(2) << (dlMs * 1000.0f / glShaderSwitches) << " us" << std::endl;
+            }
+        }
+        out << std::endl;
+
+        // Flush efficiency analysis
+        float stateActualFlushes = glBatchFlushes - glBufferFullFlushes;
+        emptyFlushes = glBatchFlushes - glDrawCalls;
+        emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
+        float effectiveBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
+        out << "  Flush Efficiency:" << std::endl;
+        out << "    Total Flushes:              " << std::setprecision(0) << glBatchFlushes << std::endl;
+        out << "    State-change driven:        " << std::setprecision(0) << stateActualFlushes << std::endl;
+        out << "    Buffer-full:                " << std::setprecision(0) << glBufferFullFlushes << std::endl;
+        out << "    Empty (no geometry):        " << std::setprecision(0) << emptyFlushes
+            << " (" << std::setprecision(1) << emptyPct << "%)" << std::endl;
+        out << "    Effective batch size:       " << std::setprecision(1) << effectiveBatch << " tris/draw" << std::endl;
+#ifdef __SWITCH__
+        out << "    Buffer utilization:         " << std::setprecision(1) << (effectiveBatch / 1024.0f * 100.0f) << "% (of 1024 MAX_TRI_BUFFER)" << std::endl;
+#else
+        out << "    Buffer utilization:         " << std::setprecision(1) << (effectiveBatch / 256.0f * 100.0f) << "% (of 256 MAX_TRI_BUFFER)" << std::endl;
+#endif
+        if (glDrawCalls > 0.5f) {
+            out << "    State changes per draw:     " << std::setprecision(2) << (stateActualFlushes / glDrawCalls) << std::endl;
+        }
+        out << std::endl;
+
+        // Core utilization
+        float core0Ms =
+            r.phases[PROFILE_PHASE_COLLISION_AT] + r.phases[PROFILE_PHASE_COLLISION_DAMAGE] +
+            r.phases[PROFILE_PHASE_ACTOR_UPDATE] + r.phases[PROFILE_PHASE_ACTOR_DRAW] +
+            r.phases[PROFILE_PHASE_SCENE_DRAW] + r.phases[PROFILE_PHASE_FRAME_INTERP] +
+            r.phases[PROFILE_PHASE_DL_PROCESS] + r.phases[PROFILE_PHASE_AUDIO_WAIT];
+        float core1Ms = r.phases[PROFILE_PHASE_COLLISION_OC];
+        float imbalance = (core0Ms > 0.01f) ? (core1Ms / core0Ms) : 0.0f;
+        out << "  Core Utilization:" << std::endl;
+        out << "    Core 0 (main):              " << std::setprecision(2) << core0Ms << " ms" << std::endl;
+        out << "    Worker core:                " << std::setprecision(2) << core1Ms << " ms" << std::endl;
+        out << "    Worker/Core 0 ratio:        " << std::setprecision(1) << (imbalance * 100.0f) << "%" << std::endl;
+        out << std::endl;
+
+        // Game logic vs rendering breakdown (key for frame-ahead analysis)
+        float gameLogicMs = r.phases[PROFILE_PHASE_PLAY_UPDATE] + r.phases[PROFILE_PHASE_PLAY_DRAW];
+        float renderMs = r.phases[PROFILE_PHASE_DL_PROCESS];
+        float renderPerIter = (dlIter > 0.5f) ? (renderMs / dlIter) : renderMs;
+        float fast3dPerIter = (dlIter > 0.5f) ? (glTimeTotal / dlIter) : glTimeTotal;
+        float vsyncPeriod = 16.67f;
+        float vsyncGapDL = vsyncPeriod - renderPerIter;
+        float vsyncGapGL = vsyncPeriod - fast3dPerIter;
+        out << "  Frame-Ahead Analysis:" << std::endl;
+        out << "    Game logic (serial):        " << std::setprecision(2) << gameLogicMs << " ms" << std::endl;
+        out << "    DL Process per iteration:   " << std::setprecision(2) << renderPerIter
+            << " ms (includes vsync wait)" << std::endl;
+        out << "    Fast3D per iteration:       " << std::setprecision(2) << fast3dPerIter
+            << " ms (active GL only)" << std::endl;
+        out << "    Vsync period:               " << std::setprecision(2) << vsyncPeriod << " ms" << std::endl;
+        out << "    Vsync gap (DL average):     " << std::setprecision(2) << vsyncGapDL << " ms" << std::endl;
+        out << "    Vsync gap (last sub-frame): " << std::setprecision(2) << vsyncGapGL << " ms"
+            << (vsyncGapGL >= gameLogicMs ? " (enough to hide game logic!)" :
+               vsyncGapGL > 0 ? " (partially hides game logic)" : " (no gap - rendering exceeds vsync)")
+            << std::endl;
+        float theoreticalMin = vsyncPeriod * (dlIter > 1.0f ? dlIter - 1.0f : 0.0f) + fast3dPerIter +
+            (gameLogicMs > vsyncGapGL ? gameLogicMs - vsyncGapGL : 0.0f);
+        float theoreticalFps = (theoreticalMin > 0.01f) ? (dlIter * 1000.0f / theoreticalMin) : 0.0f;
+        out << "    Theoretical min tick:       " << std::setprecision(2) << theoreticalMin << " ms" << std::endl;
+        out << "    Theoretical max FPS:        " << std::setprecision(1) << theoreticalFps << std::endl;
+        out << std::endl;
+
+        // Automated analysis with ranked sub-phases and recommendations
+        int worstPhase = -1;
+        float worstMs = 0.0f;
+        for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
+            bool isLeaf = (i != PROFILE_PHASE_TOTAL_FRAME && i != PROFILE_PHASE_PLAY_UPDATE &&
+                           i != PROFILE_PHASE_PLAY_DRAW && i != PROFILE_PHASE_GFX_COMMANDS);
+            if (isLeaf && r.phases[i] > worstMs) {
+                worstMs = r.phases[i];
+                worstPhase = i;
+            }
+        }
+        out << "  Analysis:" << std::endl;
+        if (worstPhase >= 0 && totalMs > 0.01f) {
+            float worstPct = worstMs / totalMs * 100.0f;
+            out << "    Bottleneck: " << sPhaseNames[worstPhase] << " (" << std::setprecision(2) << worstMs
+                << " ms, " << std::setprecision(1) << worstPct << "%)" << std::endl;
+        }
+        if (worstPhase == PROFILE_PHASE_DL_PROCESS && glTimeTotal > 0.01f) {
+            float glTimeTriExclLocal = glTimeTri > glTimeDraw ? glTimeTri - glTimeDraw : 0.0f;
+            struct GlPhaseInfo { const char* name; float ms; };
+            GlPhaseInfo glPhases[] = {
+                {"tri (per-vertex)", glTimeTriExclLocal}, {"draw (GL submit)", glTimeDraw},
+                {"  VBO upload", glTimeVboUpload}, {"  glDrawArrays", glTimeGlDraw},
+                {"vtx (vertex xform)", glTimeVtx}, {"tex (texture setup)", glTimeTex},
+                {"mtx (matrix ops)", glTimeMtx}, {"dispatch (cmd walk)", glTimeDispatch},
+                {"depth (readback)", glTimeDepth}, {"setup (frame init)", glTimeSetup},
+                {"shader (compile)", glTimeShader}
+            };
+            int numGlPhases = sizeof(glPhases) / sizeof(glPhases[0]);
+            for (int i = 0; i < numGlPhases - 1; i++) {
+                for (int j = i + 1; j < numGlPhases; j++) {
+                    if (glPhases[j].ms > glPhases[i].ms) {
+                        GlPhaseInfo tmp = glPhases[i];
+                        glPhases[i] = glPhases[j];
+                        glPhases[j] = tmp;
+                    }
+                }
+            }
+            out << "    Top GL sub-phases:" << std::endl;
+            for (int i = 0; i < 3 && i < numGlPhases; i++) {
+                if (glPhases[i].ms < 0.01f) break;
+                float pct = glPhases[i].ms / glTimeTotal * 100.0f;
+                out << "      #" << (i + 1) << " " << glPhases[i].name << ": " << std::setprecision(2)
+                    << glPhases[i].ms << " ms (" << std::setprecision(1) << pct << "%)" << std::endl;
+            }
+        }
+        // Warnings
+        if (emptyPct > 30.0f) {
+            out << "    WARNING: " << std::setprecision(1) << emptyPct << "% empty flushes — consider lazy state application" << std::endl;
+        }
+        if (effectiveBatch < 20.0f && glDrawCalls > 100.0f) {
+            out << "    WARNING: Low batch size (" << std::setprecision(1) << effectiveBatch << " tris/draw) — state changes fragment batches" << std::endl;
+        }
+        if (glTimeDraw > 10.0f && glDrawCalls > 500.0f) {
+            float costPerDraw = glTimeDraw * 1000.0f / glDrawCalls;
+            out << "    WARNING: High GL draw overhead: " << std::setprecision(0) << glDrawCalls << " calls x "
+                << std::setprecision(1) << costPerDraw << " us = " << std::setprecision(2) << glTimeDraw << " ms" << std::endl;
+        }
+        if (unaccountedMs > 3.0f) {
+            out << "    WARNING: " << std::setprecision(2) << unaccountedMs << " ms unaccounted — hidden overhead (ImGui, audio, vsync sleep, stats processing)" << std::endl;
         }
         out << std::endl;
     }

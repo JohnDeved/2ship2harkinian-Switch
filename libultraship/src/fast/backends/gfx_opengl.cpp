@@ -91,6 +91,36 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
         mLastUniformTextureVersions[0] = tex0Version;
         mLastUniformTextureVersions[1] = tex1Version;
 
+#if defined(__SWITCH__)
+        // Optimize: only upload uniforms for active textures to reduce GL driver overhead.
+        // On Switch ARM, each glUniform1iv call has ~2-3µs overhead even when shader doesn't use the texture.
+        if (useTex0 && useTex1) {
+            // Both textures active: upload as vec2 array (single call)
+            GLint filtering[2] = { textures[tex0].filtering, textures[tex1].filtering };
+            glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
+            GLint width[2] = { textures[tex0].width, textures[tex1].width };
+            glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
+            GLint height[2] = { textures[tex0].height, textures[tex1].height };
+            glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+        } else if (useTex0) {
+            // Only texture 0 active: upload single element
+            GLint filtering = textures[tex0].filtering;
+            glUniform1i(mCurrentShaderProgram->texture_filtering_location, filtering);
+            GLint width = textures[tex0].width;
+            glUniform1i(mCurrentShaderProgram->texture_width_location, width);
+            GLint height = textures[tex0].height;
+            glUniform1i(mCurrentShaderProgram->texture_height_location, height);
+        } else if (useTex1) {
+            // Only texture 1 active: upload to array index 1
+            GLint filtering[2] = { 0, textures[tex1].filtering };
+            glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
+            GLint width[2] = { 0, textures[tex1].width };
+            glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
+            GLint height[2] = { 0, textures[tex1].height };
+            glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+        }
+#else
+        // Desktop: always upload both (uniform arrays can't be partially updated)
         GLint filtering[2] = { useTex0 ? textures[tex0].filtering : 0, useTex1 ? textures[tex1].filtering : 0 };
         glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
 
@@ -99,6 +129,7 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
 
         GLint height[2] = { useTex0 ? textures[tex0].height : 0, useTex1 ? textures[tex1].height : 0 };
         glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+#endif
     }
 }
 
@@ -118,6 +149,13 @@ void GfxRenderingAPIOGL::UnloadShader(ShaderProgram* old_prg) {
 void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     // if (!new_prg) return;
     mCurrentShaderProgram = new_prg;
+#if defined(__SWITCH__)
+    // Skip redundant shader switches — same program already active
+    if (new_prg->openglProgramId == mLastShaderProgramId) {
+        return;
+    }
+    mLastShaderProgramId = new_prg->openglProgramId;
+#endif
     if (mStats != nullptr) {
         mStats->shaderSwitches++;
     }
@@ -591,12 +629,33 @@ void GfxRenderingAPIOGL::DeleteTexture(uint32_t texID) {
 }
 
 void GfxRenderingAPIOGL::SelectTexture(int tile, GLuint texture_id) {
+#if defined(__SWITCH__)
+    // Skip redundant texture binds — same texture already bound to this tile
+    if (mLastBoundTexture[tile] == texture_id) {
+        if (mLastActiveTextureTile != tile) {
+            glActiveTexture(GL_TEXTURE0 + tile);
+            mLastActiveTextureTile = tile;
+        }
+        mCurrentTextureIds[tile] = texture_id;
+        mCurrentTile = tile;
+        return;
+    }
+#endif
     if (mStats != nullptr) {
         mStats->textureBinds++;
     }
 
+#if defined(__SWITCH__)
+    if (mLastActiveTextureTile != tile) {
+        glActiveTexture(GL_TEXTURE0 + tile);
+        mLastActiveTextureTile = tile;
+    }
+    glBindTexture(GL_TEXTURE_2D, texture_id);
+    mLastBoundTexture[tile] = texture_id;
+#else
     glActiveTexture(GL_TEXTURE0 + tile);
     glBindTexture(GL_TEXTURE_2D, texture_id);
+#endif
     mCurrentTextureIds[tile] = texture_id;
     mCurrentTile = tile;
 }
@@ -631,6 +690,9 @@ static uint32_t gfx_cm_to_opengl(uint32_t val) {
 
 void GfxRenderingAPIOGL::SetSamplerParameters(int tile, bool linear_filter, uint32_t cms, uint32_t cmt) {
     glActiveTexture(GL_TEXTURE0 + tile);
+#if defined(__SWITCH__)
+    mLastActiveTextureTile = tile;
+#endif
     const GLint filter = linear_filter && mCurrentFilterMode == FILTER_LINEAR ? GL_LINEAR : GL_NEAREST;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
@@ -654,22 +716,59 @@ void GfxRenderingAPIOGL::SetZmodeDecal(bool zmode_decal) {
 }
 
 void GfxRenderingAPIOGL::SetViewport(int x, int y, int width, int height) {
+#if defined(__SWITCH__)
+    if (x != mLastViewport[0] || y != mLastViewport[1] || width != mLastViewport[2] || height != mLastViewport[3]) {
+        glViewport(x, y, width, height);
+        mLastViewport[0] = x;
+        mLastViewport[1] = y;
+        mLastViewport[2] = width;
+        mLastViewport[3] = height;
+    }
+#else
     glViewport(x, y, width, height);
+#endif
 }
 
 void GfxRenderingAPIOGL::SetScissor(int x, int y, int width, int height) {
+#if defined(__SWITCH__)
+    if (x != mLastScissor[0] || y != mLastScissor[1] || width != mLastScissor[2] || height != mLastScissor[3]) {
+        glScissor(x, y, width, height);
+        mLastScissor[0] = x;
+        mLastScissor[1] = y;
+        mLastScissor[2] = width;
+        mLastScissor[3] = height;
+    }
+#else
     glScissor(x, y, width, height);
+#endif
 }
 
 void GfxRenderingAPIOGL::SetUseAlpha(bool use_alpha) {
+#if defined(__SWITCH__)
+    // Defer to DrawTriangles to batch with other state changes
+    mCurrentAlphaBlend = use_alpha ? 1 : 0;
+#else
     if (use_alpha) {
         glEnable(GL_BLEND);
     } else {
         glDisable(GL_BLEND);
     }
+#endif
 }
 
 void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris) {
+#if defined(__SWITCH__)
+    // Apply deferred alpha blend state change
+    if (mCurrentAlphaBlend != mLastAlphaBlend) {
+        mLastAlphaBlend = mCurrentAlphaBlend;
+        if (mCurrentAlphaBlend) {
+            glEnable(GL_BLEND);
+        } else {
+            glDisable(GL_BLEND);
+        }
+    }
+#endif
+
     if (mCurrentDepthTest != mLastDepthTest || mCurrentDepthMask != mLastDepthMask) {
         mLastDepthTest = mCurrentDepthTest;
         mLastDepthMask = mCurrentDepthMask;
@@ -686,23 +785,52 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     if (mCurrentZmodeDecal != mLastZmodeDecal) {
         mLastZmodeDecal = mCurrentZmodeDecal;
         if (mCurrentZmodeDecal) {
-            // SSDB = SlopeScaledDepthBias 120 leads to -2 at 240p which is the same as N64 mode which has very little
-            // fighting
+#if defined(__SWITCH__)
+            // Cache SSDB computation: only recalculate when framebuffer or z-fighting mode changes.
+            // This avoids redundant height lookups and division on every decal-mode draw.
+            if (mCachedPolygonOffsetFbId != mCurrentFrameBuffer ||
+                mCachedPolygonOffsetZMode != mCachedZFightingMode) {
+                const int n64modeFactor = 120;
+                const int noVanishFactor = 100;
+                GLfloat SSDB = -2;
+                switch (mCachedZFightingMode) {
+                    // scaled z-fighting (N64 mode like)
+                    case 1:
+                        if (mFrameBuffers.size() > mCurrentFrameBuffer) {
+                            SSDB = -1.0f * (GLfloat)mFrameBuffers[mCurrentFrameBuffer].height / n64modeFactor;
+                        }
+                        break;
+                    // no vanishing paths
+                    case 2:
+                        if (mFrameBuffers.size() > mCurrentFrameBuffer) {
+                            SSDB = -1.0f * (GLfloat)mFrameBuffers[mCurrentFrameBuffer].height / noVanishFactor;
+                        }
+                        break;
+                    // disabled
+                    case 0:
+                    default:
+                        SSDB = -2;
+                }
+                mCachedPolygonOffsetSSDB = SSDB;
+                mCachedPolygonOffsetFbId = mCurrentFrameBuffer;
+                mCachedPolygonOffsetZMode = mCachedZFightingMode;
+            }
+            glPolygonOffset(mCachedPolygonOffsetSSDB, -2);
+#else
+            // Non-Switch: compute on every decal-mode change (CVar lookup required)
             const int n64modeFactor = 120;
             const int noVanishFactor = 100;
             GLfloat SSDB = -2;
             switch (Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_Z_FIGHTING_MODE, 0)) {
                 // scaled z-fighting (N64 mode like)
                 case 1:
-                    if (mFrameBuffers.size() >
-                        mCurrentFrameBuffer) { // safety check for vector size can probably be removed
+                    if (mFrameBuffers.size() > mCurrentFrameBuffer) {
                         SSDB = -1.0f * (GLfloat)mFrameBuffers[mCurrentFrameBuffer].height / n64modeFactor;
                     }
                     break;
                 // no vanishing paths
                 case 2:
-                    if (mFrameBuffers.size() >
-                        mCurrentFrameBuffer) { // safety check for vector size can probably be removed
+                    if (mFrameBuffers.size() > mCurrentFrameBuffer) {
                         SSDB = -1.0f * (GLfloat)mFrameBuffers[mCurrentFrameBuffer].height / noVanishFactor;
                     }
                     break;
@@ -712,6 +840,7 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
                     SSDB = -2;
             }
             glPolygonOffset(SSDB, -2);
+#endif
             glEnable(GL_POLYGON_OFFSET_FILL);
         } else {
             glPolygonOffset(0, 0);
@@ -831,6 +960,14 @@ void GfxRenderingAPIOGL::StartFrame() {
     // Reset per-iteration VBO batching state.
     // The next DrawTriangles call will orphan the VBO.
     mVboIterActive = false;
+    // Cache z-fighting CVar once per frame instead of per draw call
+    mCachedZFightingMode = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_Z_FIGHTING_MODE, 0);
+    // Reset texture/shader caches for new frame (ImGui may have changed GL state).
+    // UINT32_MAX sentinel ensures first call per frame always goes through.
+    mLastBoundTexture[0] = UINT32_MAX;
+    mLastBoundTexture[1] = UINT32_MAX;
+    mLastActiveTextureTile = -1;
+    mLastShaderProgramId = UINT32_MAX;
 #endif
 }
 
@@ -849,6 +986,12 @@ int GfxRenderingAPIOGL::CreateFramebuffer() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
+
+#ifdef __SWITCH__
+    // Invalidate bind cache — glBindTexture above changes GL state
+    mLastBoundTexture[0] = UINT32_MAX;
+    mLastBoundTexture[1] = UINT32_MAX;
+#endif
 
     GLuint clrbufMsaa;
     glGenRenderbuffers(1, &clrbufMsaa);
@@ -891,6 +1034,11 @@ void GfxRenderingAPIOGL::UpdateFramebufferParameters(int fb_id, uint32_t width, 
                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
                 glBindTexture(GL_TEXTURE_2D, 0);
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fb.clrbuf, 0);
+#ifdef __SWITCH__
+                // Invalidate bind cache — glBindTexture above changes GL state
+                mLastBoundTexture[0] = UINT32_MAX;
+                mLastBoundTexture[1] = UINT32_MAX;
+#endif
             } else {
                 glBindRenderbuffer(GL_RENDERBUFFER, fb.clrbufMsaa);
                 glRenderbufferStorageMultisample(GL_RENDERBUFFER, msaa_level, GL_RGB8, width, height);
@@ -966,6 +1114,10 @@ void* GfxRenderingAPIOGL::GetFramebufferTextureId(int fb_id) {
 void GfxRenderingAPIOGL::SelectTextureFb(int fb_id) {
     // glDisable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0 + 0);
+#if defined(__SWITCH__)
+    mLastActiveTextureTile = 0;
+    mLastBoundTexture[0] = UINT32_MAX; // FB texture — invalidate bind cache
+#endif
     glBindTexture(GL_TEXTURE_2D, mFrameBuffers[fb_id].clrbuf);
 }
 

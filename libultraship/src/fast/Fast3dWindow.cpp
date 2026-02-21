@@ -18,6 +18,11 @@
 #endif
 
 #include <fstream>
+#include <imgui.h>
+
+#ifdef ENABLE_OPENGL
+#include <imgui_impl_opengl3.h>
+#endif
 
 namespace Fast {
 
@@ -439,14 +444,43 @@ void Fast3dWindow::RenderThreadLoop() {
 
         // Capture work parameters
         Gfx* commands = mRenderCommands;
-        const std::unordered_map<Mtx*, MtxF>* mtxReplacements = mRenderMtxReplacements;
+        std::unordered_map<Mtx*, MtxF> mtxReplacements = std::move(mRenderMtxReplacements);
+        bool renderImGui = mRenderImGui;
         lock.unlock();
 
-        // Execute the full render pipeline on Core 1 (with GL context)
-        gui->StartDraw();
+        // Execute the render pipeline on Core 1 (with GL context).
+        // Full ImGui (StartDraw/EndDraw) only runs on the first sub-frame.
+        // Non-first sub-frames replay the cached ImGui draw data from the first
+        // sub-frame's ImGui::Render() call — this is a cheap GL-only operation
+        // (~1ms vs ~5ms) that avoids widget recomputation while preventing
+        // flicker. The draw data persists until the next ImGui::NewFrame().
+        if (renderImGui) {
+            gui->StartDraw();
+        }
         mInterpreter->StartFrame();
-        mInterpreter->Run(commands, *mtxReplacements);
-        gui->EndDraw();
+        mInterpreter->Run(commands, mtxReplacements);
+        if (renderImGui) {
+            gui->EndDraw();
+        } else {
+            // Replay previous ImGui draw data (overlay only, no computation).
+            // ImGui::GetDrawData() is valid after Render() until next NewFrame().
+#ifdef ENABLE_OPENGL
+            ImDrawData* drawData = ImGui::GetDrawData();
+            if (drawData) {
+                ImGui_ImplOpenGL3_RenderDrawData(drawData);
+            }
+#endif
+        }
+
+        // Signal that GL commands are done BEFORE the buffer swap.
+        // Core 0 can proceed here and start game logic while the render thread
+        // may still be blocked in the swap. On Switch, the SDL backend forces
+        // vsync on and SDL_GL_SwapWindow can block for the vsync interval.
+        mGlCommandsDone.store(true, std::memory_order_release);
+
+        // This calls SwapBuffersBegin → SDL_GL_SwapWindow. On Switch (SDL
+        // backend) vsync is forced on, so SDL_GL_SwapWindow can block for the
+        // duration of the vsync interval instead of returning quickly.
         mInterpreter->EndFrame();
 
         lock.lock();
@@ -472,6 +506,7 @@ void Fast3dWindow::InitRenderThread() {
         mRenderThreadRunning = true;
         mRenderHasWork = false;
         mRenderWorkDone = true;
+        mGlCommandsDone.store(true, std::memory_order_relaxed);
     }
     mRenderThread = std::thread(&Fast3dWindow::RenderThreadLoop, this);
 }
@@ -493,7 +528,8 @@ void Fast3dWindow::DestroyRenderThread() {
     mWindowManagerApi->MakeContextCurrent();
 }
 
-bool Fast3dWindow::SubmitRenderWork(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtxReplacements) {
+bool Fast3dWindow::SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF> mtxReplacements,
+                                    bool renderImGui) {
     {
         std::unique_lock<std::mutex> lock(mRenderMutex);
         if (!mRenderThreadRunning) {
@@ -506,9 +542,11 @@ bool Fast3dWindow::SubmitRenderWork(Gfx* commands, const std::unordered_map<Mtx*
             mRenderDoneCV.wait(lock);
         }
         mRenderCommands = commands;
-        mRenderMtxReplacements = &mtxReplacements;
+        mRenderMtxReplacements = std::move(mtxReplacements);
+        mRenderImGui = renderImGui;
         mRenderHasWork = true;
         mRenderWorkDone = false;
+        mGlCommandsDone.store(false, std::memory_order_relaxed);
     }
     mRenderCV.notify_one();
     return true;
@@ -518,6 +556,19 @@ void Fast3dWindow::WaitForRenderDone() {
     std::unique_lock<std::mutex> lock(mRenderMutex);
     while (!mRenderWorkDone) {
         mRenderDoneCV.wait(lock);
+    }
+}
+
+void Fast3dWindow::WaitForGlCommandsDone() {
+    // Spin-wait on atomic flag — avoids mutex+CV kernel overhead.
+    // The wait is short (~10ms while GL commands run on Core 1),
+    // and Core 0 needs to proceed immediately after (game logic).
+    // Also break if the render thread has stopped to avoid hanging.
+    while (!mGlCommandsDone.load(std::memory_order_acquire)) {
+        if (!mRenderThreadRunning) {
+            break;
+        }
+        std::this_thread::yield();
     }
 }
 #endif

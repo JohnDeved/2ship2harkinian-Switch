@@ -75,6 +75,13 @@ typedef enum {
     PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES,
     PROFILE_COUNTER_GL_AVG_BATCH_SIZE,
 
+    // Command handler timing breakdown (subset of dispatch time)
+    PROFILE_COUNTER_GL_TIME_TEXTURE_LOADING_MS,
+    PROFILE_COUNTER_GL_TIME_RECT_DRAWING_MS,
+    PROFILE_COUNTER_GL_TIME_DL_OPS_MS,
+    PROFILE_COUNTER_GL_TIME_COMBINER_SETUP_MS,
+    PROFILE_COUNTER_GL_TIME_FRAMEBUFFER_OPS_MS,
+
     // Flush cause breakdown: which state triggered each batch-breaking flush
     PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE,
     PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER,
@@ -91,6 +98,16 @@ typedef enum {
     PROFILE_COUNTER_GL_BATCH_HIST_3,       // 33-128 tris
     PROFILE_COUNTER_GL_BATCH_HIST_4,       // 129+ tris
     PROFILE_COUNTER_GL_MAX_BATCH_SIZE,     // max batch size seen this frame
+
+    // System telemetry (Switch: real values where available, otherwise proxy/zero)
+    PROFILE_COUNTER_SYS_CPU_USAGE_PCT,     // CPU usage across CPU cores (0-100)
+    PROFILE_COUNTER_SYS_GPU_USAGE_EST_PCT, // estimated GPU usage proxy (0-100)
+    PROFILE_COUNTER_SYS_RAM_USAGE_PCT,     // process RAM usage percentage (0-100)
+    PROFILE_COUNTER_SYS_RAM_USED_MB,       // process RAM used (MB)
+    PROFILE_COUNTER_SYS_RAM_TOTAL_MB,      // process RAM budget/total (MB)
+    PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ,     // CPU clock (MHz)
+    PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ,     // GPU clock (MHz)
+    PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ,     // memory controller clock (MHz)
 
     PROFILE_COUNTER_MAX
 } ProfileCounter;

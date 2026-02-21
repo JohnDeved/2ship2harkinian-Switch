@@ -143,6 +143,35 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     uint32_t mLastUniformTextureIds[2] = { UINT32_MAX, UINT32_MAX };
     uint32_t mLastUniformTextureVersions[2] = { UINT32_MAX, UINT32_MAX };
 
+#if defined(__SWITCH__)
+    // Cache viewport/scissor to skip redundant GL calls.
+    // Initialized to impossible values so first call always applies.
+    GLint mLastViewport[4] = { -1, -1, -1, -1 };
+    GLint mLastScissor[4] = { -1, -1, -1, -1 };
+
+    // Deferred alpha blend: SetUseAlpha stores the value, DrawTriangles applies it.
+    // -1 = uninitialized sentinel (forces first-time apply).
+    int8_t mCurrentAlphaBlend = 0;
+    int8_t mLastAlphaBlend = -1;
+
+    // Cache z-fighting CVar per frame to avoid hash map lookup per draw call.
+    int mCachedZFightingMode = 0;
+
+    // Cache computed polygon offset (SSDB) to skip recalculation when framebuffer/mode unchanged.
+    // Invalidate on framebuffer change or z-fighting mode change (detected in StartFrame).
+    GLfloat mCachedPolygonOffsetSSDB = -2.0f;
+    size_t mCachedPolygonOffsetFbId = SIZE_MAX;
+    int mCachedPolygonOffsetZMode = -1;
+
+    // Texture bind deduplication: skip glBindTexture/glActiveTexture when unchanged.
+    // UINT32_MAX sentinel ensures first call per frame always goes through.
+    GLuint mLastBoundTexture[2] = { UINT32_MAX, UINT32_MAX };
+    int mLastActiveTextureTile = -1;
+
+    // Shader switch deduplication: skip glUseProgram+VAO bind when same program.
+    GLuint mLastShaderProgramId = UINT32_MAX;
+#endif
+
     uint32_t mFrameCount = 0;
 
     std::vector<FramebufferOGL> mFrameBuffers;

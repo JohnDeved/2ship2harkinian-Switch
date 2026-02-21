@@ -57,6 +57,8 @@ enum BenchmarkMode {
     BENCH_MODE_FULL,
     BENCH_MODE_QUICK,
 };
+static constexpr int BENCH_HEADLESS_MODE_QUICK = 1;
+static constexpr int BENCH_HEADLESS_MODE_FULL = 2;
 
 // Active scene list (set when benchmark starts)
 static BenchmarkMode sBenchMode = BENCH_MODE_FULL;
@@ -101,9 +103,9 @@ static std::string sLastExportPath;
 static float sExportMsgTimer = 0.0f;
 static bool sHeadlessStarted = false;
 static bool sHeadlessFinalized = false;
-static bool sHeadlessExportReport = true;
-static bool sHeadlessSaveBaseline = true;
-static bool sHeadlessAutoQuit = true;
+static bool sHeadlessExportReport = false;
+static bool sHeadlessSaveBaseline = false;
+static bool sHeadlessAutoQuit = false;
 
 // ── Baseline comparison ────────────────────────────────────────────────
 
@@ -375,12 +377,12 @@ static void OnBenchmarkSceneInit(s8 sceneId, s8 spawnNum) {
 static void OnBenchmarkUpdate() {
     if (sState == BENCH_IDLE && !sHeadlessStarted && gPlayState != NULL) {
         int headlessMode = CVarGetInteger("gDeveloperTools.Benchmark.HeadlessMode", 0);
-        bool headlessEnabled = (headlessMode == 1 || headlessMode == 2);
+        bool headlessEnabled = (headlessMode == BENCH_HEADLESS_MODE_QUICK || headlessMode == BENCH_HEADLESS_MODE_FULL);
         if (headlessEnabled) {
             sHeadlessExportReport = CVarGetInteger("gDeveloperTools.Benchmark.HeadlessExportReport", 1) != 0;
             sHeadlessSaveBaseline = CVarGetInteger("gDeveloperTools.Benchmark.HeadlessSaveBaseline", 1) != 0;
             sHeadlessAutoQuit = CVarGetInteger("gDeveloperTools.Benchmark.HeadlessAutoQuit", 1) != 0;
-            StartBenchmark(headlessMode == 1 ? BENCH_MODE_QUICK : BENCH_MODE_FULL);
+            StartBenchmark(headlessMode == BENCH_HEADLESS_MODE_QUICK ? BENCH_MODE_QUICK : BENCH_MODE_FULL);
             sHeadlessStarted = true;
         }
     }

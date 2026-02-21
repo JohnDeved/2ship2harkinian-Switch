@@ -1452,6 +1452,20 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 // ~15ms to ~10ms, increasing the vsync gap available for game logic overlap.
                 const bool renderImGui = (i == 0);
 
+                // Wait for the previous frame's render thread to finish before submitting new work
+                // ONLY do this on the first sub-frame. Subsequent sub-frames wait synchronously
+                // to ensure they are presented in order within the same VSync interval.
+                if (i == 0) {
+                    wnd->WaitForRenderDone();
+                    
+                    // Capture last sub-frame stats for deferred processing next tick.
+                    // GL commands are done so interpreter stats are final and safe to read.
+                    if (profilerEnabled) {
+                        savedStats = wnd->GetFrameStats();
+                        hasSavedStats = true;
+                    }
+                }
+
                 wnd->SubmitRenderWork(commands, std::move(current_m), renderImGui);
 
                 // Process PREVIOUS iteration's saved stats while Core 1 renders.
@@ -1459,16 +1473,11 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 // inside the vsync period instead of adding it to the critical path.
                 processSavedStats();
 
-                // Frame-ahead: for the last sub-frame, wait only for GL commands
-                // to finish (not the full vsync wait). Core 0 starts game logic
-                // while Core 1 sleeps in SDL_GL_SwapWindow (vsync).
+                // Frame-ahead: for the last sub-frame, DO NOT WAIT.
+                // Return immediately so Core 0 can start game logic for the next frame
+                // while Core 1 processes the DL commands and blocks in SDL_GL_SwapWindow.
                 if (isLastSubFrame) {
-                    wnd->WaitForGlCommandsDone();
-                    // Capture last sub-frame stats for deferred processing next tick.
-                    // GL commands are done so interpreter stats are final and safe to read.
                     if (profilerEnabled) {
-                        savedStats = wnd->GetFrameStats();
-                        hasSavedStats = true;
                         FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
                     }
                     FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
@@ -1476,7 +1485,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                     break;
                 }
 
-                // Wait for render thread to finish this sub-frame
+                // Wait for render thread to finish this sub-frame (for 20fps/30fps interpolation)
                 wnd->WaitForRenderDone();
 
                 // Save stats for deferred processing during NEXT sub-frame's render

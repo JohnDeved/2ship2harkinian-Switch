@@ -2,6 +2,7 @@
 #include "ship/window/Window.h"
 #include "ship/window/gui/Gui.h"
 #include "ship/controller/controldevice/controller/mapping/keyboard/KeyboardScancodes.h"
+#include <unordered_map>
 
 union Gfx;
 #include "interpreter.h"
@@ -76,7 +77,6 @@ class Fast3dWindow : public Ship::Window {
     bool SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF> mtxReplacements,
                           bool renderImGui = true);
     void WaitForRenderDone();
-    void WaitForGlCommandsDone();
     bool IsRenderThreadActive() const { return mRenderThreadRunning; }
 #endif
 
@@ -102,7 +102,6 @@ class Fast3dWindow : public Ship::Window {
     bool mRenderThreadRunning = false;
     bool mRenderHasWork = false;
     bool mRenderWorkDone = true;
-    std::atomic<bool> mGlCommandsDone{true};
     // Render work parameters (set by Core 0, read by Core 1)
     Gfx* mRenderCommands = nullptr;
     std::unordered_map<Mtx*, MtxF> mRenderMtxReplacements;

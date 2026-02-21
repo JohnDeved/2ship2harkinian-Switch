@@ -158,11 +158,12 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     int mCachedZFightingMode = 0;
 
     // Texture bind deduplication: skip glBindTexture/glActiveTexture when unchanged.
-    GLuint mLastBoundTexture[2] = { 0, 0 };
+    // UINT32_MAX sentinel ensures first call per frame always goes through.
+    GLuint mLastBoundTexture[2] = { UINT32_MAX, UINT32_MAX };
     int mLastActiveTextureTile = -1;
 
     // Shader switch deduplication: skip glUseProgram+VAO bind when same program.
-    GLuint mLastShaderProgramId = 0;
+    GLuint mLastShaderProgramId = UINT32_MAX;
 #endif
 
     uint32_t mFrameCount = 0;

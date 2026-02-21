@@ -900,11 +900,12 @@ void GfxRenderingAPIOGL::StartFrame() {
     mVboIterActive = false;
     // Cache z-fighting CVar once per frame instead of per draw call
     mCachedZFightingMode = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_Z_FIGHTING_MODE, 0);
-    // Reset texture/shader caches for new frame (ImGui may have changed GL state)
-    mLastBoundTexture[0] = 0;
-    mLastBoundTexture[1] = 0;
+    // Reset texture/shader caches for new frame (ImGui may have changed GL state).
+    // UINT32_MAX sentinel ensures first call per frame always goes through.
+    mLastBoundTexture[0] = UINT32_MAX;
+    mLastBoundTexture[1] = UINT32_MAX;
     mLastActiveTextureTile = -1;
-    mLastShaderProgramId = 0;
+    mLastShaderProgramId = UINT32_MAX;
 #endif
 }
 

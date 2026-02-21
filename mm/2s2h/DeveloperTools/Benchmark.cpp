@@ -888,7 +888,10 @@ static void ExportBenchmarkReport() {
         }
         out << std::endl;
 
-        // Estimated unaccounted time — total frame time minus selected phases (phases may overlap)
+        // Estimated unaccounted time — total frame time minus selected phases.
+        // Phases may overlap (FrameProfiler accumulates per phase independently),
+        // so accountedMs can exceed totalMs. Clamped to 0 since negative values
+        // indicate overlap, not missing time.
         float accountedMs =
             r.phases[PROFILE_PHASE_PLAY_UPDATE] + r.phases[PROFILE_PHASE_PLAY_DRAW] +
             r.phases[PROFILE_PHASE_AUDIO_WAIT] + r.phases[PROFILE_PHASE_FRAME_INTERP] +

@@ -1310,7 +1310,11 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
 
             FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
             FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
+            int iterIdx = 0;
             for (const auto& m : mtx_replacements) {
+#ifdef __SWITCH__
+                if (intp) { intp->mRepeatIteration = (iterIdx > 0); }
+#endif
                 wnd->SubmitRenderWork(commands, m);
                 wnd->WaitForRenderDone();
 
@@ -1359,6 +1363,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 }
 
                 if (intp) { intp->mInterpolationIndex++; }
+                iterIdx++;
                 if (profilerEnabled) {
                     FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
                 }

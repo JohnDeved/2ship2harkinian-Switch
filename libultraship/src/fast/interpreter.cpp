@@ -2217,7 +2217,15 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     int numAlphaPasses;
 
     if (!mTriStateDirty) {
-        // Jump directly to vertex processing using cached parameters
+        // Jump directly to vertex processing using cached parameters.
+        // Clear accumulated textures_changed flags that were set by
+        // repeat-iteration handlers (SetTile, LoadBlock, etc.) — they
+        // are redundant and would cause unnecessary slow-path work later.
+        mRdp->textures_changed[0] = false;
+        mRdp->textures_changed[1] = false;
+        mRdp->geometry_mode_changed = false;
+        mRdp->other_mode_changed = false;
+        mRdp->viewport_or_scissor_changed = false;
         goto fast_path_vertex_processing;
     }
 #endif

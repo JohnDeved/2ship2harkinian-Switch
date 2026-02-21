@@ -12,7 +12,8 @@
 8. [Optimization Status](#optimization-status)
 9. [Implementation Priority](#implementation-priority)
 10. [NX-Specific Characteristics](#nx-specific-characteristics)
-11. [Success Criteria](#success-criteria)
+11. [Local Proxy Workflow for Fast Iteration](#local-proxy-workflow-for-fast-iteration)
+12. [Success Criteria](#success-criteria)
 
 ---
 
@@ -348,6 +349,41 @@ Phase 5: Game Logic Optimization (low priority — only ~6ms)
 
 - Sustained 100% load on Core 0 triggers throttling after minutes of gameplay.
 - Distributing work across cores reduces per-core thermal load.
+
+---
+
+## Local Proxy Workflow for Fast Iteration
+
+You can run deterministic performance benchmarks today on **real Switch hardware** from the Dev Tools benchmark window.
+For faster local iteration on desktop, this repo now includes a calibration-based proxy script:
+
+- `scripts/nx_perf_proxy.py`
+
+It estimates Switch deltas by applying your local benchmark speedup/regression ratio to a Switch reference baseline.
+
+### One-time calibration
+
+1. On Switch, run **Quick Benchmark** and click **Save as Baseline**.
+2. On desktop (same commit, same benchmark mode), run **Quick Benchmark** and **Save as Baseline**.
+3. Keep both baseline files as your reference pair.
+
+### Per-change local check
+
+1. On desktop, run Quick Benchmark for your candidate change and save baseline.
+2. Run:
+
+```bash
+python3 scripts/nx_perf_proxy.py \
+  --switch-ref /path/to/switch/benchmark_baseline.txt \
+  --local-ref /path/to/local/reference/benchmark_baseline.txt \
+  --local-candidate /path/to/local/candidate/benchmark_baseline.txt
+```
+
+The script prints estimated per-scene Switch frame-time deltas and exits non-zero if the estimated average regression exceeds
+the configured threshold (`--fail-regression-ms`, default `0.75` ms).
+
+> This is a **simulation/proxy**, not a replacement for real Switch validation. Use it to quickly filter regressions locally,
+> then confirm significant wins/losses on hardware.
 
 ---
 

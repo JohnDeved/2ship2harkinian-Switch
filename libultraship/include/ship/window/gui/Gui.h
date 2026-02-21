@@ -106,6 +106,7 @@ class Gui {
     void BlockGamepadNavigation();
     void UnblockGamepadNavigation();
     void ShutDownImGui(Ship::Window* window);
+    void ImGuiRenderDrawData(ImDrawData* data);
 
   protected:
     void StartFrame();
@@ -119,7 +120,6 @@ class Gui {
     void ImGuiWMNewFrame();
     void ImGuiWMInit();
     void ImGuiBackendInit();
-    void ImGuiRenderDrawData(ImDrawData* data);
 
     ImTextureID GetTextureById(int32_t id);
     void ApplyResolutionChanges();

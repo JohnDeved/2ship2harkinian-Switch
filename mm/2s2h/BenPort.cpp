@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
-#include <thread>
 
 #include <ship/resource/ResourceManager.h>
 #include <fast/Fast3dWindow.h>
@@ -1186,10 +1185,12 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 wnd->SubmitRenderWork(commands, std::move(current_m));
 
                 // Frame-ahead: for the last sub-frame, wait only for GL commands
-                // to finish (not SwapBuffers). Core 0 starts frame pacing sleep
-                // while Core 1 completes the quick buffer swap (~1ms with vsync off).
-                // SubmitRenderWork owns the matrix data (passed by value above)
-                // and the next call to SubmitRenderWork will wait internally.
+                // to finish (not the full vsync wait). Core 0 starts game logic
+                // while Core 1 sleeps in SDL_GL_SwapWindow (vsync). Game logic
+                // (6-12ms) runs during the vsync sleep (~6.67ms) with no memory
+                // bus contention since Core 1 is idle. SubmitRenderWork owns the
+                // matrix data (passed by value above) and the next call to
+                // SubmitRenderWork will wait internally for vsync to complete.
                 if (isLastSubFrame) {
                     wnd->WaitForGlCommandsDone();
                     if (profilerEnabled) {
@@ -1262,20 +1263,6 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                     i = nextIdx - 1; // loop will increment to nextIdx
                 }
             }
-
-#if defined(__SWITCH__)
-            // Frame pacing: with vsync disabled on Switch, the sub-frame loop
-            // completes in ~36-42ms instead of ~50ms. Sleep for the remainder of
-            // the frame budget to maintain correct game speed (20fps game logic).
-            // Without this, the game would run too fast since the simulation is
-            // frame-stepped (each tick advances by 1 game frame).
-            {
-                auto elapsed = std::chrono::steady_clock::now() - frameStart;
-                if (elapsed < frameBudget) {
-                    std::this_thread::sleep_for(frameBudget - elapsed);
-                }
-            }
-#endif
 
             time -= fps;
             last_fps = fps;

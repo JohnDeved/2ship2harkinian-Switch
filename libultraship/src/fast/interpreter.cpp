@@ -5723,6 +5723,81 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
                 ++stepCmd;
                 continue;
             }
+
+            // Fast-path: inline trivial state-setting commands to avoid function call overhead.
+            // These commands only perform simple bit manipulation or field extraction.
+            // Uses the C0/C1 macros defined earlier in the file for extracting command fields.
+            F3DGfx* cmd = stepCmd;
+
+            if (opcode == 0xe2) {  // F3DEX2_G_SETOTHERMODE_L
+                // GfxSpSetOtherMode(31 - C0(8, 8) - C0(0, 8), C0(0, 8) + 1, cmd->words.w1)
+                uint32_t shift = 31 - C0(8, 8) - C0(0, 8);
+                uint32_t num_bits = C0(0, 8) + 1;
+                uint64_t mode = cmd->words.w1;
+                uint64_t mask = (((uint64_t)1 << num_bits) - 1) << shift;
+                uint64_t om = mRdp->other_mode_l | ((uint64_t)mRdp->other_mode_h << 32);
+                om = (om & ~mask) | mode;
+                mRdp->other_mode_l = (uint32_t)om;
+                mRdp->other_mode_h = (uint32_t)(om >> 32);
+                mRdp->other_mode_changed = true;
+                mTriStateDirty = true;
+                ++stepCmd;
+                continue;
+            } else if (opcode == 0xe3) {  // F3DEX2_G_SETOTHERMODE_H
+                // GfxSpSetOtherMode(63 - C0(8, 8) - C0(0, 8), C0(0, 8) + 1, (uint64_t)cmd->words.w1 << 32)
+                uint32_t shift = 63 - C0(8, 8) - C0(0, 8);
+                uint32_t num_bits = C0(0, 8) + 1;
+                uint64_t mode = (uint64_t)cmd->words.w1 << 32;
+                uint64_t mask = (((uint64_t)1 << num_bits) - 1) << shift;
+                uint64_t om = mRdp->other_mode_l | ((uint64_t)mRdp->other_mode_h << 32);
+                om = (om & ~mask) | mode;
+                mRdp->other_mode_l = (uint32_t)om;
+                mRdp->other_mode_h = (uint32_t)(om >> 32);
+                mRdp->other_mode_changed = true;
+                mTriStateDirty = true;
+                ++stepCmd;
+                continue;
+            } else if (opcode == 0xfa) {  // RDP_G_SETPRIMCOLOR
+                // GfxDpSetPrimColor(C0(8, 8), C0(0, 8), C1(24, 8), C1(16, 8), C1(8, 8), C1(0, 8))
+                mRdp->prim_lod_fraction = C0(0, 8);
+                mRdp->prim_color.r = C1(24, 8);
+                mRdp->prim_color.g = C1(16, 8);
+                mRdp->prim_color.b = C1(8, 8);
+                mRdp->prim_color.a = C1(0, 8);
+                mTriStateDirty = true;
+                ++stepCmd;
+                continue;
+            } else if (opcode == 0xfb) {  // RDP_G_SETENVCOLOR
+                // GfxDpSetEnvColor(C1(24, 8), C1(16, 8), C1(8, 8), C1(0, 8))
+                mRdp->env_color.r = C1(24, 8);
+                mRdp->env_color.g = C1(16, 8);
+                mRdp->env_color.b = C1(8, 8);
+                mRdp->env_color.a = C1(0, 8);
+                mTriStateDirty = true;
+                ++stepCmd;
+                continue;
+            } else if (opcode == 0xf8) {  // RDP_G_SETFOGCOLOR
+                // GfxDpSetFogColor(C1(24, 8), C1(16, 8), C1(8, 8), C1(0, 8))
+                mRdp->fog_color.r = C1(24, 8);
+                mRdp->fog_color.g = C1(16, 8);
+                mRdp->fog_color.b = C1(8, 8);
+                mRdp->fog_color.a = C1(0, 8);
+                mTriStateDirty = true;
+                ++stepCmd;
+                continue;
+            } else if (opcode == 0xf2) {  // RDP_G_SETTILESIZE
+                // GfxDpSetTileSize(C1(24, 3), C0(12, 12), C0(0, 12), C1(12, 12), C1(0, 12))
+                uint8_t tile = C1(24, 3);
+                mRdp->texture_tile[tile].uls = C0(12, 12);
+                mRdp->texture_tile[tile].ult = C0(0, 12);
+                mRdp->texture_tile[tile].lrs = C1(12, 12);
+                mRdp->texture_tile[tile].lrt = C1(0, 12);
+                mRdp->textures_changed[0] = true;
+                mRdp->textures_changed[1] = true;
+                mTriStateDirty = true;
+                ++stepCmd;
+                continue;
+            }
 #endif
 
             if (opcode == static_cast<uint8_t>(F3DEX2_G_LOAD_UCODE)) {

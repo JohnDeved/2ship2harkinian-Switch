@@ -91,6 +91,36 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
         mLastUniformTextureVersions[0] = tex0Version;
         mLastUniformTextureVersions[1] = tex1Version;
 
+#if defined(__SWITCH__)
+        // Optimize: only upload uniforms for active textures to reduce GL driver overhead.
+        // On Switch ARM, each glUniform1iv call has ~2-3µs overhead even when shader doesn't use the texture.
+        if (useTex0 && useTex1) {
+            // Both textures active: upload as vec2 array (single call)
+            GLint filtering[2] = { textures[tex0].filtering, textures[tex1].filtering };
+            glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
+            GLint width[2] = { textures[tex0].width, textures[tex1].width };
+            glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
+            GLint height[2] = { textures[tex0].height, textures[tex1].height };
+            glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+        } else if (useTex0) {
+            // Only texture 0 active: upload single element
+            GLint filtering = textures[tex0].filtering;
+            glUniform1i(mCurrentShaderProgram->texture_filtering_location, filtering);
+            GLint width = textures[tex0].width;
+            glUniform1i(mCurrentShaderProgram->texture_width_location, width);
+            GLint height = textures[tex0].height;
+            glUniform1i(mCurrentShaderProgram->texture_height_location, height);
+        } else if (useTex1) {
+            // Only texture 1 active: upload to array index 1
+            GLint filtering[2] = { 0, textures[tex1].filtering };
+            glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
+            GLint width[2] = { 0, textures[tex1].width };
+            glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
+            GLint height[2] = { 0, textures[tex1].height };
+            glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+        }
+#else
+        // Desktop: always upload both (uniform arrays can't be partially updated)
         GLint filtering[2] = { useTex0 ? textures[tex0].filtering : 0, useTex1 ? textures[tex1].filtering : 0 };
         glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
 
@@ -99,6 +129,7 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
 
         GLint height[2] = { useTex0 ? textures[tex0].height : 0, useTex1 ? textures[tex1].height : 0 };
         glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+#endif
     }
 }
 
@@ -754,27 +785,52 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
     if (mCurrentZmodeDecal != mLastZmodeDecal) {
         mLastZmodeDecal = mCurrentZmodeDecal;
         if (mCurrentZmodeDecal) {
-            // SSDB = SlopeScaledDepthBias 120 leads to -2 at 240p which is the same as N64 mode which has very little
-            // fighting
+#if defined(__SWITCH__)
+            // Cache SSDB computation: only recalculate when framebuffer or z-fighting mode changes.
+            // This avoids redundant height lookups and division on every decal-mode draw.
+            if (mCachedPolygonOffsetFbId != mCurrentFrameBuffer ||
+                mCachedPolygonOffsetZMode != mCachedZFightingMode) {
+                const int n64modeFactor = 120;
+                const int noVanishFactor = 100;
+                GLfloat SSDB = -2;
+                switch (mCachedZFightingMode) {
+                    // scaled z-fighting (N64 mode like)
+                    case 1:
+                        if (mFrameBuffers.size() > mCurrentFrameBuffer) {
+                            SSDB = -1.0f * (GLfloat)mFrameBuffers[mCurrentFrameBuffer].height / n64modeFactor;
+                        }
+                        break;
+                    // no vanishing paths
+                    case 2:
+                        if (mFrameBuffers.size() > mCurrentFrameBuffer) {
+                            SSDB = -1.0f * (GLfloat)mFrameBuffers[mCurrentFrameBuffer].height / noVanishFactor;
+                        }
+                        break;
+                    // disabled
+                    case 0:
+                    default:
+                        SSDB = -2;
+                }
+                mCachedPolygonOffsetSSDB = SSDB;
+                mCachedPolygonOffsetFbId = mCurrentFrameBuffer;
+                mCachedPolygonOffsetZMode = mCachedZFightingMode;
+            }
+            glPolygonOffset(mCachedPolygonOffsetSSDB, -2);
+#else
+            // Non-Switch: compute on every decal-mode change (CVar lookup required)
             const int n64modeFactor = 120;
             const int noVanishFactor = 100;
             GLfloat SSDB = -2;
-#if defined(__SWITCH__)
-            switch (mCachedZFightingMode) {
-#else
             switch (Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_Z_FIGHTING_MODE, 0)) {
-#endif
                 // scaled z-fighting (N64 mode like)
                 case 1:
-                    if (mFrameBuffers.size() >
-                        mCurrentFrameBuffer) { // safety check for vector size can probably be removed
+                    if (mFrameBuffers.size() > mCurrentFrameBuffer) {
                         SSDB = -1.0f * (GLfloat)mFrameBuffers[mCurrentFrameBuffer].height / n64modeFactor;
                     }
                     break;
                 // no vanishing paths
                 case 2:
-                    if (mFrameBuffers.size() >
-                        mCurrentFrameBuffer) { // safety check for vector size can probably be removed
+                    if (mFrameBuffers.size() > mCurrentFrameBuffer) {
                         SSDB = -1.0f * (GLfloat)mFrameBuffers[mCurrentFrameBuffer].height / noVanishFactor;
                     }
                     break;
@@ -784,6 +840,7 @@ void GfxRenderingAPIOGL::DrawTriangles(float buf_vbo[], size_t buf_vbo_len, size
                     SSDB = -2;
             }
             glPolygonOffset(SSDB, -2);
+#endif
             glEnable(GL_POLYGON_OFFSET_FILL);
         } else {
             glPolygonOffset(0, 0);

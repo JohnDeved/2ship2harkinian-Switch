@@ -157,6 +157,12 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     // Cache z-fighting CVar per frame to avoid hash map lookup per draw call.
     int mCachedZFightingMode = 0;
 
+    // Cache computed polygon offset (SSDB) to skip recalculation when framebuffer/mode unchanged.
+    // Invalidate on framebuffer change or z-fighting mode change (detected in StartFrame).
+    GLfloat mCachedPolygonOffsetSSDB = -2.0f;
+    size_t mCachedPolygonOffsetFbId = SIZE_MAX;
+    int mCachedPolygonOffsetZMode = -1;
+
     // Texture bind deduplication: skip glBindTexture/glActiveTexture when unchanged.
     // UINT32_MAX sentinel ensures first call per frame always goes through.
     GLuint mLastBoundTexture[2] = { UINT32_MAX, UINT32_MAX };

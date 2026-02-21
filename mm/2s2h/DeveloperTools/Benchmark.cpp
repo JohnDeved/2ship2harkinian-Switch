@@ -956,7 +956,7 @@ static void ExportBenchmarkReport() {
             << (vsyncGapGL >= gameLogicMs ? " (enough to hide game logic!)" :
                vsyncGapGL > 0 ? " (partially hides game logic)" : " (no gap - rendering exceeds vsync)")
             << std::endl;
-        float theoreticalMin = vsyncPeriod * (dlIter - 1) + fast3dPerIter +
+        float theoreticalMin = vsyncPeriod * (dlIter > 1.0f ? dlIter - 1.0f : 0.0f) + fast3dPerIter +
             (gameLogicMs > vsyncGapGL ? gameLogicMs - vsyncGapGL : 0.0f);
         float theoreticalFps = (theoreticalMin > 0.01f) ? (dlIter * 1000.0f / theoreticalMin) : 0.0f;
         out << "    Theoretical min tick:       " << std::setprecision(2) << theoreticalMin << " ms" << std::endl;

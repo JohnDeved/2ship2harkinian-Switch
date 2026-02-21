@@ -397,10 +397,11 @@ static void OnBenchmarkUpdate() {
         return;
     }
 
+    ApplyDeterministicTimeLock();
+
     switch (sState) {
         case BENCH_STARTING: {
-            // Initialize a clean save state for deterministic conditions
-            ApplyDeterministicTimeLock();
+            // Initialize benchmark state
             sCurrentScene = 0;
             sResults.clear();
             sState = BENCH_WARPING;
@@ -417,7 +418,6 @@ static void OnBenchmarkUpdate() {
             break;
         }
         case BENCH_SETTLING: {
-            ApplyDeterministicTimeLock();
             sFrameCounter++;
             if (sFrameCounter >= sActiveScenes[sCurrentScene].settleFrames) {
                 sFrameCounter = 0;
@@ -427,7 +427,6 @@ static void OnBenchmarkUpdate() {
             break;
         }
         case BENCH_MEASURING: {
-            ApplyDeterministicTimeLock();
             // Collect ALL profiler phases and counters each frame
             for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
                 sAccum.phases[i] += FrameProfiler_GetPhaseAvgMs((ProfilePhase)i);

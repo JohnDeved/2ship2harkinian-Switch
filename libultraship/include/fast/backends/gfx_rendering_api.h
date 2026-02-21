@@ -73,6 +73,10 @@ class GfxRenderingAPI {
     virtual FilteringMode GetTextureFilter() = 0;
     virtual void SetSrgbMode() = 0;
     virtual ImTextureID GetTextureById(int id) = 0;
+    virtual void SetFogColor(float r, float g, float b) {
+    }
+    virtual void SetGrayscaleColor(float r, float g, float b, float a) {
+    }
     void SetStatsPtr(Fast3DStats* stats) {
         mStats = stats;
     }

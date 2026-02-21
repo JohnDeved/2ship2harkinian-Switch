@@ -38,6 +38,8 @@ struct ShaderProgram {
     GLint texture_width_location;
     GLint texture_height_location;
     GLint texture_filtering_location;
+    GLint fog_color_location;
+    GLint grayscale_color_location;
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     GLuint vao; // Per-shader VAO: configured once, bound on shader switch
 #endif
@@ -107,6 +109,10 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
     FilteringMode GetTextureFilter() override;
     void SetSrgbMode() override;
     ImTextureID GetTextureById(int id) override;
+#if defined(__SWITCH__)
+    void SetFogColor(float r, float g, float b) override;
+    void SetGrayscaleColor(float r, float g, float b, float a) override;
+#endif
 
   private:
     void SetUniforms(ShaderProgram* prg) const;
@@ -170,6 +176,16 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
 
     // Shader switch deduplication: skip glUseProgram+VAO bind when same program.
     GLuint mLastShaderProgramId = UINT32_MAX;
+
+    // Fog color uniform state: uploaded per-draw when changed.
+    float mFogColor[3] = { 0.0f, 0.0f, 0.0f };
+    uint32_t mFogColorVersion = 0;
+    uint32_t mLastFogColorVersion = UINT32_MAX;
+
+    // Grayscale color uniform state: uploaded per-draw when changed.
+    float mGrayscaleColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    uint32_t mGrayscaleColorVersion = 0;
+    uint32_t mLastGrayscaleColorVersion = UINT32_MAX;
 #endif
 
     uint32_t mFrameCount = 0;

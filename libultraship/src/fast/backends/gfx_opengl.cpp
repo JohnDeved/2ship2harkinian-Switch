@@ -79,58 +79,75 @@ void GfxRenderingAPIOGL::SetPerDrawUniforms() {
         const uint32_t tex0Version = useTex0 ? textures[tex0].uniformsVersion : 0;
         const uint32_t tex1Version = useTex1 ? textures[tex1].uniformsVersion : 0;
 
-        // Skip redundant uniform uploads when texture IDs haven't changed
-        if (tex0 == mLastUniformTextureIds[0] &&
-            tex1 == mLastUniformTextureIds[1] &&
-            tex0Version == mLastUniformTextureVersions[0] &&
-            tex1Version == mLastUniformTextureVersions[1]) {
-            return;
-        }
-        mLastUniformTextureIds[0] = tex0;
-        mLastUniformTextureIds[1] = tex1;
-        mLastUniformTextureVersions[0] = tex0Version;
-        mLastUniformTextureVersions[1] = tex1Version;
+        // Skip redundant texture uniform uploads when texture IDs haven't changed
+        if (tex0 != mLastUniformTextureIds[0] ||
+            tex1 != mLastUniformTextureIds[1] ||
+            tex0Version != mLastUniformTextureVersions[0] ||
+            tex1Version != mLastUniformTextureVersions[1]) {
+
+            mLastUniformTextureIds[0] = tex0;
+            mLastUniformTextureIds[1] = tex1;
+            mLastUniformTextureVersions[0] = tex0Version;
+            mLastUniformTextureVersions[1] = tex1Version;
 
 #if defined(__SWITCH__)
-        // Optimize: only upload uniforms for active textures to reduce GL driver overhead.
-        // On Switch ARM, each glUniform1iv call has ~2-3µs overhead even when shader doesn't use the texture.
-        if (useTex0 && useTex1) {
-            // Both textures active: upload as vec2 array (single call)
-            GLint filtering[2] = { textures[tex0].filtering, textures[tex1].filtering };
-            glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
-            GLint width[2] = { textures[tex0].width, textures[tex1].width };
-            glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
-            GLint height[2] = { textures[tex0].height, textures[tex1].height };
-            glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
-        } else if (useTex0) {
-            // Only texture 0 active: upload single element
-            GLint filtering = textures[tex0].filtering;
-            glUniform1i(mCurrentShaderProgram->texture_filtering_location, filtering);
-            GLint width = textures[tex0].width;
-            glUniform1i(mCurrentShaderProgram->texture_width_location, width);
-            GLint height = textures[tex0].height;
-            glUniform1i(mCurrentShaderProgram->texture_height_location, height);
-        } else if (useTex1) {
-            // Only texture 1 active: upload to array index 1
-            GLint filtering[2] = { 0, textures[tex1].filtering };
-            glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
-            GLint width[2] = { 0, textures[tex1].width };
-            glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
-            GLint height[2] = { 0, textures[tex1].height };
-            glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
-        }
+            // Optimize: only upload uniforms for active textures to reduce GL driver overhead.
+            // On Switch ARM, each glUniform1iv call has ~2-3µs overhead even when shader doesn't use the texture.
+            if (useTex0 && useTex1) {
+                // Both textures active: upload as vec2 array (single call)
+                GLint filtering[2] = { textures[tex0].filtering, textures[tex1].filtering };
+                glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
+                GLint width[2] = { textures[tex0].width, textures[tex1].width };
+                glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
+                GLint height[2] = { textures[tex0].height, textures[tex1].height };
+                glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+            } else if (useTex0) {
+                // Only texture 0 active: upload single element
+                GLint filtering = textures[tex0].filtering;
+                glUniform1i(mCurrentShaderProgram->texture_filtering_location, filtering);
+                GLint width = textures[tex0].width;
+                glUniform1i(mCurrentShaderProgram->texture_width_location, width);
+                GLint height = textures[tex0].height;
+                glUniform1i(mCurrentShaderProgram->texture_height_location, height);
+            } else if (useTex1) {
+                // Only texture 1 active: upload to array index 1
+                GLint filtering[2] = { 0, textures[tex1].filtering };
+                glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
+                GLint width[2] = { 0, textures[tex1].width };
+                glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
+                GLint height[2] = { 0, textures[tex1].height };
+                glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+            }
 #else
-        // Desktop: always upload both (uniform arrays can't be partially updated)
-        GLint filtering[2] = { useTex0 ? textures[tex0].filtering : 0, useTex1 ? textures[tex1].filtering : 0 };
-        glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
+            // Desktop: always upload both (uniform arrays can't be partially updated)
+            GLint filtering[2] = { useTex0 ? textures[tex0].filtering : 0,
+                                   useTex1 ? textures[tex1].filtering : 0 };
+            glUniform1iv(mCurrentShaderProgram->texture_filtering_location, 2, filtering);
 
-        GLint width[2] = { useTex0 ? textures[tex0].width : 0, useTex1 ? textures[tex1].width : 0 };
-        glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
+            GLint width[2] = { useTex0 ? textures[tex0].width : 0, useTex1 ? textures[tex1].width : 0 };
+            glUniform1iv(mCurrentShaderProgram->texture_width_location, 2, width);
 
-        GLint height[2] = { useTex0 ? textures[tex0].height : 0, useTex1 ? textures[tex1].height : 0 };
-        glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
+            GLint height[2] = { useTex0 ? textures[tex0].height : 0, useTex1 ? textures[tex1].height : 0 };
+            glUniform1iv(mCurrentShaderProgram->texture_height_location, 2, height);
 #endif
+        }
     }
+
+#if defined(__SWITCH__)
+    // Upload fog color uniform when changed (constant per-draw, saves 3 floats/vertex in VBO)
+    if (mCurrentShaderProgram->fog_color_location >= 0 && mFogColorVersion != mLastFogColorVersion) {
+        glUniform3f(mCurrentShaderProgram->fog_color_location, mFogColor[0], mFogColor[1], mFogColor[2]);
+        mLastFogColorVersion = mFogColorVersion;
+    }
+
+    // Upload grayscale color uniform when changed (constant per-draw, saves 4 floats/vertex in VBO)
+    if (mCurrentShaderProgram->grayscale_color_location >= 0 &&
+        mGrayscaleColorVersion != mLastGrayscaleColorVersion) {
+        glUniform4f(mCurrentShaderProgram->grayscale_color_location, mGrayscaleColor[0], mGrayscaleColor[1],
+                    mGrayscaleColor[2], mGrayscaleColor[3]);
+        mLastGrayscaleColorVersion = mGrayscaleColorVersion;
+    }
+#endif
 }
 
 void GfxRenderingAPIOGL::UnloadShader(ShaderProgram* old_prg) {
@@ -165,6 +182,10 @@ void GfxRenderingAPIOGL::LoadShader(ShaderProgram* new_prg) {
     mLastUniformTextureIds[1] = UINT32_MAX;
     mLastUniformTextureVersions[0] = UINT32_MAX;
     mLastUniformTextureVersions[1] = UINT32_MAX;
+#if defined(__SWITCH__)
+    mLastFogColorVersion = UINT32_MAX;
+    mLastGrayscaleColorVersion = UINT32_MAX;
+#endif
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     // Bind per-shader VAO instead of reconfiguring attribs each time.
     glBindVertexArray(new_prg->vao);
@@ -361,6 +382,7 @@ std::string GfxRenderingAPIOGL::BuildFsShader(const CCFeatures& cc_features) {
         { "core_opengl", true },
         { "texture", "texture" },
         { "vOutColor", "vOutColor" },
+        { "o_grayscale_as_uniform", false },
 #elif defined(USE_OPENGLES)
         { "GLSL_VERSION", "#version 300 es\nprecision mediump float;" },
         { "attr", "in" },
@@ -368,6 +390,11 @@ std::string GfxRenderingAPIOGL::BuildFsShader(const CCFeatures& cc_features) {
         { "core_opengl", false },
         { "texture", "texture" },
         { "vOutColor", "vOutColor" },
+#if defined(__SWITCH__)
+        { "o_grayscale_as_uniform", true },
+#else
+        { "o_grayscale_as_uniform", false },
+#endif
 #else
         { "GLSL_VERSION", "#version 130" },
         { "attr", "varying" },
@@ -375,6 +402,7 @@ std::string GfxRenderingAPIOGL::BuildFsShader(const CCFeatures& cc_features) {
         { "core_opengl", false },
         { "texture", "texture2D" },
         { "vOutColor", "gl_FragColor" },
+        { "o_grayscale_as_uniform", false },
 #endif
     };
     processor.populate(mContext);
@@ -421,17 +449,28 @@ static std::string BuildVsShader(const CCFeatures& cc_features) {
                                      { "GLSL_VERSION", "#version 410 core" },
                                      { "attr", "in" },
                                      { "out", "out" },
-                                     { "opengles", false }
+                                     { "opengles", false },
+                                     { "o_fog_as_uniform", false },
+                                     { "o_grayscale_as_uniform", false }
 #elif defined(USE_OPENGLES)
                                      { "GLSL_VERSION", "#version 300 es" },
                                      { "attr", "in" },
                                      { "out", "out" },
-                                     { "opengles", true }
+                                     { "opengles", true },
+#if defined(__SWITCH__)
+                                     { "o_fog_as_uniform", true },
+                                     { "o_grayscale_as_uniform", true }
+#else
+                                     { "o_fog_as_uniform", false },
+                                     { "o_grayscale_as_uniform", false }
+#endif
 #else
                                      { "GLSL_VERSION", "#version 110" },
                                      { "attr", "attribute" },
                                      { "out", "varying" },
-                                     { "opengles", false }
+                                     { "opengles", false },
+                                     { "o_fog_as_uniform", false },
+                                     { "o_grayscale_as_uniform", false }
 #endif
     };
     processor.populate(mContext);
@@ -531,16 +570,23 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     }
 
     if (cc_features.opt_fog) {
+#if defined(__SWITCH__)
+        prg->attribLocations[cnt] = glGetAttribLocation(shader_program, "aFogAlpha");
+        prg->attribSizes[cnt] = 1;
+#else
         prg->attribLocations[cnt] = glGetAttribLocation(shader_program, "aFog");
         prg->attribSizes[cnt] = 4;
+#endif
         ++cnt;
     }
 
+#if !defined(__SWITCH__)
     if (cc_features.opt_grayscale) {
         prg->attribLocations[cnt] = glGetAttribLocation(shader_program, "aGrayscaleColor");
         prg->attribSizes[cnt] = 4;
         ++cnt;
     }
+#endif
 
     for (int i = 0; i < cc_features.numInputs; i++) {
         char name[16];
@@ -566,6 +612,8 @@ ShaderProgram* GfxRenderingAPIOGL::CreateAndLoadNewShader(uint64_t shader_id0, u
     prg->texture_width_location = glGetUniformLocation(shader_program, "texture_width");
     prg->texture_height_location = glGetUniformLocation(shader_program, "texture_height");
     prg->texture_filtering_location = glGetUniformLocation(shader_program, "texture_filtering");
+    prg->fog_color_location = glGetUniformLocation(shader_program, "uFogColor");
+    prg->grayscale_color_location = glGetUniformLocation(shader_program, "uGrayscaleColor");
 
 #if defined(__SWITCH__) || defined(USE_OPENGLES)
     // Create a per-shader VAO: bind the shared VBO and configure attribs once.
@@ -714,6 +762,27 @@ void GfxRenderingAPIOGL::SetDepthTestAndMask(bool depth_test, bool z_upd) {
 void GfxRenderingAPIOGL::SetZmodeDecal(bool zmode_decal) {
     mCurrentZmodeDecal = zmode_decal;
 }
+
+#if defined(__SWITCH__)
+void GfxRenderingAPIOGL::SetFogColor(float r, float g, float b) {
+    if (mFogColor[0] != r || mFogColor[1] != g || mFogColor[2] != b) {
+        mFogColor[0] = r;
+        mFogColor[1] = g;
+        mFogColor[2] = b;
+        mFogColorVersion++;
+    }
+}
+
+void GfxRenderingAPIOGL::SetGrayscaleColor(float r, float g, float b, float a) {
+    if (mGrayscaleColor[0] != r || mGrayscaleColor[1] != g || mGrayscaleColor[2] != b || mGrayscaleColor[3] != a) {
+        mGrayscaleColor[0] = r;
+        mGrayscaleColor[1] = g;
+        mGrayscaleColor[2] = b;
+        mGrayscaleColor[3] = a;
+        mGrayscaleColorVersion++;
+    }
+}
+#endif
 
 void GfxRenderingAPIOGL::SetViewport(int x, int y, int width, int height) {
 #if defined(__SWITCH__)

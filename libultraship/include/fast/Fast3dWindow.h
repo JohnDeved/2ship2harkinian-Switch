@@ -7,6 +7,7 @@ union Gfx;
 #include "interpreter.h"
 
 #ifdef __SWITCH__
+#include <atomic>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
@@ -98,11 +99,10 @@ class Fast3dWindow : public Ship::Window {
     std::mutex mRenderMutex;
     std::condition_variable mRenderCV;
     std::condition_variable mRenderDoneCV;
-    std::condition_variable mGlDoneCV;
     bool mRenderThreadRunning = false;
     bool mRenderHasWork = false;
     bool mRenderWorkDone = true;
-    bool mGlCommandsDone = true;
+    std::atomic<bool> mGlCommandsDone{true};
     // Render work parameters (set by Core 0, read by Core 1)
     Gfx* mRenderCommands = nullptr;
     std::unordered_map<Mtx*, MtxF> mRenderMtxReplacements;

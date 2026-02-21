@@ -473,13 +473,9 @@ void Fast3dWindow::RenderThreadLoop() {
         }
 
         // Signal that GL commands are done BEFORE SwapBuffers.
-        // Core 0 can proceed here — with vsync off, SwapBuffers is a quick
-        // buffer swap (~1ms). Core 0 uses this to start frame pacing sleep.
-        {
-            std::unique_lock<std::mutex> glLock(mRenderMutex);
-            mGlCommandsDone = true;
-        }
-        mGlDoneCV.notify_one();
+        // Uses atomic store+acquire/release to avoid mutex overhead.
+        // Core 0 spin-waits on this in WaitForGlCommandsDone().
+        mGlCommandsDone.store(true, std::memory_order_release);
 
         // This calls SwapBuffersBegin → SDL_GL_SwapWindow (~1ms with vsync off)
         mInterpreter->EndFrame();
@@ -507,7 +503,7 @@ void Fast3dWindow::InitRenderThread() {
         mRenderThreadRunning = true;
         mRenderHasWork = false;
         mRenderWorkDone = true;
-        mGlCommandsDone = true;
+        mGlCommandsDone.store(true, std::memory_order_relaxed);
     }
     mRenderThread = std::thread(&Fast3dWindow::RenderThreadLoop, this);
 }
@@ -547,7 +543,7 @@ bool Fast3dWindow::SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF
         mRenderImGui = renderImGui;
         mRenderHasWork = true;
         mRenderWorkDone = false;
-        mGlCommandsDone = false;
+        mGlCommandsDone.store(false, std::memory_order_relaxed);
     }
     mRenderCV.notify_one();
     return true;
@@ -561,9 +557,11 @@ void Fast3dWindow::WaitForRenderDone() {
 }
 
 void Fast3dWindow::WaitForGlCommandsDone() {
-    std::unique_lock<std::mutex> lock(mRenderMutex);
-    while (!mGlCommandsDone) {
-        mGlDoneCV.wait(lock);
+    // Spin-wait on atomic flag — avoids mutex+CV kernel overhead.
+    // The wait is short (~10ms while GL commands run on Core 1),
+    // and Core 0 needs to proceed immediately after (game logic).
+    while (!mGlCommandsDone.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
     }
 }
 #endif

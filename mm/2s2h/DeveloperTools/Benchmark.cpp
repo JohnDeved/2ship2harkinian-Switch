@@ -940,17 +940,24 @@ static void ExportBenchmarkReport() {
         float gameLogicMs = r.phases[PROFILE_PHASE_PLAY_UPDATE] + r.phases[PROFILE_PHASE_PLAY_DRAW];
         float renderMs = r.phases[PROFILE_PHASE_DL_PROCESS];
         float renderPerIter = (dlIter > 0.5f) ? (renderMs / dlIter) : renderMs;
+        float fast3dPerIter = (dlIter > 0.5f) ? (glTimeTotal / dlIter) : glTimeTotal;
         float vsyncPeriod = 16.67f;
-        float vsyncGap = vsyncPeriod - renderPerIter;
+        float vsyncGapDL = vsyncPeriod - renderPerIter;
+        float vsyncGapGL = vsyncPeriod - fast3dPerIter;
         out << "  Frame-Ahead Analysis:" << std::endl;
         out << "    Game logic (serial):        " << std::setprecision(2) << gameLogicMs << " ms" << std::endl;
-        out << "    DL Process per iteration:   " << std::setprecision(2) << renderPerIter << " ms" << std::endl;
+        out << "    DL Process per iteration:   " << std::setprecision(2) << renderPerIter
+            << " ms (includes vsync wait)" << std::endl;
+        out << "    Fast3D per iteration:       " << std::setprecision(2) << fast3dPerIter
+            << " ms (active GL only)" << std::endl;
         out << "    Vsync period:               " << std::setprecision(2) << vsyncPeriod << " ms" << std::endl;
-        out << "    Vsync gap (for overlap):    " << std::setprecision(2) << vsyncGap << " ms"
-            << (vsyncGap >= gameLogicMs ? " (enough to hide game logic!)" :
-               vsyncGap > 0 ? " (partially hides game logic)" : " (no gap - rendering exceeds vsync)")
+        out << "    Vsync gap (DL average):     " << std::setprecision(2) << vsyncGapDL << " ms" << std::endl;
+        out << "    Vsync gap (last sub-frame): " << std::setprecision(2) << vsyncGapGL << " ms"
+            << (vsyncGapGL >= gameLogicMs ? " (enough to hide game logic!)" :
+               vsyncGapGL > 0 ? " (partially hides game logic)" : " (no gap - rendering exceeds vsync)")
             << std::endl;
-        float theoreticalMin = vsyncPeriod * dlIter + (gameLogicMs > vsyncGap ? gameLogicMs - vsyncGap : 0.0f);
+        float theoreticalMin = vsyncPeriod * (dlIter - 1) + fast3dPerIter +
+            (gameLogicMs > vsyncGapGL ? gameLogicMs - vsyncGapGL : 0.0f);
         float theoreticalFps = (theoreticalMin > 0.01f) ? (dlIter * 1000.0f / theoreticalMin) : 0.0f;
         out << "    Theoretical min tick:       " << std::setprecision(2) << theoreticalMin << " ms" << std::endl;
         out << "    Theoretical max FPS:        " << std::setprecision(1) << theoreticalFps << std::endl;

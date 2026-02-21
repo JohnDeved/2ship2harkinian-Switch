@@ -425,6 +425,8 @@ struct Fast3DStats {
     uint64_t timeCombinerSetup;    // GfxDpSetCombineMode (hash lookup + cache)
     uint64_t timeFramebufferOps;   // GfxDpSetColorImage (framebuffer changes)
 
+    uint32_t commandsProcessed;    // total commands walked through the dispatch loop
+
     // Batch size histogram: how many draws fall into each size bucket
     // Bucket 0: 1-2 tris, 1: 3-8, 2: 9-32, 3: 33-128, 4: 129+
     static constexpr int BATCH_HISTOGRAM_BUCKETS = 5;

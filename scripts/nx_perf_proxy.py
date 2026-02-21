@@ -9,12 +9,12 @@ Workflow:
 4) Run this script to estimate Switch impact based on local speedup ratios.
 """
 
-from __future__ import annotations
-
 import argparse
 import math
 from dataclasses import dataclass
 
+# Baseline file stores profiler arrays by index from FrameProfiler enums:
+# phase[13] => PROFILE_PHASE_TOTAL_FRAME, counters[8] => PROFILE_COUNTER_DL_ITERATIONS.
 PROFILE_PHASE_TOTAL_FRAME_INDEX = 13
 PROFILE_COUNTER_DL_ITERATIONS_INDEX = 8
 MIN_VALID_RENDER_MS = 0.01
@@ -48,7 +48,8 @@ def parse_baseline(path: str) -> BaselineFile:
         lines = [line.strip() for line in infile]
 
     if not lines or lines[0] != "BASELINE_V1":
-        raise ValueError(f"{path}: unsupported baseline format")
+        got_header = lines[0] if lines else "<empty file>"
+        raise ValueError(f"{path}: unsupported baseline format, expected 'BASELINE_V1', got '{got_header}'")
 
     mode = "Unknown"
     scenes: dict[str, BaselineScene] = {}
@@ -127,6 +128,7 @@ def main() -> int:
         ref_local_ms = l_ref.render_ms
         new_local_ms = l_new.render_ms
         if ref_local_ms <= MIN_VALID_RENDER_MS or not math.isfinite(ref_local_ms) or not math.isfinite(new_local_ms):
+            print(f"Skipping scene '{scene_name}': invalid local timing data")
             continue
 
         speed_ratio = new_local_ms / ref_local_ms

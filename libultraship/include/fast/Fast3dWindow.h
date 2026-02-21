@@ -74,6 +74,7 @@ class Fast3dWindow : public Ship::Window {
     void DestroyRenderThread();
     bool SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF> mtxReplacements);
     void WaitForRenderDone();
+    void WaitForGlCommandsDone();
     bool IsRenderThreadActive() const { return mRenderThreadRunning; }
 #endif
 
@@ -96,9 +97,11 @@ class Fast3dWindow : public Ship::Window {
     std::mutex mRenderMutex;
     std::condition_variable mRenderCV;
     std::condition_variable mRenderDoneCV;
+    std::condition_variable mGlDoneCV;
     bool mRenderThreadRunning = false;
     bool mRenderHasWork = false;
     bool mRenderWorkDone = true;
+    bool mGlCommandsDone = true;
     // Render work parameters (set by Core 0, read by Core 1)
     Gfx* mRenderCommands = nullptr;
     std::unordered_map<Mtx*, MtxF> mRenderMtxReplacements;

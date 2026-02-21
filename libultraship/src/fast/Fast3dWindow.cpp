@@ -447,6 +447,17 @@ void Fast3dWindow::RenderThreadLoop() {
         mInterpreter->StartFrame();
         mInterpreter->Run(commands, mtxReplacements);
         gui->EndDraw();
+
+        // Signal that GL commands are done BEFORE vsync wait.
+        // Core 0 can start game logic here — Core 1 will be sleeping
+        // in SwapBuffers (vsync), so no memory bus contention.
+        {
+            std::unique_lock<std::mutex> glLock(mRenderMutex);
+            mGlCommandsDone = true;
+        }
+        mGlDoneCV.notify_one();
+
+        // This calls SwapBuffersBegin → SDL_GL_SwapWindow (vsync wait ~6.67ms)
         mInterpreter->EndFrame();
 
         lock.lock();
@@ -472,6 +483,7 @@ void Fast3dWindow::InitRenderThread() {
         mRenderThreadRunning = true;
         mRenderHasWork = false;
         mRenderWorkDone = true;
+        mGlCommandsDone = true;
     }
     mRenderThread = std::thread(&Fast3dWindow::RenderThreadLoop, this);
 }
@@ -509,6 +521,7 @@ bool Fast3dWindow::SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF
         mRenderMtxReplacements = std::move(mtxReplacements);
         mRenderHasWork = true;
         mRenderWorkDone = false;
+        mGlCommandsDone = false;
     }
     mRenderCV.notify_one();
     return true;
@@ -518,6 +531,13 @@ void Fast3dWindow::WaitForRenderDone() {
     std::unique_lock<std::mutex> lock(mRenderMutex);
     while (!mRenderWorkDone) {
         mRenderDoneCV.wait(lock);
+    }
+}
+
+void Fast3dWindow::WaitForGlCommandsDone() {
+    std::unique_lock<std::mutex> lock(mRenderMutex);
+    while (!mGlCommandsDone) {
+        mGlDoneCV.wait(lock);
     }
 }
 #endif

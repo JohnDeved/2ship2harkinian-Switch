@@ -4,7 +4,7 @@ on:
 
 jobs:
   generate-2ship-otr:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - name: Git Checkout
       uses: actions/checkout@v6
@@ -23,61 +23,6 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y $(cat .github/workflows/apt-deps.txt) libzip-dev zipcmp zipmerge ziptool
-    - name: Restore Cached deps folder
-      id: cache-deps-otr
-      uses: actions/cache@v5
-      with:
-        key: ${{ runner.os }}-deps-${{ hashFiles('CMakeLists.txt', 'mm/**/CMakeLists.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-deps-
-        path: deps
-    - name: Create deps folder
-      run: mkdir -p deps
-    - name: Install latest SDL
-      run: |
-        export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
-        # Check if SDL is already built in cache
-        if [ ! -f "deps/SDL2-2.30.3/.install-complete" ]; then
-          # Download and extract if source doesn't exist
-          if [ ! -d "deps/SDL2-2.30.3" ]; then
-            wget https://github.com/libsdl-org/SDL/releases/download/release-2.30.3/SDL2-2.30.3.tar.gz
-            tar -xzf SDL2-2.30.3.tar.gz -C deps
-          fi
-          cd deps/SDL2-2.30.3
-          ./configure --enable-hidapi-libusb
-          make -j 10
-          sudo make install
-          sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
-          touch .install-complete
-        else
-          echo "SDL2 already built (from cache)"
-          cd deps/SDL2-2.30.3
-          sudo make install
-          sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
-        fi
-    - name: Install latest tinyxml2
-      run: |
-        sudo apt-get remove libtinyxml2-dev
-        export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
-        # Check if tinyxml2 is already built in cache
-        if [ ! -f "deps/tinyxml2-10.0.0/.install-complete" ]; then
-          # Download and extract if source doesn't exist
-          if [ ! -d "deps/tinyxml2-10.0.0" ]; then
-            wget https://github.com/leethomason/tinyxml2/archive/refs/tags/10.0.0.tar.gz
-            tar -xzf 10.0.0.tar.gz -C deps
-          fi
-          cd deps/tinyxml2-10.0.0
-          mkdir -p build
-          cd build
-          cmake ..
-          make
-          sudo make install
-          touch ../.install-complete
-        else
-          echo "tinyxml2 already built (from cache)"
-          cd deps/tinyxml2-10.0.0/build
-          sudo make install
-        fi
     - name: Generate 2ship.o2r
       run: |
         export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
@@ -157,7 +102,6 @@ jobs:
 
         mv build-switch/mm/*.nro 2ship.nro
         mv README.md readme.txt
-
     - name: Upload NRO and supporting files
       uses: actions/upload-artifact@v4
       with:
@@ -172,6 +116,10 @@ jobs:
     needs: [generate-2ship-otr, build-switch]
     runs-on: ubuntu-latest
     steps:
+    - name: Derive short SHA
+      id: combine_gitvars
+      run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
     - name: Download OTR artifact
       uses: actions/download-artifact@v4
       with:
@@ -187,6 +135,11 @@ jobs:
     - name: Upload combined build
       uses: actions/upload-artifact@v4
       with:
-        name: 2ship-switch
-        path: ./artifacts
+        name: 2ship-switch[${{ steps.combine_gitvars.outputs.short_sha }}].zip
+        path: |
+          ./artifacts/2ship.o2r
+          ./artifacts/2ship.nro
+          ./artifacts/readme.txt
+          ./artifacts/gamecontrollerdb.txt
+        if-no-files-found: error
         retention-days: 3

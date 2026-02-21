@@ -846,6 +846,11 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "Enables free look camera control.\nNote: You must remap C buttons off of the right "
             "stick in the controller config menu, and map the camera stick to the right stick."));
+    AddWidget(path, "Aim Camera From Camera Direction", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Camera.AimingFirstPersonCamera")
+        .Options(CheckboxOptions().Tooltip(
+            "When aiming (bow, slingshot, etc.), the aiming camera starts from the direction the camera "
+            "is currently looking instead of the direction the player character is facing."));
     AddWidget(path, "Camera Distance: %d", WIDGET_CVAR_SLIDER_INT)
         .CVar("gEnhancements.Camera.FreeLook.MaxCameraDistance")
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
@@ -1113,6 +1118,14 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.PlayerActions.ArrowCycle")
         .Options(CheckboxOptions().Tooltip(
             "While aiming the bow, use R to cycle between Normal, Fire, Ice and Light arrows."));
+    AddWidget(path, "  D-Pad Arrow Cycling", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.PlayerActions.ArrowCycleDpad")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_ARROW_CYCLE_OFF).active;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "While aiming the bow, use D-Pad Left/Right to cycle between arrow types. "
+            "Disables R-based arrow cycling; R will shield/exit as normal."));
     AddWidget(path, "Remote Bombchu Control", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.PlayerActions.RemoteBombchu")
         .Options(CheckboxOptions().Tooltip(
@@ -2090,6 +2103,15 @@ void BenMenu::AddDevTools() {
         .CVar("gWindows.FrameProfiler")
         .Options(ButtonOptions().Tooltip("Shows per-phase CPU timing for each frame, helping identify bottlenecks."))
         .WindowName("Frame Profiler");
+
+    path = { "Dev Tools", "Benchmark", SECTION_COLUMN_1 };
+    AddSidebarEntry("Dev Tools", "Benchmark", 1);
+    AddWidget(path, "Popout Benchmark", WIDGET_WINDOW_BUTTON)
+        .CVar("gWindows.Benchmark")
+        .Options(ButtonOptions().Tooltip(
+            "Automated performance benchmark that warps through heavy scenes and collects profiler data "
+            "for deterministic, consistent performance comparisons across builds."))
+        .WindowName("Benchmark");
 }
 
 BenMenu::BenMenu(const std::string& consoleVariable, const std::string& name)
@@ -2229,6 +2251,11 @@ void BenMenu::InitElement() {
                return !CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0);
            },
             "Modern Z-Targeting is Disabled" } },
+        { DISABLE_FOR_ARROW_CYCLE_OFF,
+          { [](disabledInfo& info) -> bool {
+               return !CVarGetInteger("gEnhancements.PlayerActions.ArrowCycle", 0);
+           },
+            "Arrow Type Cycling is Disabled" } },
     };
 }
 

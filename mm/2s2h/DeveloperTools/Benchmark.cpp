@@ -523,16 +523,35 @@ static void OnBenchmarkUpdate() {
                 for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
                     result.counters[i] = (float)(sAccum.counters[i] / n);
                 }
+                int sumCmds = 0, sumTris = 0, sumVerts = 0, sumTex = 0;
+                int sumMtx = 0, sumSync = 0, sumSub = 0, sumComb = 0;
                 for (int b = 0; b < PROFILE_DL_BUFFER_COUNT; b++) {
-                    result.bufferStats[b].commands = (int)(sAccum.bufferStats[b][0] / n);
-                    result.bufferStats[b].triangles = (int)(sAccum.bufferStats[b][1] / n);
-                    result.bufferStats[b].vertices = (int)(sAccum.bufferStats[b][2] / n);
-                    result.bufferStats[b].texLoads = (int)(sAccum.bufferStats[b][3] / n);
-                    result.bufferStats[b].mtxLoads = (int)(sAccum.bufferStats[b][4] / n);
-                    result.bufferStats[b].pipeSyncs = (int)(sAccum.bufferStats[b][5] / n);
-                    result.bufferStats[b].subcalls = (int)(sAccum.bufferStats[b][6] / n);
-                    result.bufferStats[b].setCombine = (int)(sAccum.bufferStats[b][7] / n);
+                    result.bufferStats[b].commands = (int)(sAccum.bufferStats[b][0] / n + 0.5);
+                    result.bufferStats[b].triangles = (int)(sAccum.bufferStats[b][1] / n + 0.5);
+                    result.bufferStats[b].vertices = (int)(sAccum.bufferStats[b][2] / n + 0.5);
+                    result.bufferStats[b].texLoads = (int)(sAccum.bufferStats[b][3] / n + 0.5);
+                    result.bufferStats[b].mtxLoads = (int)(sAccum.bufferStats[b][4] / n + 0.5);
+                    result.bufferStats[b].pipeSyncs = (int)(sAccum.bufferStats[b][5] / n + 0.5);
+                    result.bufferStats[b].subcalls = (int)(sAccum.bufferStats[b][6] / n + 0.5);
+                    result.bufferStats[b].setCombine = (int)(sAccum.bufferStats[b][7] / n + 0.5);
+                    sumCmds += result.bufferStats[b].commands;
+                    sumTris += result.bufferStats[b].triangles;
+                    sumVerts += result.bufferStats[b].vertices;
+                    sumTex += result.bufferStats[b].texLoads;
+                    sumMtx += result.bufferStats[b].mtxLoads;
+                    sumSync += result.bufferStats[b].pipeSyncs;
+                    sumSub += result.bufferStats[b].subcalls;
+                    sumComb += result.bufferStats[b].setCombine;
                 }
+                // Keep top-line DL totals aligned with per-buffer breakdown in benchmark reports.
+                result.counters[PROFILE_COUNTER_DL_COMMANDS] = (float)sumCmds;
+                result.counters[PROFILE_COUNTER_DL_TRIANGLES] = (float)sumTris;
+                result.counters[PROFILE_COUNTER_DL_VERTICES] = (float)sumVerts;
+                result.counters[PROFILE_COUNTER_DL_TEX_LOADS] = (float)sumTex;
+                result.counters[PROFILE_COUNTER_DL_MTX_LOADS] = (float)sumMtx;
+                result.counters[PROFILE_COUNTER_DL_PIPE_SYNCS] = (float)sumSync;
+                result.counters[PROFILE_COUNTER_DL_SUBCALLS] = (float)sumSub;
+                result.counters[PROFILE_COUNTER_DL_SETCOMBINE] = (float)sumComb;
                 sResults.push_back(result);
 
                 sCurrentScene++;
@@ -869,12 +888,16 @@ static void ExportBenchmarkReport() {
         float glTextureMisses = r.counters[PROFILE_COUNTER_GL_TEXTURE_CACHE_MISSES];
         float glVerts = r.counters[PROFILE_COUNTER_GL_VERTICES_SUBMITTED];
         float glTris = r.counters[PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED];
-        float glAvgBatch = r.counters[PROFILE_COUNTER_GL_AVG_BATCH_SIZE];
+        // Derive avg batch from authoritative totals. The raw AVG counter can be
+        // inflated when multiple DL iterations contribute within one game tick.
+        float glAvgBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
 
         out << "  Fast3D Backend (OpenGL):" << std::endl;
         out << "    GL Draw Calls:              " << std::setprecision(0) << glDrawCalls << std::endl;
+        float glBufferFullFlushesClamped = std::clamp(glBufferFullFlushes, 0.0f, glBatchFlushes);
+        float glStateFlushesFromBatch = std::max(0.0f, glBatchFlushes - glBufferFullFlushesClamped);
         out << "    GL Batch Flushes:           " << std::setprecision(0) << glBatchFlushes
-            << " (state: " << (glBatchFlushes - glBufferFullFlushes) << ", buf-full: " << glBufferFullFlushes
+            << " (state: " << glStateFlushesFromBatch << ", buf-full: " << glBufferFullFlushesClamped
             << ")" << std::endl;
         out << "    GL Shader Switches:         " << std::setprecision(0) << glShaderSwitches
             << " (compiles: " << glShaderCompiles << ")" << std::endl;
@@ -990,6 +1013,14 @@ static void ExportBenchmarkReport() {
             totalDrawsHist += batchHist[b];
         }
         float maxBatchSeen = r.counters[PROFILE_COUNTER_GL_MAX_BATCH_SIZE];
+        // Sanity clamp impossible max values against non-empty histogram buckets.
+        // This avoids contradictory output such as "129+ bucket: 0" with max > 128.
+        const float histEps = 0.001f;
+        if (batchHist[4] <= histEps && maxBatchSeen > 128.0f) maxBatchSeen = 128.0f;
+        if (batchHist[3] <= histEps && maxBatchSeen > 32.0f) maxBatchSeen = 32.0f;
+        if (batchHist[2] <= histEps && maxBatchSeen > 8.0f) maxBatchSeen = 8.0f;
+        if (batchHist[1] <= histEps && maxBatchSeen > 2.0f) maxBatchSeen = 2.0f;
+        if (batchHist[0] <= histEps && maxBatchSeen > 0.0f) maxBatchSeen = 0.0f;
         static const char* bucketLabels[] = { "1-2 tris", "3-8 tris", "9-32 tris", "33-128 tris", "129+ tris" };
         out << "  Batch Size Distribution:" << std::endl;
         for (int b = 0; b < 5; b++) {
@@ -1010,7 +1041,7 @@ static void ExportBenchmarkReport() {
         // Efficiency metrics
         float drawsPerShader = (glShaderSwitches > 0.5f) ? (glDrawCalls / glShaderSwitches) : 0.0f;
         float cacheMissRate = (glTextureBinds > 0.5f) ? (glTextureMisses / glTextureBinds * 100.0f) : 0.0f;
-        float emptyFlushes = glBatchFlushes - glDrawCalls;
+        float emptyFlushes = std::max(0.0f, glBatchFlushes - glDrawCalls);
         float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
 
         out << "  Efficiency Metrics:" << std::endl;
@@ -1083,8 +1114,8 @@ static void ExportBenchmarkReport() {
         out << std::endl;
 
         // Flush efficiency analysis
-        float stateActualFlushes = glBatchFlushes - glBufferFullFlushes;
-        emptyFlushes = glBatchFlushes - glDrawCalls;
+        float stateActualFlushes = glStateFlushesFromBatch;
+        emptyFlushes = std::max(0.0f, glBatchFlushes - glDrawCalls);
         emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
         float effectiveBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
         out << "  Flush Efficiency:" << std::endl;
@@ -1381,12 +1412,15 @@ void BenchmarkWindow::DrawElement() {
                 ImGui::Text("%.1f", fpsMax);
                 ImGui::TableNextColumn();
                 ImGui::Text("%.2f", r.phases[PROFILE_PHASE_DL_PROCESS]);
+                float glDrawCalls = r.counters[PROFILE_COUNTER_GL_DRAW_CALLS];
+                float glTris = r.counters[PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED];
+                float glAvgBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
                 ImGui::TableNextColumn();
-                ImGui::Text("%.0f", r.counters[PROFILE_COUNTER_GL_DRAW_CALLS]);
+                ImGui::Text("%.0f", glDrawCalls);
                 ImGui::TableNextColumn();
-                ImGui::Text("%.0f", r.counters[PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED]);
+                ImGui::Text("%.0f", glTris);
                 ImGui::TableNextColumn();
-                ImGui::Text("%.1f", r.counters[PROFILE_COUNTER_GL_AVG_BATCH_SIZE]);
+                ImGui::Text("%.1f", glAvgBatch);
                 ImGui::TableNextColumn();
                 ImGui::Text("%.0f", r.counters[PROFILE_COUNTER_GL_SHADER_SWITCHES]);
             }
@@ -1453,7 +1487,14 @@ void BenchmarkWindow::DrawElement() {
                         float pct = (totalH > 0.5f) ? (hist[b] / totalH * 100.0f) : 0.0f;
                         ImGui::Text("%-8s %5.0f draws (%4.1f%%)", bucketLabels[b], hist[b], pct);
                     }
-                    ImGui::Text("Max batch: %.0f tris", r.counters[PROFILE_COUNTER_GL_MAX_BATCH_SIZE]);
+                    float maxBatchSeen = r.counters[PROFILE_COUNTER_GL_MAX_BATCH_SIZE];
+                    const float histEps = 0.001f;
+                    if (hist[4] <= histEps && maxBatchSeen > 128.0f) maxBatchSeen = 128.0f;
+                    if (hist[3] <= histEps && maxBatchSeen > 32.0f) maxBatchSeen = 32.0f;
+                    if (hist[2] <= histEps && maxBatchSeen > 8.0f) maxBatchSeen = 8.0f;
+                    if (hist[1] <= histEps && maxBatchSeen > 2.0f) maxBatchSeen = 2.0f;
+                    if (hist[0] <= histEps && maxBatchSeen > 0.0f) maxBatchSeen = 0.0f;
+                    ImGui::Text("Max batch: %.0f tris", maxBatchSeen);
                     ImGui::TreePop();
                 }
 

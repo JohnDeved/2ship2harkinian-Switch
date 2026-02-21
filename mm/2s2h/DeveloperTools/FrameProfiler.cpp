@@ -360,6 +360,21 @@ static float GetAccountedTimeMs(void) {
            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
 }
 
+extern "C" FrameProfilerRenderMetrics FrameProfiler_MakeRenderMetrics(float totalMs, float dlIterations) {
+    FrameProfilerRenderMetrics metrics = {};
+    metrics.totalMs = totalMs;
+    metrics.dlIterations = (dlIterations < 1.0f) ? 1.0f : dlIterations;
+    metrics.renderFrameMs = metrics.totalMs / metrics.dlIterations;
+    metrics.renderFps = (metrics.renderFrameMs > 0.01f) ? (1000.0f / metrics.renderFrameMs) : 0.0f;
+    metrics.tickFps = (metrics.totalMs > 0.01f) ? (1000.0f / metrics.totalMs) : 0.0f;
+    return metrics;
+}
+
+extern "C" FrameProfilerRenderMetrics FrameProfiler_GetAverageRenderMetrics(void) {
+    return FrameProfiler_MakeRenderMetrics(FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME),
+                                           FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS));
+}
+
 struct RenderFpsStats {
     float avg = 0.0f;
     float low1 = 0.0f;
@@ -373,19 +388,12 @@ static RenderFpsStats ComputeRenderFpsStatsFromRing(void) {
     int n = 0;
 
     for (int f = 0; f < PROFILE_RING_SIZE; f++) {
-        float totalMs = sPhaseRing[PROFILE_PHASE_TOTAL_FRAME][f];
-        float dlIter = sCounterRing[PROFILE_COUNTER_DL_ITERATIONS][f];
-        if (totalMs <= 0.01f) {
+        FrameProfilerRenderMetrics metrics = FrameProfiler_MakeRenderMetrics(
+            sPhaseRing[PROFILE_PHASE_TOTAL_FRAME][f], sCounterRing[PROFILE_COUNTER_DL_ITERATIONS][f]);
+        if (metrics.totalMs <= 0.01f || metrics.renderFrameMs <= 0.01f) {
             continue;
         }
-        if (dlIter < 1.0f) {
-            dlIter = 1.0f;
-        }
-        float renderMs = totalMs / dlIter;
-        if (renderMs <= 0.01f) {
-            continue;
-        }
-        fpsSamples[n++] = 1000.0f / renderMs;
+        fpsSamples[n++] = metrics.renderFps;
     }
 
     if (n <= 0) {
@@ -464,7 +472,7 @@ static SystemTelemetrySnapshot GetSystemTelemetrySnapshot(void) {
     return t;
 }
 
-static const char* ChargerTypeToString(float chargerType) {
+extern "C" const char* FrameProfiler_ChargerTypeToString(float chargerType) {
     const int type = (int)(chargerType + 0.5f);
     switch (type) {
         case 0:
@@ -566,12 +574,12 @@ static void FrameProfiler_ExportSnapshot(void) {
         return;
     }
 
-    float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
-    float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
-    if (dlIter < 1.0f) dlIter = 1.0f;
-    float renderFrameMs = totalMs / dlIter;
-    float fps = (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
-    float tickFps = (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
+    FrameProfilerRenderMetrics renderMetrics = FrameProfiler_GetAverageRenderMetrics();
+    float totalMs = renderMetrics.totalMs;
+    float dlIter = renderMetrics.dlIterations;
+    float renderFrameMs = renderMetrics.renderFrameMs;
+    float fps = renderMetrics.renderFps;
+    float tickFps = renderMetrics.tickFps;
     RenderFpsStats fpsStats = ComputeRenderFpsStatsFromRing();
     SystemTelemetrySnapshot sys = GetSystemTelemetrySnapshot();
 
@@ -640,7 +648,7 @@ static void FrameProfiler_ExportSnapshot(void) {
             out << "Battery Voltage:                " << std::setprecision(0) << sys.batteryVoltageMv << " mV" << std::endl;
         }
         if (sys.chargerVoltageLimitMv > 0.01f || sys.chargerCurrentLimitMa > 0.01f || sys.chargerType > 0.01f) {
-            out << "Charger:                        " << ChargerTypeToString(sys.chargerType) << " ("
+            out << "Charger:                        " << FrameProfiler_ChargerTypeToString(sys.chargerType) << " ("
                 << std::setprecision(0) << sys.chargerVoltageLimitMv << " mV / "
                 << sys.chargerCurrentLimitMa << " mA limit)" << std::endl;
         }
@@ -1257,12 +1265,12 @@ void FrameProfilerWindow::DrawElement() {
     }
     ImGui::Separator();
 
-    float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
-    float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
-    if (dlIter < 1.0f) dlIter = 1.0f;
-    float renderFrameMs = totalMs / dlIter;
-    float fps = (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
-    float tickFps = (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
+    FrameProfilerRenderMetrics renderMetrics = FrameProfiler_GetAverageRenderMetrics();
+    float totalMs = renderMetrics.totalMs;
+    float dlIter = renderMetrics.dlIterations;
+    float renderFrameMs = renderMetrics.renderFrameMs;
+    float fps = renderMetrics.renderFps;
+    float tickFps = renderMetrics.tickFps;
     RenderFpsStats fpsStats = ComputeRenderFpsStatsFromRing();
 
     // Enhanced summary with color coding and deltas

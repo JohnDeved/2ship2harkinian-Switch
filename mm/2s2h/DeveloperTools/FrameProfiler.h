@@ -145,6 +145,14 @@ typedef struct {
     int setCombine;
 } DLBufferStats;
 
+typedef struct {
+    float totalMs;
+    float dlIterations;
+    float renderFrameMs;
+    float renderFps;
+    float tickFps;
+} FrameProfilerRenderMetrics;
+
 void FrameProfiler_StartPhase(ProfilePhase phase);
 void FrameProfiler_EndPhase(ProfilePhase phase);
 void FrameProfiler_EndFrame(void);
@@ -164,6 +172,11 @@ void FrameProfiler_ScanAllBuffers(struct GraphicsContext* gfxCtx);
 
 // Get per-buffer stats (averaged over ring buffer). bufIdx = PROFILE_DL_BUF_*
 DLBufferStats FrameProfiler_GetBufferStats(int bufIdx);
+
+// Shared render/tick timing math used by profiler snapshot and benchmark reports.
+FrameProfilerRenderMetrics FrameProfiler_MakeRenderMetrics(float totalMs, float dlIterations);
+FrameProfilerRenderMetrics FrameProfiler_GetAverageRenderMetrics(void);
+const char* FrameProfiler_ChargerTypeToString(float chargerType);
 
 #ifdef __cplusplus
 }

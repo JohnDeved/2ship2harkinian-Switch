@@ -2,9 +2,10 @@
 #include "FrameProfiler.h"
 
 #include <imgui.h>
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
-#include <cmath>
+#include <cfloat>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -72,6 +73,9 @@ static constexpr float BENCHMARK_WARN_40FPS_MS = 1000.0f / 40.0f;   // 25.0ms
 
 struct BenchmarkResult {
     const char* name;
+    float fpsAvg;
+    float fpsMin;
+    float fpsMax;
     float phases[PROFILE_PHASE_MAX];
     float counters[PROFILE_COUNTER_MAX];
     DLBufferStats bufferStats[PROFILE_DL_BUFFER_COUNT];
@@ -162,7 +166,7 @@ static void SaveBaseline() {
     char timeBuf[64];
     std::strftime(timeBuf, sizeof(timeBuf), "%Y%m%d_%H%M%S", &tmBuf);
 
-    out << "BASELINE_V1" << std::endl;
+    out << "BASELINE_V2" << std::endl;
     out << "branch=" << branch << std::endl;
     out << "commit=" << commit << std::endl;
     out << "timestamp=" << timeBuf << std::endl;
@@ -185,6 +189,8 @@ static void SaveBaseline() {
             out << std::fixed << std::setprecision(6) << r.counters[i];
         }
         out << std::endl;
+        out << "fps_stats=" << std::fixed << std::setprecision(6) << r.fpsAvg << "," << r.fpsMin << "," << r.fpsMax
+            << std::endl;
     }
 
     out.close();
@@ -219,7 +225,12 @@ static void LoadBaseline() {
 
     std::string line;
     // Check header
-    if (!std::getline(in, line) || line != "BASELINE_V1") {
+    if (!std::getline(in, line)) {
+        sBaseline.loaded = false;
+        return;
+    }
+    const bool isV2 = (line == "BASELINE_V2");
+    if (line != "BASELINE_V1" && !isV2) {
         sBaseline.loaded = false;
         return;
     }
@@ -270,6 +281,26 @@ static void LoadBaseline() {
                     int idx = 0;
                     while (std::getline(ss, token, ',') && idx < PROFILE_COUNTER_MAX) {
                         result.counters[idx++] = std::stof(token);
+                    }
+                }
+                if (isV2) {
+                    std::streampos beforeFpsLine = in.tellg();
+                    if (std::getline(in, line)) {
+                        if (line.substr(0, 10) == "fps_stats=") {
+                            std::istringstream ss(line.substr(10));
+                            std::string token;
+                            if (std::getline(ss, token, ',')) {
+                                result.fpsAvg = std::stof(token);
+                            }
+                            if (std::getline(ss, token, ',')) {
+                                result.fpsMin = std::stof(token);
+                            }
+                            if (std::getline(ss, token, ',')) {
+                                result.fpsMax = std::stof(token);
+                            }
+                        } else if (beforeFpsLine != std::streampos(-1)) {
+                            in.seekg(beforeFpsLine);
+                        }
                     }
                 }
 
@@ -327,12 +358,17 @@ struct MeasureAccum {
     double phases[PROFILE_PHASE_MAX];
     double counters[PROFILE_COUNTER_MAX];
     double bufferStats[PROFILE_DL_BUFFER_COUNT][8]; // 8 fields per DLBufferStats
+    double fpsSum;
+    float fpsMin;
+    float fpsMax;
+    int fpsSampleCount;
     int frameCount;
 };
 static MeasureAccum sAccum;
 
 static void ResetAccum() {
     memset(&sAccum, 0, sizeof(sAccum));
+    sAccum.fpsMin = FLT_MAX;
 }
 
 // ── Scene transition helper ────────────────────────────────────────────
@@ -441,6 +477,15 @@ static void OnBenchmarkUpdate() {
             for (int i = 0; i < PROFILE_COUNTER_MAX; i++) {
                 sAccum.counters[i] += FrameProfiler_GetCounterAvg((ProfileCounter)i);
             }
+            const FrameProfilerRenderMetrics fpsMetrics =
+                FrameProfiler_MakeRenderMetrics(FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME),
+                                                FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS));
+            if (fpsMetrics.renderFps > 0.01f) {
+                sAccum.fpsSum += fpsMetrics.renderFps;
+                sAccum.fpsMin = std::min(sAccum.fpsMin, fpsMetrics.renderFps);
+                sAccum.fpsMax = std::max(sAccum.fpsMax, fpsMetrics.renderFps);
+                sAccum.fpsSampleCount++;
+            }
             for (int b = 0; b < PROFILE_DL_BUFFER_COUNT; b++) {
                 DLBufferStats bs = FrameProfiler_GetBufferStats(b);
                 sAccum.bufferStats[b][0] += bs.commands;
@@ -460,6 +505,18 @@ static void OnBenchmarkUpdate() {
                 int n = sAccum.frameCount > 0 ? sAccum.frameCount : 1;
                 BenchmarkResult result;
                 result.name = sActiveScenes[sCurrentScene].name;
+                FrameProfilerRenderMetrics avgMetrics = FrameProfiler_MakeRenderMetrics(
+                    (float)(sAccum.phases[PROFILE_PHASE_TOTAL_FRAME] / n),
+                    (float)(sAccum.counters[PROFILE_COUNTER_DL_ITERATIONS] / n));
+                if (sAccum.fpsSampleCount > 0) {
+                    result.fpsAvg = (float)(sAccum.fpsSum / sAccum.fpsSampleCount);
+                    result.fpsMin = (sAccum.fpsMin == FLT_MAX) ? result.fpsAvg : sAccum.fpsMin;
+                    result.fpsMax = sAccum.fpsMax;
+                } else {
+                    result.fpsAvg = avgMetrics.renderFps;
+                    result.fpsMin = result.fpsAvg;
+                    result.fpsMax = result.fpsAvg;
+                }
                 for (int i = 0; i < PROFILE_PHASE_MAX; i++) {
                     result.phases[i] = (float)(sAccum.phases[i] / n);
                 }
@@ -524,40 +581,29 @@ RegisterShipInitFunc initFuncBenchmark(RegisterBenchmark, {});
 
 // ── Helper: get FPS from a result ──────────────────────────────────────
 
-static float ResultFps(const BenchmarkResult& r) {
-    float totalMs = r.phases[PROFILE_PHASE_TOTAL_FRAME];
-    float dlIter = r.counters[PROFILE_COUNTER_DL_ITERATIONS];
-    if (dlIter < 1.0f) dlIter = 1.0f;
-    float renderFrameMs = totalMs / dlIter;
-    return (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
+static FrameProfilerRenderMetrics ResultRenderMetrics(const BenchmarkResult& r) {
+    return FrameProfiler_MakeRenderMetrics(r.phases[PROFILE_PHASE_TOTAL_FRAME],
+                                           r.counters[PROFILE_COUNTER_DL_ITERATIONS]);
+}
+
+static float ResultAvgFps(const BenchmarkResult& r) {
+    return (r.fpsAvg > 0.01f) ? r.fpsAvg : ResultRenderMetrics(r).renderFps;
+}
+
+static float ResultMinFps(const BenchmarkResult& r) {
+    return (r.fpsMin > 0.01f) ? r.fpsMin : ResultAvgFps(r);
+}
+
+static float ResultMaxFps(const BenchmarkResult& r) {
+    return (r.fpsMax > 0.01f) ? r.fpsMax : ResultAvgFps(r);
 }
 
 static float ResultRenderFrameMs(const BenchmarkResult& r) {
-    float totalMs = r.phases[PROFILE_PHASE_TOTAL_FRAME];
-    float dlIter = r.counters[PROFILE_COUNTER_DL_ITERATIONS];
-    if (dlIter < 1.0f) dlIter = 1.0f;
-    return totalMs / dlIter;
+    return ResultRenderMetrics(r).renderFrameMs;
 }
 
 static float ResultTickFps(const BenchmarkResult& r) {
-    float totalMs = r.phases[PROFILE_PHASE_TOTAL_FRAME];
-    return (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
-}
-
-static const char* ChargerTypeToString(float chargerType) {
-    const int type = (int)(chargerType + 0.5f);
-    switch (type) {
-        case 0:
-            return "Unconnected";
-        case 1:
-            return "Enough Power";
-        case 2:
-            return "Low Power";
-        case 3:
-            return "Not Supported";
-        default:
-            return "Unknown";
-    }
+    return ResultRenderMetrics(r).tickFps;
 }
 
 // ── Phase / counter name tables ────────────────────────────────────────
@@ -626,17 +672,26 @@ static void ExportBenchmarkReport() {
 
     // Compute overall averages
     int count = (int)sResults.size();
-    float totalFpsSum = 0.0f;
+    float totalFpsAvgSum = 0.0f;
     float totalTickFpsSum = 0.0f;
     float totalFrameMsSum = 0.0f;
+    float fpsMin = FLT_MAX;
+    float fpsMax = 0.0f;
     for (const auto& r : sResults) {
-        totalFpsSum += ResultFps(r);
+        const float sceneFpsAvg = ResultAvgFps(r);
+        totalFpsAvgSum += sceneFpsAvg;
         totalTickFpsSum += ResultTickFps(r);
         totalFrameMsSum += ResultRenderFrameMs(r);
+        fpsMin = std::min(fpsMin, ResultMinFps(r));
+        fpsMax = std::max(fpsMax, ResultMaxFps(r));
+    }
+    if (fpsMin == FLT_MAX) {
+        fpsMin = 0.0f;
     }
     out << "--- Overall ---" << std::endl;
     out << std::fixed << std::setprecision(2);
-    out << "Average Render FPS: " << (totalFpsSum / count) << std::endl;
+    out << "Rendered FPS (avg/min/max): " << (totalFpsAvgSum / count) << " / " << fpsMin << " / " << fpsMax
+        << std::endl;
     out << "Average Tick FPS:   " << (totalTickFpsSum / count) << std::endl;
     out << "Average Frame:      " << (totalFrameMsSum / count) << " ms" << std::endl;
     out << std::endl;
@@ -677,12 +732,14 @@ static void ExportBenchmarkReport() {
     static const char* sBufNames[] = { "OPA (opaque)", "XLU (translucent)", "Overlay", "Work", "Debug" };
 
     for (const auto& r : sResults) {
-        float totalMs = r.phases[PROFILE_PHASE_TOTAL_FRAME];
-        float dlIter = r.counters[PROFILE_COUNTER_DL_ITERATIONS];
-        if (dlIter < 1.0f) dlIter = 1.0f;
-        float renderFrameMs = totalMs / dlIter;
-        float fps = ResultFps(r);
-        float tickFps = ResultTickFps(r);
+        const FrameProfilerRenderMetrics renderMetrics = ResultRenderMetrics(r);
+        const float totalMs = renderMetrics.totalMs;
+        const float dlIter = renderMetrics.dlIterations;
+        const float renderFrameMs = renderMetrics.renderFrameMs;
+        const float tickFps = renderMetrics.tickFps;
+        const float fpsAvg = ResultAvgFps(r);
+        const float fpsMinScene = ResultMinFps(r);
+        const float fpsMaxScene = ResultMaxFps(r);
 
         out << std::endl;
         out << "========================================" << std::endl;
@@ -696,8 +753,9 @@ static void ExportBenchmarkReport() {
             << " ms (" << std::setprecision(0) << dlIter << " DL iterations)" << std::endl;
         out << "    Game Tick:                  " << std::setprecision(2) << totalMs << " ms ("
             << std::setprecision(1) << tickFps << " FPS-equivalent)" << std::endl;
-        out << "    Per Rendered Frame:         " << std::setprecision(2) << renderFrameMs << " ms ("
-            << std::setprecision(1) << fps << " FPS)" << std::endl;
+        out << "    Rendered FPS (avg/min/max): " << std::setprecision(1) << fpsAvg << " / " << fpsMinScene << " / "
+            << fpsMaxScene << std::endl;
+        out << "    Per Rendered Frame:         " << std::setprecision(2) << renderFrameMs << " ms" << std::endl;
         if (renderFrameMs > BENCHMARK_TARGET_60FPS_MS) {
             float overhead = ((renderFrameMs / BENCHMARK_TARGET_60FPS_MS) - 1.0f) * 100.0f;
             out << "    Performance:                 " << std::setprecision(1) << overhead << "% over budget" << std::endl;
@@ -750,7 +808,7 @@ static void ExportBenchmarkReport() {
                     << std::endl;
             }
             if (sysChargerVoltageLimitMv > 0.01f || sysChargerCurrentLimitMa > 0.01f || sysChargerType > 0.01f) {
-                out << "    Charger:                     " << ChargerTypeToString(sysChargerType) << " ("
+                out << "    Charger:                     " << FrameProfiler_ChargerTypeToString(sysChargerType) << " ("
                     << std::setprecision(0) << sysChargerVoltageLimitMv << " mV / "
                     << sysChargerCurrentLimitMa << " mA limit)" << std::endl;
             }
@@ -984,7 +1042,7 @@ static void ExportBenchmarkReport() {
         out << "  Memory Bandwidth:" << std::endl;
         out << "    VBO data per frame:         " << std::setprecision(0) << vboKB << " KB" << std::endl;
         if (renderFrameMs > 0.01f) {
-            float mbPerSec = (vboKB / 1024.0f) * fps;
+            float mbPerSec = (vboKB / 1024.0f) * fpsAvg;
             out << "    VBO throughput:             " << std::setprecision(1) << mbPerSec << " MB/s" << std::endl;
         }
         out << std::endl;
@@ -1253,7 +1311,7 @@ void BenchmarkWindow::DrawElement() {
         }
 
         // Summary table -- add delta columns when baseline exists
-        int colCount = sBaseline.loaded ? 10 : 8;
+        int colCount = sBaseline.loaded ? 12 : 10;
         if (ImGui::BeginTable("BenchmarkSummary", colCount,
                               ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                                   ImGuiTableFlags_ScrollX)) {
@@ -1262,10 +1320,12 @@ void BenchmarkWindow::DrawElement() {
             if (sBaseline.loaded) {
                 ImGui::TableSetupColumn("vs Base");
             }
-            ImGui::TableSetupColumn("FPS");
+            ImGui::TableSetupColumn("FPS Avg");
             if (sBaseline.loaded) {
                 ImGui::TableSetupColumn("vs Base");
             }
+            ImGui::TableSetupColumn("FPS Min");
+            ImGui::TableSetupColumn("FPS Max");
             ImGui::TableSetupColumn("DL Process");
             ImGui::TableSetupColumn("GL Draws");
             ImGui::TableSetupColumn("GL Tris");
@@ -1275,7 +1335,9 @@ void BenchmarkWindow::DrawElement() {
 
             for (const auto& r : sResults) {
                 float frameMs = ResultRenderFrameMs(r);
-                float fps = ResultFps(r);
+                float fpsAvg = ResultAvgFps(r);
+                float fpsMin = ResultMinFps(r);
+                float fpsMax = ResultMaxFps(r);
                 const BenchmarkResult* base = FindBaselineForScene(r.name);
 
                 ImGui::TableNextRow();
@@ -1300,19 +1362,23 @@ void BenchmarkWindow::DrawElement() {
                 }
 
                 ImGui::TableNextColumn();
-                ImGui::TextColored(color, "%.1f", fps);
+                ImGui::TextColored(color, "%.1f", fpsAvg);
 
                 if (sBaseline.loaded) {
                     ImGui::TableNextColumn();
                     if (base) {
-                        float baseFps = ResultFps(*base);
-                        float deltaFps = fps - baseFps;
+                        float baseFps = ResultAvgFps(*base);
+                        float deltaFps = fpsAvg - baseFps;
                         ImGui::TextColored(DeltaColor(deltaFps, false), "%s%.1f", DeltaSign(deltaFps), deltaFps);
                     } else {
                         ImGui::TextDisabled("-");
                     }
                 }
 
+                ImGui::TableNextColumn();
+                ImGui::Text("%.1f", fpsMin);
+                ImGui::TableNextColumn();
+                ImGui::Text("%.1f", fpsMax);
                 ImGui::TableNextColumn();
                 ImGui::Text("%.2f", r.phases[PROFILE_PHASE_DL_PROCESS]);
                 ImGui::TableNextColumn();
@@ -1331,7 +1397,8 @@ void BenchmarkWindow::DrawElement() {
         for (size_t si = 0; si < sResults.size(); si++) {
             const auto& r = sResults[si];
             char treeLabel[128];
-            snprintf(treeLabel, sizeof(treeLabel), "%s (%.1f FPS)###scene%zu", r.name, ResultFps(r), si);
+            snprintf(treeLabel, sizeof(treeLabel), "%s (%.1f/%.1f/%.1f FPS avg/min/max)###scene%zu", r.name,
+                     ResultAvgFps(r), ResultMinFps(r), ResultMaxFps(r), si);
             if (ImGui::TreeNode(treeLabel)) {
                 // Phase breakdown
                 if (ImGui::TreeNode("Phase Timing")) {

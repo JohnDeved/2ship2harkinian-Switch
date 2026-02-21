@@ -20,6 +20,9 @@ on:
         required: true
         default: "0.75"
 
+permissions:
+  contents: read
+
 jobs:
   estimate-switch-regression:
     runs-on: ubuntu-latest

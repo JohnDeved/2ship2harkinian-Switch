@@ -50,8 +50,10 @@ jobs:
             return allArtifacts.data.artifacts.reduce((acc, item) => {
               if (item.name === "assets") return acc;
               if (item.name === "2ship.o2r") return acc;
+              const label = item.name.endsWith(".zip") ? item.name : `${item.name}.zip`;
+              const escapedLabel = label.replace(/\[/g, "\\[").replace(/\]/g, "\\]");
               acc += `
-              - [${item.name}.zip](https://nightly.link/${context.repo.owner}/${context.repo.repo}/actions/artifacts/${item.id}.zip)`;
+              - [${escapedLabel}](https://nightly.link/${context.repo.owner}/${context.repo.repo}/actions/artifacts/${item.id}.zip)`;
               return acc;
             }, '### Build Artifacts');
       - id: 'add-to-pr'

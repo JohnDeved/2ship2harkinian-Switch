@@ -35,14 +35,14 @@ The main CI/CD workflow (`.github/workflows/main.yml`) builds 2Ship2Harkinian fo
 - **Key optimizations**:
   - ccache for C/C++ compilation caching (1GB limit)
   - Docker container is automatically cached by GitHub Actions
-  - Artifact: `2ship-switch-nro` containing NRO, readme, and gamecontrollerdb.txt (retained for 3 days)
+  - Artifact: `2ship-switch-nro[<git-hash>].zip` containing NRO, readme, and gamecontrollerdb.txt (retained for 3 days)
 
 #### Job 3: combine-artifacts
 - **Platform**: Ubuntu Latest
 - **Purpose**: Merges the OTR and NRO artifacts into a single distributable
 - **Depends on**: Both Job 1 and Job 2
 - **Runtime**: <1 minute
-- **Output**: Final `2ship-switch` artifact with all files needed for Switch
+- **Output**: Final `2ship-switch[<git-hash>].zip` artifact with all files needed for Switch
 
 ### Caching Strategy
 
@@ -84,12 +84,12 @@ The workflow produces three artifact sets:
    - retention: 3 days
    - Size: ~300-400MB
 
-2. **2ship-switch-nro** (intermediate)
+2. **2ship-switch-nro[<git-hash>].zip** (intermediate)
    - The compiled Switch executable and supporting files
    - retention: 3 days
    - Size: ~20-30MB
 
-3. **2ship-switch** (final)
+3. **2ship-switch[<git-hash>].zip** (final)
    - Combined artifact with all files needed for Switch
    - retention: 3 days
    - Size: ~320-430MB

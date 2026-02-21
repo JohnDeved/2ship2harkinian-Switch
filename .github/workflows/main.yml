@@ -97,7 +97,7 @@ jobs:
     - name: Upload NRO and supporting files
       uses: actions/upload-artifact@v4
       with:
-        name: 2ship-switch-nro
+        name: 2ship-switch-nro[${{ github.sha }}].zip
         path: |
           2ship.nro
           readme.txt
@@ -117,12 +117,12 @@ jobs:
     - name: Download Switch NRO artifact
       uses: actions/download-artifact@v4
       with:
-        name: 2ship-switch-nro
+        name: 2ship-switch-nro[${{ github.sha }}].zip
         path: ./artifacts
 
     - name: Upload combined build
       uses: actions/upload-artifact@v4
       with:
-        name: 2ship-switch
+        name: 2ship-switch[${{ github.sha }}].zip
         path: ./artifacts
         retention-days: 3

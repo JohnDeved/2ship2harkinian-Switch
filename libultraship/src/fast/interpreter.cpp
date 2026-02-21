@@ -2813,17 +2813,6 @@ fast_path_vertex_processing:
     }
 #endif
 
-#ifdef __SWITCH__
-    // Upload fog/grayscale colors as GPU uniforms (constant per-draw).
-    // Saves 3 floats/vertex for fog and 4 floats/vertex for grayscale in VBO.
-    if (use_fog) {
-        mRapi->SetFogColor(fogR, fogG, fogB);
-    }
-    if (use_grayscale) {
-        mRapi->SetGrayscaleColor(grayR, grayG, grayB, grayA);
-    }
-#endif
-
     // Write the float pointer once to avoid repeated member access
     float* __restrict vbo = mBufVbo + mBufVboLen;
 
@@ -2878,10 +2867,7 @@ fast_path_vertex_processing:
         }
 
         if (use_fog) {
-#if defined(__SWITCH__)
-            // Fog color passed as uniform; only alpha (fog factor) varies per vertex
-            *vbo++ = vtx->color.a * INV_255;
-#elif defined(__ARM_NEON) && defined(__aarch64__)
+#if defined(__ARM_NEON) && defined(__aarch64__)
             // NEON: single 4-float store for fog color {R, G, B, A}
             float32x4_t fog_v = { fogR, fogG, fogB, vtx->color.a * INV_255 };
             vst1q_f32(vbo, fog_v);
@@ -2895,9 +2881,7 @@ fast_path_vertex_processing:
         }
 
         if (use_grayscale) {
-#if defined(__SWITCH__)
-            // Grayscale color passed as uniform on Switch; no VBO data needed
-#elif defined(__ARM_NEON) && defined(__aarch64__)
+#if defined(__ARM_NEON) && defined(__aarch64__)
             // NEON: single 4-float store for grayscale color
             float32x4_t gray_v = { grayR, grayG, grayB, grayA };
             vst1q_f32(vbo, gray_v);

@@ -25,26 +25,15 @@
 @end
 
 @if(o_fog)
-    @if(o_fog_as_uniform)
-        @{attr} float aFogAlpha;
-        uniform vec3 uFogColor;
-        @{out} vec4 vFog;
-        @{update_floats(1)}
-    @else
-        @{attr} vec4 aFog;
-        @{out} vec4 vFog;
-        @{update_floats(4)}
-    @end
+    @{attr} vec4 aFog;
+    @{out} vec4 vFog;
+    @{update_floats(4)}
 @end
 
 @if(o_grayscale)
-    @if(o_grayscale_as_uniform)
-        @// Grayscale color passed as uniform directly in fragment shader
-    @else
-        @{attr} vec4 aGrayscaleColor;
-        @{out} vec4 vGrayscaleColor;
-        @{update_floats(4)}
-    @end
+    @{attr} vec4 aGrayscaleColor;
+    @{out} vec4 vGrayscaleColor;
+    @{update_floats(4)}
 @end
 
 @for(i in 0..o_inputs)
@@ -75,16 +64,10 @@ void main() {
         @end
     @end
     @if(o_fog)
-        @if(o_fog_as_uniform)
-            vFog = vec4(uFogColor, aFogAlpha);
-        @else
-            vFog = aFog;
-        @end
+        vFog = aFog;
     @end
     @if(o_grayscale)
-        @if(!o_grayscale_as_uniform)
-            vGrayscaleColor = aGrayscaleColor;
-        @end
+        vGrayscaleColor = aGrayscaleColor;
     @end
     @for(i in 0..o_inputs)
         vInput@{i + 1} = aInput@{i + 1};

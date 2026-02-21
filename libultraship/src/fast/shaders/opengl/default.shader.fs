@@ -22,13 +22,7 @@ out vec4 vOutColor;
 @end
 
 @if(o_fog) @{attr} vec4 vFog;
-@if(o_grayscale)
-    @if(o_grayscale_as_uniform)
-        uniform vec4 uGrayscaleColor;
-    @else
-        @{attr} vec4 vGrayscaleColor;
-    @end
-@end
+@if(o_grayscale) @{attr} vec4 vGrayscaleColor;
 
 @for(i in 0..o_inputs)
     @if(o_alpha)
@@ -195,13 +189,8 @@ void main() {
 
     @if(o_grayscale)
         float intensity = (texel.r + texel.g + texel.b) / 3.0;
-        @if(o_grayscale_as_uniform)
-            vec3 new_texel = uGrayscaleColor.rgb * intensity;
-            texel.rgb = mix(texel.rgb, new_texel, uGrayscaleColor.a);
-        @else
-            vec3 new_texel = vGrayscaleColor.rgb * intensity;
-            texel.rgb = mix(texel.rgb, new_texel, vGrayscaleColor.a);
-        @end
+        vec3 new_texel = vGrayscaleColor.rgb * intensity;
+        texel.rgb = mix(texel.rgb, new_texel, vGrayscaleColor.a);
     @end
 
     @if(o_alpha)

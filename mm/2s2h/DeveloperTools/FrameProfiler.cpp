@@ -335,6 +335,10 @@ static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
     "Tex Reload Skips", "Batch:1-2 tris", "Batch:3-8 tris", "Batch:9-32 tris", "Batch:33-128 tris",
     "Batch:129+ tris", "Max Batch Size", "Sys CPU Usage %", "Sys GPU Usage Est %", "Sys RAM Usage %",
     "Sys RAM Used MB", "Sys RAM Total MB", "Sys CPU Clock MHz", "Sys GPU Clock MHz", "Sys EMC Clock MHz",
+    "Sys CPU Core0 Usage %", "Sys CPU Core1 Usage %", "Sys CPU Core2 Usage %", "Sys CPU Core3 Usage %",
+    "Sys SoC Temp C", "Sys PCB Temp C", "Sys Skin Temp C", "Sys Battery Temp C", "Sys Battery Charge %",
+    "Sys Battery Age %", "Sys Battery Voltage mV", "Sys Charger Type", "Sys Charger Volt Limit mV",
+    "Sys Charger Current Limit mA",
 };
 
 // ── Helper functions ───────────────────────────────────────────────────
@@ -354,6 +358,126 @@ static float GetAccountedTimeMs(void) {
            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_AUDIO_WAIT) +
            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
+}
+
+struct RenderFpsStats {
+    float avg = 0.0f;
+    float low1 = 0.0f;
+    float low01 = 0.0f;
+    int sampleCount = 0;
+};
+
+static RenderFpsStats ComputeRenderFpsStatsFromRing(void) {
+    RenderFpsStats stats = {};
+    float fpsSamples[PROFILE_RING_SIZE] = {};
+    int n = 0;
+
+    for (int f = 0; f < PROFILE_RING_SIZE; f++) {
+        float totalMs = sPhaseRing[PROFILE_PHASE_TOTAL_FRAME][f];
+        float dlIter = sCounterRing[PROFILE_COUNTER_DL_ITERATIONS][f];
+        if (totalMs <= 0.01f) {
+            continue;
+        }
+        if (dlIter < 1.0f) {
+            dlIter = 1.0f;
+        }
+        float renderMs = totalMs / dlIter;
+        if (renderMs <= 0.01f) {
+            continue;
+        }
+        fpsSamples[n++] = 1000.0f / renderMs;
+    }
+
+    if (n <= 0) {
+        return stats;
+    }
+
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        sum += fpsSamples[i];
+    }
+    stats.avg = sum / n;
+
+    std::sort(fpsSamples, fpsSamples + n);
+    const int nLow1 = std::max(1, (int)std::ceil(n * 0.01f));
+    const int nLow01 = std::max(1, (int)std::ceil(n * 0.001f));
+    float low1Sum = 0.0f;
+    float low01Sum = 0.0f;
+    for (int i = 0; i < nLow1; i++) {
+        low1Sum += fpsSamples[i];
+    }
+    for (int i = 0; i < nLow01; i++) {
+        low01Sum += fpsSamples[i];
+    }
+    stats.low1 = low1Sum / nLow1;
+    stats.low01 = low01Sum / nLow01;
+    stats.sampleCount = n;
+    return stats;
+}
+
+struct SystemTelemetrySnapshot {
+    float cpuUsagePct = 0.0f;
+    float cpuCoreUsagePct[4] = {};
+    float gpuUsageEstPct = 0.0f;
+    float ramUsagePct = 0.0f;
+    float ramUsedMb = 0.0f;
+    float ramTotalMb = 0.0f;
+    float cpuClockMhz = 0.0f;
+    float gpuClockMhz = 0.0f;
+    float emcClockMhz = 0.0f;
+    float socTempC = 0.0f;
+    float pcbTempC = 0.0f;
+    float skinTempC = 0.0f;
+    float batteryTempC = 0.0f;
+    float batteryChargePct = 0.0f;
+    float batteryAgePct = 0.0f;
+    float batteryVoltageMv = 0.0f;
+    float chargerType = 0.0f;
+    float chargerVoltageLimitMv = 0.0f;
+    float chargerCurrentLimitMa = 0.0f;
+};
+
+static SystemTelemetrySnapshot GetSystemTelemetrySnapshot(void) {
+    SystemTelemetrySnapshot t = {};
+    t.cpuUsagePct = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_USAGE_PCT);
+    t.cpuCoreUsagePct[0] = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_CORE0_USAGE_PCT);
+    t.cpuCoreUsagePct[1] = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_CORE1_USAGE_PCT);
+    t.cpuCoreUsagePct[2] = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_CORE2_USAGE_PCT);
+    t.cpuCoreUsagePct[3] = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_CORE3_USAGE_PCT);
+    t.gpuUsageEstPct = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_GPU_USAGE_EST_PCT);
+    t.ramUsagePct = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_RAM_USAGE_PCT);
+    t.ramUsedMb = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_RAM_USED_MB);
+    t.ramTotalMb = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_RAM_TOTAL_MB);
+    t.cpuClockMhz = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ);
+    t.gpuClockMhz = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ);
+    t.emcClockMhz = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ);
+    t.socTempC = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_SOC_TEMP_C);
+    t.pcbTempC = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_PCB_TEMP_C);
+    t.skinTempC = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_SKIN_TEMP_C);
+    t.batteryTempC = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_BATTERY_TEMP_C);
+    t.batteryChargePct = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_BATTERY_CHARGE_PCT);
+    t.batteryAgePct = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_BATTERY_AGE_PCT);
+    t.batteryVoltageMv = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_BATTERY_VOLTAGE_MV);
+    t.chargerType = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CHARGER_TYPE);
+    t.chargerVoltageLimitMv = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CHARGER_VOLTAGE_LIMIT_MV);
+    t.chargerCurrentLimitMa = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CHARGER_CURRENT_LIMIT_MA);
+    return t;
+}
+
+static const char* ChargerTypeToString(float chargerType) {
+    const int type = (int)(chargerType + 0.5f);
+    switch (type) {
+        case 0:
+            return "Unconnected";
+        case 1:
+            return "Enough Power";
+        case 2:
+            return "Low Power";
+        case 3:
+            return "Not Supported";
+        default:
+            return "Unknown";
+    }
 }
 
 // ── Snapshot export ─────────────────────────────────────────────────────
@@ -447,6 +571,9 @@ static void FrameProfiler_ExportSnapshot(void) {
     if (dlIter < 1.0f) dlIter = 1.0f;
     float renderFrameMs = totalMs / dlIter;
     float fps = (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
+    float tickFps = (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
+    RenderFpsStats fpsStats = ComputeRenderFpsStatsFromRing();
+    SystemTelemetrySnapshot sys = GetSystemTelemetrySnapshot();
 
     out << "=== 2S2H Frame Profiler Snapshot ===" << std::endl;
     out << "Timestamp: " << timeBuf << std::endl;
@@ -468,8 +595,12 @@ static void FrameProfiler_ExportSnapshot(void) {
 
     out << "--- Summary (" << PROFILE_RING_SIZE << "-frame average) ---" << std::endl;
     out << "Total Update Time:              " << std::fixed << std::setprecision(2) << totalMs << " ms (" << std::setprecision(0) << dlIter << " DL iterations)" << std::endl;
-    out << "Per Rendered Frame:             " << std::fixed << std::setprecision(2) << renderFrameMs << " ms" << std::endl;
-    out << "FPS:                            " << std::fixed << std::setprecision(1) << fps << std::endl;
+    out << "Game Tick:                      " << std::fixed << std::setprecision(2) << totalMs << " ms (" << std::setprecision(1) << tickFps << " FPS-equivalent)" << std::endl;
+    out << "Per Rendered Frame:             " << std::fixed << std::setprecision(2) << renderFrameMs << " ms (" << std::setprecision(1) << fps << " FPS)" << std::endl;
+    if (fpsStats.sampleCount > 0) {
+        out << "FPS Stability:                  " << std::setprecision(1) << fpsStats.avg << " avg | "
+            << fpsStats.low1 << " (1% low) | " << fpsStats.low01 << " (0.1% low)" << std::endl;
+    }
     out << "Target (60 FPS):                " << std::fixed << std::setprecision(2) << PROFILE_TARGET_FRAME_MS << " ms" << std::endl;
     if (renderFrameMs > PROFILE_TARGET_FRAME_MS) {
         float overhead = ((renderFrameMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
@@ -479,6 +610,42 @@ static void FrameProfiler_ExportSnapshot(void) {
         out << "Performance:                    " << std::fixed << std::setprecision(1) << headroom << "% headroom remaining" << std::endl;
     }
     out << std::endl;
+
+    bool hasSystemTelemetry = sys.gpuUsageEstPct > 0.01f || sys.cpuUsagePct > 0.01f || sys.ramTotalMb > 0.01f ||
+        sys.cpuClockMhz > 0.01f || sys.gpuClockMhz > 0.01f || sys.emcClockMhz > 0.01f || sys.socTempC > 0.01f ||
+        sys.pcbTempC > 0.01f || sys.skinTempC > 0.01f || sys.batteryChargePct > 0.01f || sys.batteryVoltageMv > 0.01f ||
+        sys.chargerVoltageLimitMv > 0.01f || sys.chargerCurrentLimitMa > 0.01f;
+    if (hasSystemTelemetry) {
+        out << "--- System Telemetry ---" << std::endl;
+        out << "CPU Usage (avg cores):          " << std::setprecision(1) << sys.cpuUsagePct << "%" << std::endl;
+        out << "CPU Usage (C0/C1/C2/C3):        " << std::setprecision(1)
+            << sys.cpuCoreUsagePct[0] << "% / " << sys.cpuCoreUsagePct[1] << "% / "
+            << sys.cpuCoreUsagePct[2] << "% / " << sys.cpuCoreUsagePct[3] << "%" << std::endl;
+        out << "GPU Usage (estimate):           " << std::setprecision(1) << sys.gpuUsageEstPct << "% (proxy)" << std::endl;
+        if (sys.ramTotalMb > 0.01f) {
+            out << "RAM Usage:                      " << std::setprecision(0) << sys.ramUsedMb << " / "
+                << sys.ramTotalMb << " MB (" << std::setprecision(1) << sys.ramUsagePct << "%)" << std::endl;
+        }
+        if (sys.cpuClockMhz > 0.01f || sys.gpuClockMhz > 0.01f || sys.emcClockMhz > 0.01f) {
+            out << "Clocks (CPU/GPU/EMC):           " << std::setprecision(0) << sys.cpuClockMhz << " / "
+                << sys.gpuClockMhz << " / " << sys.emcClockMhz << " MHz" << std::endl;
+        }
+        if (sys.socTempC > 0.01f || sys.pcbTempC > 0.01f || sys.skinTempC > 0.01f) {
+            out << "Temps (SoC/PCB/Skin):           " << std::setprecision(1) << sys.socTempC << " / "
+                << sys.pcbTempC << " / " << sys.skinTempC << " C" << std::endl;
+        }
+        if (sys.batteryChargePct > 0.01f || sys.batteryVoltageMv > 0.01f) {
+            out << "Battery (charge/health/temp):   " << std::setprecision(1) << sys.batteryChargePct << "% / "
+                << sys.batteryAgePct << "% / " << sys.batteryTempC << " C" << std::endl;
+            out << "Battery Voltage:                " << std::setprecision(0) << sys.batteryVoltageMv << " mV" << std::endl;
+        }
+        if (sys.chargerVoltageLimitMv > 0.01f || sys.chargerCurrentLimitMa > 0.01f || sys.chargerType > 0.01f) {
+            out << "Charger:                        " << ChargerTypeToString(sys.chargerType) << " ("
+                << std::setprecision(0) << sys.chargerVoltageLimitMv << " mV / "
+                << sys.chargerCurrentLimitMa << " mA limit)" << std::endl;
+        }
+        out << std::endl;
+    }
 
     out << "--- Per-Phase Breakdown ---" << std::endl;
     int worstPhase = -1;
@@ -1095,18 +1262,25 @@ void FrameProfilerWindow::DrawElement() {
     if (dlIter < 1.0f) dlIter = 1.0f;
     float renderFrameMs = totalMs / dlIter;
     float fps = (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
+    float tickFps = (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
+    RenderFpsStats fpsStats = ComputeRenderFpsStatsFromRing();
 
     // Enhanced summary with color coding and deltas
     if (renderFrameMs > 20.0f) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Render: %.2f ms (%.1f FPS) | Tick: %.2f ms (%.1f FPS)", renderFrameMs, fps, totalMs, tickFps);
     } else if (renderFrameMs > PROFILE_TARGET_FRAME_MS) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Render: %.2f ms (%.1f FPS) | Tick: %.2f ms (%.1f FPS)", renderFrameMs, fps, totalMs, tickFps);
     } else {
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Render: %.2f ms (%.1f FPS) | Tick: %.2f ms (%.1f FPS)", renderFrameMs, fps, totalMs, tickFps);
     }
     ShowDelta(renderFrameMs, sPrevSnapshot.renderFrameMs, true);  // lower frame time = better
     ImGui::SameLine();
-    ImGui::TextDisabled("Target: %.2f ms (60 FPS)", PROFILE_TARGET_FRAME_MS);
+    ImGui::TextDisabled("Target: %.2f ms (60 FPS), DL iters: %.1f", PROFILE_TARGET_FRAME_MS, dlIter);
+
+    if (fpsStats.sampleCount > 0) {
+        ImGui::Text("FPS Stability: %.1f avg | %.1f (1%% low) | %.1f (0.1%% low)",
+                    fpsStats.avg, fpsStats.low1, fpsStats.low01);
+    }
     
     // Show FPS delta
     if (sPrevSnapshot.valid) {

@@ -539,6 +539,27 @@ static float ResultRenderFrameMs(const BenchmarkResult& r) {
     return totalMs / dlIter;
 }
 
+static float ResultTickFps(const BenchmarkResult& r) {
+    float totalMs = r.phases[PROFILE_PHASE_TOTAL_FRAME];
+    return (totalMs > 0.01f) ? (1000.0f / totalMs) : 0.0f;
+}
+
+static const char* ChargerTypeToString(float chargerType) {
+    const int type = (int)(chargerType + 0.5f);
+    switch (type) {
+        case 0:
+            return "Unconnected";
+        case 1:
+            return "Enough Power";
+        case 2:
+            return "Low Power";
+        case 3:
+            return "Not Supported";
+        default:
+            return "Unknown";
+    }
+}
+
 // ── Phase / counter name tables ────────────────────────────────────────
 
 static const char* sPhaseNames[PROFILE_PHASE_MAX] = {
@@ -606,15 +627,18 @@ static void ExportBenchmarkReport() {
     // Compute overall averages
     int count = (int)sResults.size();
     float totalFpsSum = 0.0f;
+    float totalTickFpsSum = 0.0f;
     float totalFrameMsSum = 0.0f;
     for (const auto& r : sResults) {
         totalFpsSum += ResultFps(r);
+        totalTickFpsSum += ResultTickFps(r);
         totalFrameMsSum += ResultRenderFrameMs(r);
     }
     out << "--- Overall ---" << std::endl;
     out << std::fixed << std::setprecision(2);
-    out << "Average FPS:       " << (totalFpsSum / count) << std::endl;
-    out << "Average Frame:     " << (totalFrameMsSum / count) << " ms" << std::endl;
+    out << "Average Render FPS: " << (totalFpsSum / count) << std::endl;
+    out << "Average Tick FPS:   " << (totalTickFpsSum / count) << std::endl;
+    out << "Average Frame:      " << (totalFrameMsSum / count) << " ms" << std::endl;
     out << std::endl;
 
     // Baseline comparison
@@ -658,6 +682,7 @@ static void ExportBenchmarkReport() {
         if (dlIter < 1.0f) dlIter = 1.0f;
         float renderFrameMs = totalMs / dlIter;
         float fps = ResultFps(r);
+        float tickFps = ResultTickFps(r);
 
         out << std::endl;
         out << "========================================" << std::endl;
@@ -669,8 +694,10 @@ static void ExportBenchmarkReport() {
         out << "  Summary:" << std::endl;
         out << "    Total Update Time:          " << std::fixed << std::setprecision(2) << totalMs
             << " ms (" << std::setprecision(0) << dlIter << " DL iterations)" << std::endl;
-        out << "    Per Rendered Frame:          " << std::setprecision(2) << renderFrameMs << " ms" << std::endl;
-        out << "    FPS:                         " << std::setprecision(1) << fps << std::endl;
+        out << "    Game Tick:                  " << std::setprecision(2) << totalMs << " ms ("
+            << std::setprecision(1) << tickFps << " FPS-equivalent)" << std::endl;
+        out << "    Per Rendered Frame:         " << std::setprecision(2) << renderFrameMs << " ms ("
+            << std::setprecision(1) << fps << " FPS)" << std::endl;
         if (renderFrameMs > BENCHMARK_TARGET_60FPS_MS) {
             float overhead = ((renderFrameMs / BENCHMARK_TARGET_60FPS_MS) - 1.0f) * 100.0f;
             out << "    Performance:                 " << std::setprecision(1) << overhead << "% over budget" << std::endl;
@@ -680,24 +707,30 @@ static void ExportBenchmarkReport() {
         }
         out << std::endl;
 
-        // System telemetry (usage + clocks). GPU usage is an estimate proxy from GL driver blocking time.
-        float sysCpuUsage = r.counters[PROFILE_COUNTER_SYS_CPU_USAGE_PCT];
-        float sysGpuUsageEst = r.counters[PROFILE_COUNTER_SYS_GPU_USAGE_EST_PCT];
+        // System telemetry (clocks/memory/thermals/power).
         float sysRamUsage = r.counters[PROFILE_COUNTER_SYS_RAM_USAGE_PCT];
         float sysRamUsedMb = r.counters[PROFILE_COUNTER_SYS_RAM_USED_MB];
         float sysRamTotalMb = r.counters[PROFILE_COUNTER_SYS_RAM_TOTAL_MB];
         float sysCpuClockMhz = r.counters[PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ];
         float sysGpuClockMhz = r.counters[PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ];
         float sysEmcClockMhz = r.counters[PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ];
+        float sysSocTempC = r.counters[PROFILE_COUNTER_SYS_SOC_TEMP_C];
+        float sysPcbTempC = r.counters[PROFILE_COUNTER_SYS_PCB_TEMP_C];
+        float sysSkinTempC = r.counters[PROFILE_COUNTER_SYS_SKIN_TEMP_C];
+        float sysBatteryTempC = r.counters[PROFILE_COUNTER_SYS_BATTERY_TEMP_C];
+        float sysBatteryChargePct = r.counters[PROFILE_COUNTER_SYS_BATTERY_CHARGE_PCT];
+        float sysBatteryAgePct = r.counters[PROFILE_COUNTER_SYS_BATTERY_AGE_PCT];
+        float sysBatteryVoltageMv = r.counters[PROFILE_COUNTER_SYS_BATTERY_VOLTAGE_MV];
+        float sysChargerType = r.counters[PROFILE_COUNTER_SYS_CHARGER_TYPE];
+        float sysChargerVoltageLimitMv = r.counters[PROFILE_COUNTER_SYS_CHARGER_VOLTAGE_LIMIT_MV];
+        float sysChargerCurrentLimitMa = r.counters[PROFILE_COUNTER_SYS_CHARGER_CURRENT_LIMIT_MA];
 
         bool hasSystemTelemetry =
-            sysGpuUsageEst > 0.01f || sysCpuUsage > 0.01f || sysRamTotalMb > 0.01f || sysCpuClockMhz > 0.01f ||
-            sysGpuClockMhz > 0.01f || sysEmcClockMhz > 0.01f;
+            sysRamTotalMb > 0.01f || sysCpuClockMhz > 0.01f || sysGpuClockMhz > 0.01f || sysEmcClockMhz > 0.01f ||
+            sysSocTempC > 0.01f || sysPcbTempC > 0.01f || sysSkinTempC > 0.01f || sysBatteryChargePct > 0.01f ||
+            sysBatteryVoltageMv > 0.01f || sysChargerVoltageLimitMv > 0.01f || sysChargerCurrentLimitMa > 0.01f;
         if (hasSystemTelemetry) {
             out << "  System Telemetry:" << std::endl;
-            out << "    CPU Usage (avg cores):       " << std::setprecision(1) << sysCpuUsage << "%" << std::endl;
-            out << "    GPU Usage (estimate):        " << std::setprecision(1) << sysGpuUsageEst
-                << "% (proxy)" << std::endl;
             if (sysRamTotalMb > 0.01f) {
                 out << "    RAM Usage:                   " << std::setprecision(0) << sysRamUsedMb << " / "
                     << sysRamTotalMb << " MB (" << std::setprecision(1) << sysRamUsage << "%)" << std::endl;
@@ -705,6 +738,21 @@ static void ExportBenchmarkReport() {
             if (sysCpuClockMhz > 0.01f || sysGpuClockMhz > 0.01f || sysEmcClockMhz > 0.01f) {
                 out << "    Clocks (CPU/GPU/EMC):        " << std::setprecision(0) << sysCpuClockMhz << " / "
                     << sysGpuClockMhz << " / " << sysEmcClockMhz << " MHz" << std::endl;
+            }
+            if (sysSocTempC > 0.01f || sysPcbTempC > 0.01f || sysSkinTempC > 0.01f) {
+                out << "    Temps (SoC/PCB/Skin):        " << std::setprecision(1) << sysSocTempC << " / "
+                    << sysPcbTempC << " / " << sysSkinTempC << " C" << std::endl;
+            }
+            if (sysBatteryChargePct > 0.01f || sysBatteryVoltageMv > 0.01f) {
+                out << "    Battery (chg/age/temp):      " << std::setprecision(1) << sysBatteryChargePct << "% / "
+                    << sysBatteryAgePct << "% / " << sysBatteryTempC << " C" << std::endl;
+                out << "    Battery Voltage:             " << std::setprecision(0) << sysBatteryVoltageMv << " mV"
+                    << std::endl;
+            }
+            if (sysChargerVoltageLimitMv > 0.01f || sysChargerCurrentLimitMa > 0.01f || sysChargerType > 0.01f) {
+                out << "    Charger:                     " << ChargerTypeToString(sysChargerType) << " ("
+                    << std::setprecision(0) << sysChargerVoltageLimitMv << " mV / "
+                    << sysChargerCurrentLimitMa << " mA limit)" << std::endl;
             }
             out << std::endl;
         }

@@ -951,16 +951,31 @@ extern "C" void Graph_StartFrame() {
 
 #if defined(__SWITCH__)
 struct SwitchTelemetrySample {
+    bool servicesInitAttempted = false;
+    bool psmAvailable = false;
+    bool tsAvailable = false;
+    bool tcAvailable = false;
     bool hasIdleBaseline = false;
     u64 lastSystemTick = 0;
     u64 lastIdleTickCount[4] = {};
     float cpuUsagePct = 0.0f;
+    float cpuUsagePerCorePct[4] = {};
     float ramUsagePct = 0.0f;
     float ramUsedMb = 0.0f;
     float ramTotalMb = 0.0f;
     float cpuClockMhz = 0.0f;
     float gpuClockMhz = 0.0f;
     float emcClockMhz = 0.0f;
+    float socTempC = 0.0f;
+    float pcbTempC = 0.0f;
+    float skinTempC = 0.0f;
+    float batteryTempC = 0.0f;
+    float batteryChargePct = 0.0f;
+    float batteryAgePct = 0.0f;
+    float batteryVoltageMv = 0.0f;
+    float chargerType = 0.0f;
+    float chargerVoltageLimitMv = 0.0f;
+    float chargerCurrentLimitMa = 0.0f;
 };
 static SwitchTelemetrySample sSwitchTelemetry;
 
@@ -984,7 +999,36 @@ static bool QueryClockRateHz(PcvModule legacyModule, PcvModuleId moduleId, u32* 
     return R_SUCCEEDED(rc);
 }
 
+static void InitSwitchTelemetryServices() {
+    if (sSwitchTelemetry.servicesInitAttempted) {
+        return;
+    }
+
+    sSwitchTelemetry.servicesInitAttempted = true;
+    sSwitchTelemetry.psmAvailable = R_SUCCEEDED(psmInitialize());
+    sSwitchTelemetry.tsAvailable = R_SUCCEEDED(tsInitialize());
+    if (hosversionAtLeast(5, 0, 0)) {
+        sSwitchTelemetry.tcAvailable = R_SUCCEEDED(tcInitialize());
+    }
+}
+
+static float QueryTsTemperatureC(TsLocation location) {
+    s32 tempMilliC = 0;
+    if (R_SUCCEEDED(tsGetTemperatureMilliC(location, &tempMilliC))) {
+        return (float)tempMilliC / 1000.0f;
+    }
+
+    s32 tempC = 0;
+    if (R_SUCCEEDED(tsGetTemperature(location, &tempC))) {
+        return (float)tempC;
+    }
+
+    return 0.0f;
+}
+
 static void SampleSwitchSystemTelemetry() {
+    InitSwitchTelemetryServices();
+
     // Process RAM usage (relative to process memory budget).
     u64 usedMemory = 0;
     u64 totalMemory = 0;
@@ -1017,9 +1061,11 @@ static void SampleSwitchSystemTelemetry() {
                     idleDelta = idleTickCount[core] - sSwitchTelemetry.lastIdleTickCount[core];
                 }
                 const double idleRatio = std::clamp((double)idleDelta / elapsedTicks, 0.0, 1.0);
-                busySum += (1.0 - idleRatio);
+                const float coreBusyPct = (float)((1.0 - idleRatio) * 100.0);
+                sSwitchTelemetry.cpuUsagePerCorePct[core] = coreBusyPct;
+                busySum += coreBusyPct;
             }
-            sSwitchTelemetry.cpuUsagePct = (float)(busySum * 25.0); // average across 4 cores, in percent
+            sSwitchTelemetry.cpuUsagePct = (float)(busySum * 0.25); // average across 4 cores, in percent
             updatedCpuFromIdleTicks = true;
         }
 
@@ -1045,6 +1091,10 @@ static void SampleSwitchSystemTelemetry() {
         const float core0Pct = std::clamp(core0Ms / frameBudgetMs * 100.0f, 0.0f, 100.0f);
         const float workerPct = std::clamp(workerMs / frameBudgetMs * 100.0f, 0.0f, 100.0f);
         sSwitchTelemetry.cpuUsagePct = (core0Pct + workerPct) * 0.25f; // normalize across 4 Switch CPU cores
+        sSwitchTelemetry.cpuUsagePerCorePct[0] = core0Pct;
+        sSwitchTelemetry.cpuUsagePerCorePct[1] = 0.0f;
+        sSwitchTelemetry.cpuUsagePerCorePct[2] = 0.0f;
+        sSwitchTelemetry.cpuUsagePerCorePct[3] = workerPct;
     }
 
     // Current operating clocks (good context for performance runs).
@@ -1059,6 +1109,32 @@ static void SampleSwitchSystemTelemetry() {
         sSwitchTelemetry.emcClockMhz = (float)hz / 1000000.0f;
     }
 
+    // Temperature telemetry
+    if (sSwitchTelemetry.tsAvailable) {
+        sSwitchTelemetry.pcbTempC = QueryTsTemperatureC(TsLocation_Internal);
+        sSwitchTelemetry.socTempC = QueryTsTemperatureC(TsLocation_External);
+    }
+    if (sSwitchTelemetry.tcAvailable) {
+        s32 skinMilliC = 0;
+        if (R_SUCCEEDED(tcGetSkinTemperatureMilliC(&skinMilliC))) {
+            sSwitchTelemetry.skinTempC = (float)skinMilliC / 1000.0f;
+        }
+    }
+
+    // Battery / charger telemetry
+    if (sSwitchTelemetry.psmAvailable) {
+        PsmBatteryChargeInfoFields fields = {};
+        if (R_SUCCEEDED(psmGetBatteryChargeInfoFields(&fields))) {
+            sSwitchTelemetry.batteryTempC = (float)fields.temperature_celcius / 1000.0f;
+            sSwitchTelemetry.batteryChargePct = (float)fields.battery_charge_percentage / 1000.0f;
+            sSwitchTelemetry.batteryAgePct = (float)fields.battery_age_percentage / 1000.0f;
+            sSwitchTelemetry.batteryVoltageMv = (float)fields.battery_charge_milli_voltage;
+            sSwitchTelemetry.chargerType = (float)fields.charger_type;
+            sSwitchTelemetry.chargerVoltageLimitMv = (float)fields.charger_input_voltage_limit;
+            sSwitchTelemetry.chargerCurrentLimitMa = (float)fields.charger_input_current_limit;
+        }
+    }
+
     FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_USAGE_PCT, sSwitchTelemetry.cpuUsagePct);
     FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_RAM_USAGE_PCT, sSwitchTelemetry.ramUsagePct);
     FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_RAM_USED_MB, sSwitchTelemetry.ramUsedMb);
@@ -1066,6 +1142,20 @@ static void SampleSwitchSystemTelemetry() {
     FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ, sSwitchTelemetry.cpuClockMhz);
     FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ, sSwitchTelemetry.gpuClockMhz);
     FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ, sSwitchTelemetry.emcClockMhz);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CORE0_USAGE_PCT, sSwitchTelemetry.cpuUsagePerCorePct[0]);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CORE1_USAGE_PCT, sSwitchTelemetry.cpuUsagePerCorePct[1]);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CORE2_USAGE_PCT, sSwitchTelemetry.cpuUsagePerCorePct[2]);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CORE3_USAGE_PCT, sSwitchTelemetry.cpuUsagePerCorePct[3]);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_SOC_TEMP_C, sSwitchTelemetry.socTempC);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_PCB_TEMP_C, sSwitchTelemetry.pcbTempC);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_SKIN_TEMP_C, sSwitchTelemetry.skinTempC);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_BATTERY_TEMP_C, sSwitchTelemetry.batteryTempC);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_BATTERY_CHARGE_PCT, sSwitchTelemetry.batteryChargePct);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_BATTERY_AGE_PCT, sSwitchTelemetry.batteryAgePct);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_BATTERY_VOLTAGE_MV, sSwitchTelemetry.batteryVoltageMv);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CHARGER_TYPE, sSwitchTelemetry.chargerType);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CHARGER_VOLTAGE_LIMIT_MV, sSwitchTelemetry.chargerVoltageLimitMv);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CHARGER_CURRENT_LIMIT_MA, sSwitchTelemetry.chargerCurrentLimitMa);
 }
 #endif
 

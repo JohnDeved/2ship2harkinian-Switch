@@ -108,6 +108,20 @@ typedef enum {
     PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ,     // CPU clock (MHz)
     PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ,     // GPU clock (MHz)
     PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ,     // memory controller clock (MHz)
+    PROFILE_COUNTER_SYS_CPU_CORE0_USAGE_PCT, // CPU core #0 usage (0-100)
+    PROFILE_COUNTER_SYS_CPU_CORE1_USAGE_PCT, // CPU core #1 usage (0-100)
+    PROFILE_COUNTER_SYS_CPU_CORE2_USAGE_PCT, // CPU core #2 usage (0-100)
+    PROFILE_COUNTER_SYS_CPU_CORE3_USAGE_PCT, // CPU core #3 usage (0-100)
+    PROFILE_COUNTER_SYS_SOC_TEMP_C,          // SoC temperature (C)
+    PROFILE_COUNTER_SYS_PCB_TEMP_C,          // PCB temperature (C)
+    PROFILE_COUNTER_SYS_SKIN_TEMP_C,         // Skin temperature (C)
+    PROFILE_COUNTER_SYS_BATTERY_TEMP_C,      // Battery temperature (C)
+    PROFILE_COUNTER_SYS_BATTERY_CHARGE_PCT,  // Battery charge percentage (0-100)
+    PROFILE_COUNTER_SYS_BATTERY_AGE_PCT,     // Battery health/age percentage (0-100)
+    PROFILE_COUNTER_SYS_BATTERY_VOLTAGE_MV,  // Battery voltage (mV)
+    PROFILE_COUNTER_SYS_CHARGER_TYPE,        // Charger type enum (PsmChargerType)
+    PROFILE_COUNTER_SYS_CHARGER_VOLTAGE_LIMIT_MV, // Charger input voltage limit (mV)
+    PROFILE_COUNTER_SYS_CHARGER_CURRENT_LIMIT_MA, // Charger input current limit (mA)
 
     PROFILE_COUNTER_MAX
 } ProfileCounter;

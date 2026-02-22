@@ -502,7 +502,8 @@ void EnBox_WaitOpen(EnBox* this, PlayState* play) {
         // #region 2S2H [Enhancement] - Open chests from any direction
         s32 canOpen;
         if (CVarGetInteger("gEnhancements.Player.OpenChestsFromAnyDirection", 0)) {
-            canOpen = (SQ(offset.x) + SQ(offset.z)) < SQ(50.0f) && fabsf(offset.y) < 10.0f;
+            canOpen = (SQ(offset.x) + SQ(offset.z)) < SQ(50.0f) && fabsf(offset.y) < 10.0f &&
+                      Player_IsFacingActor(&this->dyna.actor, 0x3000, play);
         } else {
             canOpen = (offset.z > -50.0f) && (offset.z < 0.0f) && (fabsf(offset.y) < 10.0f) &&
                       (fabsf(offset.x) < 20.0f) && Player_IsFacingActor(&this->dyna.actor, 0x3000, play);

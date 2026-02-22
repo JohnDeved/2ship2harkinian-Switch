@@ -111,14 +111,18 @@ bool Camera_FreeLook(Camera* camera) {
         f32 followSpeed = CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollowSpeed", 200) / 1000.0f;
         f32 speedThreshold = CVarGetFloat("gEnhancements.Camera.FreeLook.AutoFollowThreshold", 10.0f);
 
-        if (player->speedXZ > speedThreshold) {
-            // Target yaw: behind the player's movement direction (opposite of facing)
-            s16 targetYaw = player->actor.world.rot.y + 0x8000;
+        // When on a horse, use the horse's speed and rotation instead of the player's
+        f32 actorSpeed = (player->rideActor != NULL) ? player->rideActor->speed : player->speedXZ;
+        s16 actorYaw = (player->rideActor != NULL) ? player->rideActor->world.rot.y : player->actor.world.rot.y;
+
+        if (actorSpeed > speedThreshold) {
+            // Target yaw: behind the movement direction (opposite of facing)
+            s16 targetYaw = actorYaw + 0x8000;
             s16 currentYaw = (s16)yaw;
             s16 yawDelta = targetYaw - currentYaw;
 
-            // Scale follow strength with player speed
-            f32 speedFactor = CLAMP((player->speedXZ - speedThreshold) / 8.0f, 0.0f, 1.0f);
+            // Scale follow strength with actor speed
+            f32 speedFactor = CLAMP((actorSpeed - speedThreshold) / 8.0f, 0.0f, 1.0f);
 
             // Reduce auto-follow when right stick is actively used
             f32 absStickX = fabsf(sCamPlayState->state.input[0].cur.right_stick_x);

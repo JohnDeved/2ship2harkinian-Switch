@@ -9,6 +9,7 @@
 #include "objects/object_box/object_box.h"
 #include "overlays/actors/ovl_En_Elforg/z_en_elforg.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #define FLAGS 0x00000000
 
@@ -498,8 +499,12 @@ void EnBox_WaitOpen(EnBox* this, PlayState* play) {
         Vec3f offset;
 
         Actor_WorldToActorCoords(&this->dyna.actor, &offset, &player->actor.world.pos);
-        if ((offset.z > -50.0f) && (offset.z < 0.0f) && (fabsf(offset.y) < 10.0f) && (fabsf(offset.x) < 20.0f) &&
-            Player_IsFacingActor(&this->dyna.actor, 0x3000, play)) {
+        // #region 2S2H [Enhancement] - Open chests from any direction
+        if ((CVarGetInteger("gEnhancements.Player.OpenChestsFromAnyDirection", 0)
+                 ? ((SQ(offset.x) + SQ(offset.z)) < SQ(50.0f) && fabsf(offset.y) < 10.0f)
+                 : ((offset.z > -50.0f) && (offset.z < 0.0f) && (fabsf(offset.y) < 10.0f) &&
+                    (fabsf(offset.x) < 20.0f) && Player_IsFacingActor(&this->dyna.actor, 0x3000, play)))) {
+        // #endregion
             if (((this->getItemId == GI_HEART_PIECE) || (this->getItemId == GI_BOTTLE)) &&
                 Flags_GetCollectible(play, this->collectableFlag)) {
                 this->getItemId = GI_RECOVERY_HEART;

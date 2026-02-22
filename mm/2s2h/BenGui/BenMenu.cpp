@@ -1054,6 +1054,10 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Faster Push/Pull", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.FasterPushAndPull")
         .Options(CheckboxOptions().Tooltip("Speeds up the time it takes to push/pull various objects."));
+    AddWidget(path, "Open Chests From Any Direction", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.OpenChestsFromAnyDirection")
+        .Options(CheckboxOptions().Tooltip("Allows you to open chests from any direction instead of requiring you to "
+                                           "face the front of the chest."));
     AddWidget(path, "Prevent Diving Over Water", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.PreventDiveOverWater")
         .Options(CheckboxOptions().Tooltip("Prevents Link from automatically diving over bodies of water."));

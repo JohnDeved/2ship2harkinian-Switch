@@ -500,10 +500,14 @@ void EnBox_WaitOpen(EnBox* this, PlayState* play) {
 
         Actor_WorldToActorCoords(&this->dyna.actor, &offset, &player->actor.world.pos);
         // #region 2S2H [Enhancement] - Open chests from any direction
-        if ((CVarGetInteger("gEnhancements.Player.OpenChestsFromAnyDirection", 0)
-                 ? ((SQ(offset.x) + SQ(offset.z)) < SQ(50.0f) && fabsf(offset.y) < 10.0f)
-                 : ((offset.z > -50.0f) && (offset.z < 0.0f) && (fabsf(offset.y) < 10.0f) &&
-                    (fabsf(offset.x) < 20.0f) && Player_IsFacingActor(&this->dyna.actor, 0x3000, play)))) {
+        s32 canOpen;
+        if (CVarGetInteger("gEnhancements.Player.OpenChestsFromAnyDirection", 0)) {
+            canOpen = (SQ(offset.x) + SQ(offset.z)) < SQ(50.0f) && fabsf(offset.y) < 10.0f;
+        } else {
+            canOpen = (offset.z > -50.0f) && (offset.z < 0.0f) && (fabsf(offset.y) < 10.0f) &&
+                      (fabsf(offset.x) < 20.0f) && Player_IsFacingActor(&this->dyna.actor, 0x3000, play);
+        }
+        if (canOpen) {
         // #endregion
             if (((this->getItemId == GI_HEART_PIECE) || (this->getItemId == GI_BOTTLE)) &&
                 Flags_GetCollectible(play, this->collectableFlag)) {

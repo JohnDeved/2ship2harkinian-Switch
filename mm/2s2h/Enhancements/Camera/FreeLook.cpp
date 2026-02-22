@@ -117,9 +117,9 @@ bool Camera_FreeLook(Camera* camera) {
 
         if (actorSpeed > speedThreshold) {
             // Target yaw: behind the movement direction (opposite of facing)
-            s16 targetYaw = actorYaw + 0x8000;
+            s16 targetYaw = BINANG_ROT180(actorYaw);
             s16 currentYaw = (s16)yaw;
-            s16 yawDelta = targetYaw - currentYaw;
+            s16 yawDelta = BINANG_SUB(targetYaw, currentYaw);
 
             // Scale follow strength with actor speed
             f32 speedFactor = CLAMP((actorSpeed - speedThreshold) / 8.0f, 0.0f, 1.0f);

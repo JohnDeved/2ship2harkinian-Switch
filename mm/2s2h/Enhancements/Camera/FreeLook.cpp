@@ -106,6 +106,35 @@ bool Camera_FreeLook(Camera* camera) {
     yaw += yawDiff * GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_X);
     pitch += pitchDiff * -GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_Y);
 
+    // Auto-follow: gradually rotate camera behind player's movement direction
+    if (CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollow", 0)) {
+        f32 followSpeed = CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollowSpeed", 200) / 1000.0f;
+        f32 speedThreshold = CVarGetFloat("gEnhancements.Camera.FreeLook.AutoFollowThreshold", 10.0f);
+
+        // When on a horse, use the horse's speed and rotation instead of the player's
+        f32 actorSpeed = (player->rideActor != NULL) ? player->rideActor->speed : player->speedXZ;
+        s16 actorYaw = (player->rideActor != NULL) ? player->rideActor->world.rot.y : player->actor.world.rot.y;
+
+        if (actorSpeed > speedThreshold) {
+            // Target yaw: behind the movement direction (opposite of facing)
+            s16 targetYaw = BINANG_ROT180(actorYaw);
+            s16 currentYaw = (s16)yaw;
+            s16 yawDelta = BINANG_SUB(targetYaw, currentYaw);
+
+            // Scale follow strength with actor speed
+            f32 speedFactor = CLAMP((actorSpeed - speedThreshold) / 8.0f, 0.0f, 1.0f);
+
+            // Reduce auto-follow when right stick is actively used
+            f32 absStickX = fabsf(sCamPlayState->state.input[0].cur.right_stick_x);
+            f32 absStickY = fabsf(sCamPlayState->state.input[0].cur.right_stick_y);
+            f32 stickMag = (absStickX > absStickY) ? absStickX : absStickY;
+            f32 stickFactor = CLAMP(1.0f - stickMag / 40.0f, 0.0f, 1.0f);
+
+            yaw += (f32)yawDelta * followSpeed * speedFactor * stickFactor;
+            yaw = (s16)yaw;
+        }
+    }
+
     s16 maxPitch = DEG_TO_BINANG(CVarGetFloat("gEnhancements.Camera.FreeLook.MaxPitch", 72.0f));
     s16 minPitch = DEG_TO_BINANG(CVarGetFloat("gEnhancements.Camera.FreeLook.MinPitch", -49.0f));
 

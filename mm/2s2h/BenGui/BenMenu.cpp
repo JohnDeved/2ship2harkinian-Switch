@@ -846,6 +846,13 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "Enables free look camera control.\nNote: You must remap C buttons off of the right "
             "stick in the controller config menu, and map the camera stick to the right stick."));
+    AddWidget(path, "Auto-Follow Movement", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Camera.FreeLook.AutoFollow")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
+        .Options(CheckboxOptions().Tooltip(
+            "Automatically rotates the camera behind the player or mount during movement.\n"
+            "The camera follows the direction of movement, similar to racing game cameras.\n"
+            "Especially useful during Goron rolling, Zora swimming, and horse riding."));
     AddWidget(path, "Aim Camera From Camera Direction", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Camera.AimingFirstPersonCamera")
         .Options(CheckboxOptions().Tooltip(
@@ -860,6 +867,28 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Camera.FreeLook.TransitionSpeed")
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
         .Options(IntSliderOptions().Min(1).Max(900).DefaultValue(25));
+    AddWidget(path, "Auto-Follow Speed: %d", WIDGET_CVAR_SLIDER_INT)
+        .CVar("gEnhancements.Camera.FreeLook.AutoFollowSpeed")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
+        .Options(IntSliderOptions()
+                     .Tooltip("How aggressively the camera follows movement direction.\n"
+                              "Lower values give a smoother, more cinematic feel.\n"
+                              "Higher values make the camera snap behind the player or mount faster.")
+                     .Min(1)
+                     .Max(400)
+                     .DefaultValue(200));
+    AddWidget(path, "Auto-Follow Speed Threshold: %.0f", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.Camera.FreeLook.AutoFollowThreshold")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
+        .Options(FloatSliderOptions()
+                     .Tooltip("Minimum movement speed before auto-follow activates.\n"
+                              "Uses mount speed when riding.\n"
+                              "Default is high enough to avoid triggering during normal walking or running.\n"
+                              "Lower values will make it activate sooner.")
+                     .Format("%.0f")
+                     .Min(1.0f)
+                     .Max(20.0f)
+                     .DefaultValue(10.0f));
     AddWidget(path, "Max Camera Height Angle: %.0f\xC2\xB0", WIDGET_CVAR_SLIDER_FLOAT)
         .Callback([](WidgetInfo& info) { FreeLookPitchMinMax(); })
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })

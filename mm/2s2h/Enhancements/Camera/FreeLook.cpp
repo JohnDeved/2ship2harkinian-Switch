@@ -121,8 +121,9 @@ bool Camera_FreeLook(Camera* camera) {
             f32 speedFactor = CLAMP((player->speedXZ - speedThreshold) / 8.0f, 0.0f, 1.0f);
 
             // Reduce auto-follow when right stick is actively used
-            f32 stickMag = CLAMP_MIN(fabsf(sCamPlayState->state.input[0].cur.right_stick_x),
-                                     fabsf(sCamPlayState->state.input[0].cur.right_stick_y));
+            f32 absStickX = fabsf(sCamPlayState->state.input[0].cur.right_stick_x);
+            f32 absStickY = fabsf(sCamPlayState->state.input[0].cur.right_stick_y);
+            f32 stickMag = (absStickX > absStickY) ? absStickX : absStickY;
             f32 stickFactor = CLAMP(1.0f - stickMag / 40.0f, 0.0f, 1.0f);
 
             yaw += (f32)yawDelta * followSpeed * speedFactor * stickFactor;

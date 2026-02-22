@@ -106,6 +106,29 @@ bool Camera_FreeLook(Camera* camera) {
     yaw += yawDiff * GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_X);
     pitch += pitchDiff * -GameInteractor_InvertControl(GI_INVERT_CAMERA_RIGHT_STICK_Y);
 
+    // Auto-follow: gradually rotate camera behind player's movement direction
+    if (CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollow", 0)) {
+        f32 followSpeed = CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollowSpeed", 50) / 1000.0f;
+        f32 speedThreshold = 2.0f;
+
+        if (player->speedXZ > speedThreshold) {
+            // Target yaw: behind the player's movement direction (opposite of facing)
+            s16 targetYaw = player->actor.world.rot.y + 0x8000;
+            s16 currentYaw = (s16)yaw;
+            s16 yawDelta = targetYaw - currentYaw;
+
+            // Scale follow strength with player speed
+            f32 speedFactor = CLAMP((player->speedXZ - speedThreshold) / 8.0f, 0.0f, 1.0f);
+
+            // Reduce auto-follow when right stick is actively used
+            f32 stickMag = CLAMP_MIN(fabsf(sCamPlayState->state.input[0].cur.right_stick_x),
+                                     fabsf(sCamPlayState->state.input[0].cur.right_stick_y));
+            f32 stickFactor = CLAMP(1.0f - stickMag / 40.0f, 0.0f, 1.0f);
+
+            yaw += (f32)yawDelta * followSpeed * speedFactor * stickFactor;
+        }
+    }
+
     s16 maxPitch = DEG_TO_BINANG(CVarGetFloat("gEnhancements.Camera.FreeLook.MaxPitch", 72.0f));
     s16 minPitch = DEG_TO_BINANG(CVarGetFloat("gEnhancements.Camera.FreeLook.MinPitch", -49.0f));
 

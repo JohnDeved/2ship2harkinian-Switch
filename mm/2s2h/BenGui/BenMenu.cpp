@@ -846,20 +846,6 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "Enables free look camera control.\nNote: You must remap C buttons off of the right "
             "stick in the controller config menu, and map the camera stick to the right stick."));
-    AddWidget(path, "Aim Camera From Camera Direction", WIDGET_CVAR_CHECKBOX)
-        .CVar("gEnhancements.Camera.AimingFirstPersonCamera")
-        .Options(CheckboxOptions().Tooltip(
-            "When aiming (bow, slingshot, etc.), the aiming camera starts from the direction the camera "
-            "is currently looking instead of the direction the player character is facing."));
-    AddWidget(path, "Camera Distance: %d", WIDGET_CVAR_SLIDER_INT)
-        .CVar("gEnhancements.Camera.FreeLook.MaxCameraDistance")
-        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
-        .Options(
-            IntSliderOptions().Tooltip("Maximum Camera Distance for Free Look.").Min(100).Max(900).DefaultValue(185));
-    AddWidget(path, "Camera Transition Speed: %d", WIDGET_CVAR_SLIDER_INT)
-        .CVar("gEnhancements.Camera.FreeLook.TransitionSpeed")
-        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
-        .Options(IntSliderOptions().Min(1).Max(900).DefaultValue(25));
     AddWidget(path, "Auto-Follow Movement", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Camera.FreeLook.AutoFollow")
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
@@ -875,8 +861,33 @@ void BenMenu::AddEnhancements() {
                               "Lower values give a smoother, more cinematic feel.\n"
                               "Higher values make the camera snap behind the player faster.")
                      .Min(1)
-                     .Max(100)
-                     .DefaultValue(50));
+                     .Max(400)
+                     .DefaultValue(200));
+    AddWidget(path, "Auto-Follow Speed Threshold: %.0f", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.Camera.FreeLook.AutoFollowThreshold")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
+        .Options(FloatSliderOptions()
+                     .Tooltip("Minimum player speed before auto-follow activates.\n"
+                              "Default is high enough to avoid triggering during normal walking or running.\n"
+                              "Lower values will make it activate sooner.")
+                     .Format("%.0f")
+                     .Min(1.0f)
+                     .Max(20.0f)
+                     .DefaultValue(10.0f));
+    AddWidget(path, "Aim Camera From Camera Direction", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Camera.AimingFirstPersonCamera")
+        .Options(CheckboxOptions().Tooltip(
+            "When aiming (bow, slingshot, etc.), the aiming camera starts from the direction the camera "
+            "is currently looking instead of the direction the player character is facing."));
+    AddWidget(path, "Camera Distance: %d", WIDGET_CVAR_SLIDER_INT)
+        .CVar("gEnhancements.Camera.FreeLook.MaxCameraDistance")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
+        .Options(
+            IntSliderOptions().Tooltip("Maximum Camera Distance for Free Look.").Min(100).Max(900).DefaultValue(185));
+    AddWidget(path, "Camera Transition Speed: %d", WIDGET_CVAR_SLIDER_INT)
+        .CVar("gEnhancements.Camera.FreeLook.TransitionSpeed")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
+        .Options(IntSliderOptions().Min(1).Max(900).DefaultValue(25));
     AddWidget(path, "Max Camera Height Angle: %.0f\xC2\xB0", WIDGET_CVAR_SLIDER_FLOAT)
         .Callback([](WidgetInfo& info) { FreeLookPitchMinMax(); })
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })

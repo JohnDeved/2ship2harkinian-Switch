@@ -108,8 +108,8 @@ bool Camera_FreeLook(Camera* camera) {
 
     // Auto-follow: gradually rotate camera behind player's movement direction
     if (CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollow", 0)) {
-        f32 followSpeed = CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollowSpeed", 50) / 1000.0f;
-        f32 speedThreshold = 2.0f;
+        f32 followSpeed = CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollowSpeed", 200) / 1000.0f;
+        f32 speedThreshold = CVarGetFloat("gEnhancements.Camera.FreeLook.AutoFollowThreshold", 10.0f);
 
         if (player->speedXZ > speedThreshold) {
             // Target yaw: behind the player's movement direction (opposite of facing)
@@ -127,6 +127,7 @@ bool Camera_FreeLook(Camera* camera) {
             f32 stickFactor = CLAMP(1.0f - stickMag / 40.0f, 0.0f, 1.0f);
 
             yaw += (f32)yawDelta * followSpeed * speedFactor * stickFactor;
+            yaw = (s16)yaw;
         }
     }
 

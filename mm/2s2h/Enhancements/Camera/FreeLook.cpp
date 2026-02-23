@@ -133,10 +133,21 @@ bool Camera_FreeLook(Camera* camera) {
             yaw += (f32)yawDelta * followSpeed * speedFactor * stickFactor;
             yaw = (s16)yaw;
 
-            // Auto-center pitch toward neutral viewing angle
+            // Auto-follow pitch based on actual movement direction (slopes, etc.)
+            Actor* followActor = (player->rideActor != NULL) ? player->rideActor : &player->actor;
+            Vec3f moveOrigin = { 0.0f, 0.0f, 0.0f };
+            Vec3f moveDelta = {
+                followActor->world.pos.x - followActor->prevPos.x,
+                followActor->world.pos.y - followActor->prevPos.y,
+                followActor->world.pos.z - followActor->prevPos.z,
+            };
+            VecGeo moveGeo = OLib_Vec3fDiffToVecGeo(&moveOrigin, &moveDelta);
+
+            // Target pitch: default viewing angle adjusted by movement slope
             s16 defaultPitch = DEG_TO_BINANG(14.0f);
+            s16 targetPitch = defaultPitch - moveGeo.pitch;
             s16 currentPitch = (s16)pitch;
-            s16 pitchDelta = defaultPitch - currentPitch;
+            s16 pitchDelta = targetPitch - currentPitch;
             pitch += (f32)pitchDelta * followSpeed * speedFactor * stickFactor;
             pitch = (s16)pitch;
         }

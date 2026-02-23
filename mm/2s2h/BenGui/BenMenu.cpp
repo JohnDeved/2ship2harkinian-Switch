@@ -851,7 +851,7 @@ void BenMenu::AddEnhancements() {
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
         .Options(CheckboxOptions().Tooltip(
             "Automatically rotates the camera behind the player or mount during movement\n"
-            "and re-centers the vertical angle to a neutral position.\n"
+            "and adjusts the vertical angle to follow the movement direction (slopes, etc.).\n"
             "The camera follows the direction of movement, similar to racing game cameras.\n"
             "Especially useful during Goron rolling, Zora swimming, and horse riding."));
     AddWidget(path, "Aim Camera From Camera Direction", WIDGET_CVAR_CHECKBOX)

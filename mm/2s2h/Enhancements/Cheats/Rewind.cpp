@@ -33,13 +33,18 @@ struct ActorSnapshot {
     s16 id;
     u8 category;
     PosRot world;
+    PosRot focus;
     Vec3f prevPos;
+    Vec3f scale;
     ActorShape shape;
     Vec3f velocity;
     f32 speed;
     f32 gravity;
     u32 flags;
     u8 health;
+    u16 colorFilterParams;
+    u8 colorFilterTimer;
+    u16 freezeTimer;
 };
 
 // SkelAnime scalar fields + joint/morph table data for animation replay
@@ -70,6 +75,8 @@ struct PlayerSnapshot {
     u32 stateFlags1;
     u32 stateFlags2;
     u32 stateFlags3;
+    u8 transformation;
+    u8 currentMask;
 };
 
 // Player resource state (health, magic, rupees)
@@ -78,6 +85,16 @@ struct PlayerResourceSnapshot {
     s8 magic;
     s16 rupees;
     s16 magicState;
+};
+
+// Camera state for smooth rewind visuals
+struct CameraSnapshot {
+    Vec3f eye;
+    Vec3f at;
+    Vec3f up;
+    Vec3f eyeNext;
+    f32 fov;
+    f32 dist;
 };
 
 // Scene-level flags (switches, chests, collectibles, cleared rooms)
@@ -99,6 +116,7 @@ struct FrameSnapshot {
     PlayerSnapshot player;
     PlayerResourceSnapshot resources;
     SceneFlagsSnapshot sceneFlags;
+    CameraSnapshot camera;
     std::vector<NpcAnimEntry> npcAnims;
 };
 
@@ -265,13 +283,18 @@ static void CaptureFrame() {
             as.id = actor->id;
             as.category = actor->category;
             as.world = actor->world;
+            as.focus = actor->focus;
             as.prevPos = actor->prevPos;
+            as.scale = actor->scale;
             as.shape = actor->shape;
             as.velocity = actor->velocity;
             as.speed = actor->speed;
             as.gravity = actor->gravity;
             as.flags = actor->flags;
             as.health = actor->colChkInfo.health;
+            as.colorFilterParams = actor->colorFilterParams;
+            as.colorFilterTimer = actor->colorFilterTimer;
+            as.freezeTimer = actor->freezeTimer;
             snapshot.actors.push_back(as);
             actor = actor->next;
         }
@@ -286,6 +309,8 @@ static void CaptureFrame() {
         snapshot.player.stateFlags1 = player->stateFlags1;
         snapshot.player.stateFlags2 = player->stateFlags2;
         snapshot.player.stateFlags3 = player->stateFlags3;
+        snapshot.player.transformation = player->transformation;
+        snapshot.player.currentMask = player->currentMask;
     } else {
         snapshot.player.valid = false;
     }
@@ -298,6 +323,17 @@ static void CaptureFrame() {
 
     // Capture scene flags (switches, chests, collectibles, cleared rooms)
     snapshot.sceneFlags.flags = gPlayState->actorCtx.sceneFlags;
+
+    // Capture camera state for smooth rewind visuals
+    Camera* mainCam = GET_ACTIVE_CAM(gPlayState);
+    if (mainCam != NULL) {
+        snapshot.camera.eye = mainCam->eye;
+        snapshot.camera.at = mainCam->at;
+        snapshot.camera.up = mainCam->up;
+        snapshot.camera.eyeNext = mainCam->eyeNext;
+        snapshot.camera.fov = mainCam->fov;
+        snapshot.camera.dist = mainCam->dist;
+    }
 
     // Capture NPC animation state by scanning for SkelAnime in each actor's struct
     snapshot.npcAnims.clear();
@@ -365,13 +401,18 @@ static void RestoreFrame() {
                 // reused by a newly spawned actor of a different type.
                 if (as.id == actor->id && as.category == actor->category) {
                     actor->world = as.world;
+                    actor->focus = as.focus;
                     actor->prevPos = as.prevPos;
+                    actor->scale = as.scale;
                     actor->shape = as.shape;
                     actor->velocity = as.velocity;
                     actor->speed = as.speed;
                     actor->gravity = as.gravity;
                     actor->flags = as.flags;
                     actor->colChkInfo.health = as.health;
+                    actor->colorFilterParams = as.colorFilterParams;
+                    actor->colorFilterTimer = as.colorFilterTimer;
+                    actor->freezeTimer = as.freezeTimer;
 
                     // Restore NPC animation if captured
                     auto animIt = sNpcAnimLookup.find(actor);
@@ -398,6 +439,8 @@ static void RestoreFrame() {
         player->stateFlags1 = snapshot.player.stateFlags1;
         player->stateFlags2 = snapshot.player.stateFlags2;
         player->stateFlags3 = snapshot.player.stateFlags3;
+        player->transformation = snapshot.player.transformation;
+        player->currentMask = snapshot.player.currentMask;
     }
 
     // Restore player resources (health, magic, rupees)
@@ -408,6 +451,17 @@ static void RestoreFrame() {
 
     // Restore scene flags (switches, chests, collectibles, cleared rooms)
     gPlayState->actorCtx.sceneFlags = snapshot.sceneFlags.flags;
+
+    // Restore camera state for smooth rewind visuals
+    Camera* mainCam = GET_ACTIVE_CAM(gPlayState);
+    if (mainCam != NULL) {
+        mainCam->eye = snapshot.camera.eye;
+        mainCam->at = snapshot.camera.at;
+        mainCam->up = snapshot.camera.up;
+        mainCam->eyeNext = snapshot.camera.eyeNext;
+        mainCam->fov = snapshot.camera.fov;
+        mainCam->dist = snapshot.camera.dist;
+    }
 
     gPlayState->gameplayFrames = snapshot.gameplayFrames;
 }
@@ -423,6 +477,12 @@ void RegisterRewind() {
 
         Input* input = CONTROLLER1(&gPlayState->state);
         bool rewindPressed = CHECK_BTN_ALL(input->cur.button, BTN_DLEFT);
+
+        // Don't allow rewind during pause, cutscenes, or message dialogs
+        if (gPlayState->pauseCtx.state != PAUSE_STATE_OFF || gPlayState->csCtx.state != CS_STATE_IDLE ||
+            gPlayState->msgCtx.msgMode != MSGMODE_NONE) {
+            rewindPressed = false;
+        }
 
         bool wasRewinding = sIsRewinding;
         sIsRewinding = rewindPressed && sBufferCount > 0;

@@ -115,18 +115,6 @@ static void GrantBankerReward(s16 balanceBeforeDeposit, s16 balanceAfterDeposit)
     }
 }
 
-static bool CrossedNotificationThreshold(s16 balanceBeforeDeposit, s16 balanceAfterDeposit) {
-    const s16 milestones[] = { 100, 200, 500, 1000, 5000 };
-
-    for (s16 milestone : milestones) {
-        if (balanceBeforeDeposit < milestone && balanceAfterDeposit >= milestone) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 static void HandleWalletOverflow() {
     s16 currentBankBalance = HS_GET_BANK_RUPEES();
 
@@ -144,9 +132,7 @@ static void HandleWalletOverflow() {
         HS_SET_BANK_RUPEES(balanceAfterDeposit);
         gSaveContext.rupeeAccumulator -= depositAmount;
 
-        if (CrossedNotificationThreshold(balanceBeforeDeposit, balanceAfterDeposit)) {
-            EmitDepositNotification(balanceAfterDeposit);
-        }
+        EmitDepositNotification(balanceAfterDeposit);
         GrantBankerReward(balanceBeforeDeposit, balanceAfterDeposit);
     }
 }

@@ -132,6 +132,13 @@ bool Camera_FreeLook(Camera* camera) {
 
             yaw += (f32)yawDelta * followSpeed * speedFactor * stickFactor;
             yaw = (s16)yaw;
+
+            // Auto-center pitch toward neutral viewing angle
+            s16 defaultPitch = DEG_TO_BINANG(14.0f);
+            s16 currentPitch = (s16)pitch;
+            s16 pitchDelta = defaultPitch - currentPitch;
+            pitch += (f32)pitchDelta * followSpeed * speedFactor * stickFactor;
+            pitch = (s16)pitch;
         }
     }
 

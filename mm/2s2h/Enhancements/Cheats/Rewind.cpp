@@ -18,8 +18,9 @@ extern "C" {
 // 30 seconds of history at 20 fps game logic rate
 static constexpr int REWIND_BUFFER_SIZE = 30 * 20;
 
-// Upper bound on joint/morph table entries for any skeleton in MM.
-// Player has ~24 limbs; most NPCs have fewer. 76 covers all cases.
+// Upper bound on joint/morph table entries per skeleton.
+// SkelAnime.limbCount is u8, but MM skeletons rarely exceed ~30 limbs.
+// 76 provides a safe margin for any actor without wasting excessive memory.
 static constexpr int MAX_LIMBS = 76;
 
 // Hint for vector::reserve to avoid reallocation in typical scenes
@@ -87,6 +88,7 @@ static void ClearBuffer() {
     for (auto& frame : sRewindBuffer) {
         frame.valid = false;
         frame.actors.clear();
+        frame.actors.reserve(EXPECTED_MAX_ACTORS);
         frame.player.valid = false;
     }
     sBufferHead = 0;
@@ -110,8 +112,9 @@ static void CaptureSkelAnime(SkelAnimeSnapshot& out, const SkelAnime* src) {
     out.prevTransl = src->prevTransl;
     out.baseTransl = src->baseTransl;
 
+    // SkelAnime.limbCount is already u8, so no truncation risk
     int count = src->limbCount;
-    out.limbCount = (u8)count;
+    out.limbCount = src->limbCount;
     if (count > MAX_LIMBS) {
         count = MAX_LIMBS;
     }
@@ -160,7 +163,6 @@ static void CaptureFrame() {
     snapshot.gameplayFrames = gPlayState->gameplayFrames;
 
     snapshot.actors.clear();
-    snapshot.actors.reserve(EXPECTED_MAX_ACTORS);
 
     for (int i = 0; i < ACTORCAT_MAX; i++) {
         Actor* actor = gPlayState->actorCtx.actorLists[i].first;
@@ -225,6 +227,8 @@ static void RestoreFrame() {
             auto it = sSnapshotLookup.find(actor);
             if (it != sSnapshotLookup.end()) {
                 const ActorSnapshot& as = snapshot.actors[it->second];
+                // Guard against pointer reuse: a killed actor's address may be
+                // reused by a newly spawned actor of a different type.
                 if (as.id == actor->id && as.category == actor->category) {
                     actor->world = as.world;
                     actor->prevPos = as.prevPos;
@@ -303,7 +307,7 @@ void RegisterRewind() {
 
     // Hide actors that were spawned after the current rewind point.
     COND_HOOK(ShouldActorDraw, CVAR, [](Actor* actor, bool* should) {
-        if (sIsRewinding && !sHiddenActors.empty() && sHiddenActors.count(actor) > 0) {
+        if (sIsRewinding && sHiddenActors.count(actor) > 0) {
             *should = false;
         }
     });

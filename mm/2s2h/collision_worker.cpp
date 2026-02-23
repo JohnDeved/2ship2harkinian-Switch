@@ -24,11 +24,12 @@ static struct {
 
 static void TaskWorker_Thread() {
 #ifdef __SWITCH__
-    // Pin collision worker to core 3 to avoid contention with the main thread
-    // (core 0). Note: when the pool (TaskWorkerPool) is also active, its
-    // workers occupy cores 1 and 3; the single TaskWorker is used for the
-    // legacy code path. If core 3 is unavailable, fall back to any core.
-    Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, 3, (1U << 3));
+    // Pin collision worker to core 2 to avoid contention with the main thread
+    // (core 0). Core 3 is reserved for the system. Note: when the pool
+    // (TaskWorkerPool) is also active, its workers occupy cores 1 and 2; the
+    // single TaskWorker is used for the legacy code path. If core 2 is
+    // unavailable, fall back to any core.
+    Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, 2, (1U << 2));
     if (R_FAILED(rc)) {
         static const u64 ALL_CORES_MASK = (1U << 0) | (1U << 1) | (1U << 2) | (1U << 3);
         svcSetThreadCoreMask(CUR_THREAD_HANDLE, -1, ALL_CORES_MASK);

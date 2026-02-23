@@ -169,6 +169,12 @@ static const std::vector<const char*> goronRaceDifficultyOptions = {
     "Skip",     // GORON_RACE_DIFFICULTY_SKIP
 };
 
+static const std::vector<const char*> autoBankDepositNotificationOptions = {
+    "Off",             // AUTO_BANK_DEPOSIT_NOTIFICATION_OFF
+    "Milestones Only", // AUTO_BANK_DEPOSIT_NOTIFICATION_MILESTONES
+    "Always",          // AUTO_BANK_DEPOSIT_NOTIFICATION_ALWAYS
+};
+
 static const std::vector<const char*> timerDisplayOptions = {
     "Off",          // TIMER_DISPLAY_NONE
     "Real-Time",    // TIMER_DISPLAY_RTA
@@ -1606,6 +1612,15 @@ void BenMenu::AddEnhancements() {
             "Automatically deposits excess Rupees into your bank account when your wallet is full. "
             "Deposits stop when the bank reaches maximum capacity. "
             "Bank rewards are granted automatically. Notifications display deposit amount and new balance."));
+    AddWidget(path, "Bank Deposit Notifications", WIDGET_CVAR_COMBOBOX)
+        .CVar("gEnhancements.Timesavers.AutoBankDepositNotifications")
+        .Options(ComboboxOptions()
+                     .Tooltip("Controls when notifications are shown for automatic bank deposits.\n\n"
+                              "Off: No notifications.\n"
+                              "Milestones Only: Notify at 100, 200, 500, 1000, and 5000 rupee milestones.\n"
+                              "Always: Notify on every deposit.")
+                     .ComboVec(&autoBankDepositNotificationOptions)
+                     .DefaultIndex(AUTO_BANK_DEPOSIT_NOTIFICATION_ALWAYS));
 
     // Fixes
     path = { "Enhancements", "Fixes", SECTION_COLUMN_1 };

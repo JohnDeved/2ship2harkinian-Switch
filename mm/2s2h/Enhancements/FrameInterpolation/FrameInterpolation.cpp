@@ -439,7 +439,7 @@ struct InterpolateCtx {
 unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step) {
     // Cache previous element count to pre-allocate capacity via reserve(),
     // avoiding repeated rehashing as entries are inserted. Thread-local
-    // because this is called from both Core 0 (sync) and Core 3 (async TaskWorker).
+    // because this is called from both Core 0 (sync) and Core 2 (async TaskWorker).
     static thread_local size_t prev_element_count = 0;
 
     InterpolateCtx ctx;

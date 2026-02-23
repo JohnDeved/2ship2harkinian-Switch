@@ -1093,8 +1093,8 @@ static void SampleSwitchSystemTelemetry() {
         sSwitchTelemetry.cpuUsagePct = (core0Pct + workerPct) * 0.25f; // normalize across 4 Switch CPU cores
         sSwitchTelemetry.cpuUsagePerCorePct[0] = core0Pct;
         sSwitchTelemetry.cpuUsagePerCorePct[1] = 0.0f;
-        sSwitchTelemetry.cpuUsagePerCorePct[2] = 0.0f;
-        sSwitchTelemetry.cpuUsagePerCorePct[3] = workerPct;
+        sSwitchTelemetry.cpuUsagePerCorePct[2] = workerPct;
+        sSwitchTelemetry.cpuUsagePerCorePct[3] = 0.0f;
     }
 
     // Current operating clocks (good context for performance runs).
@@ -1313,7 +1313,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     // Core 1 handles: GL context, DL interpretation, ImGui, buffer swap.
     //
     // Multi-core pipelining: overlap matrix interpolation for sub-frame N+1
-    // on the worker thread (Core 3) while Core 1 renders DL iteration N.
+    // on the worker thread (Core 2) while Core 1 renders DL iteration N.
     {
         struct AsyncInterpJob {
             float fraction;
@@ -1431,7 +1431,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 }
                 if (intp) { intp->mInterpolationIndex = (int)i; }
 
-                // Start async interpolation for the NEXT sub-frame on Core 3
+                // Start async interpolation for the NEXT sub-frame on Core 2
                 size_t nextIdx = i + 1;
                 AsyncInterpJob nextJob;
                 bool hasNext = (nextIdx < sub_frames.size());

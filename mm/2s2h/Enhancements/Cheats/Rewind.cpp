@@ -67,12 +67,19 @@ struct PlayerSnapshot {
     SkelAnimeSnapshot skelAnimeUpper;
 };
 
+// NPC animation entry — stores one SkelAnime snapshot for a non-Player actor
+struct NpcAnimEntry {
+    Actor* ptr;
+    SkelAnimeSnapshot anim;
+};
+
 // One complete frame of game state
 struct FrameSnapshot {
     bool valid = false;
     u32 gameplayFrames = 0;
     std::vector<ActorSnapshot> actors;
     PlayerSnapshot player;
+    std::vector<NpcAnimEntry> npcAnims;
 };
 
 static std::vector<FrameSnapshot> sRewindBuffer(REWIND_BUFFER_SIZE);
@@ -83,6 +90,10 @@ static bool sIsRewinding = false;
 // Reusable containers to avoid per-frame heap allocation
 static std::unordered_map<Actor*, size_t> sSnapshotLookup;
 static std::unordered_set<Actor*> sHiddenActors;
+static std::unordered_map<Actor*, size_t> sNpcAnimLookup;
+
+// Cache: actor ID -> byte offset of first SkelAnime within actor struct, -1 = none
+static std::unordered_map<s16, int> sSkelAnimeOffsetCache;
 
 static void ClearBuffer() {
     for (auto& frame : sRewindBuffer) {
@@ -90,11 +101,13 @@ static void ClearBuffer() {
         frame.actors.clear();
         frame.actors.reserve(EXPECTED_MAX_ACTORS);
         frame.player.valid = false;
+        frame.npcAnims.clear();
     }
     sBufferHead = 0;
     sBufferCount = 0;
     sIsRewinding = false;
     sHiddenActors.clear();
+    sSkelAnimeOffsetCache.clear();
 }
 
 static void CaptureSkelAnime(SkelAnimeSnapshot& out, const SkelAnime* src) {
@@ -153,6 +166,58 @@ static void RestoreSkelAnime(SkelAnime* dst, const SkelAnimeSnapshot& src) {
     }
 }
 
+// Heuristic check: does memory at this location look like a valid SkelAnime?
+static bool IsLikelySkelAnime(const SkelAnime* sa, int remaining) {
+    if (remaining < (int)sizeof(SkelAnime)) {
+        return false;
+    }
+    if (sa->limbCount == 0 || sa->limbCount > MAX_LIMBS) {
+        return false;
+    }
+    if (sa->mode > 5) {
+        return false;
+    }
+    if (sa->skeleton == NULL || ((uintptr_t)sa->skeleton & 3) != 0) {
+        return false;
+    }
+    if (sa->jointTable == NULL || ((uintptr_t)sa->jointTable & 1) != 0) {
+        return false;
+    }
+    if (sa->animLength <= 0.0f) {
+        return false;
+    }
+    return true;
+}
+
+// Find the byte offset of the first SkelAnime within an actor's extended struct.
+// Result is cached by actor ID since all instances of the same actor type share
+// the same struct layout. Returns -1 if no SkelAnime is found.
+static int FindSkelAnimeOffset(Actor* actor) {
+    auto cached = sSkelAnimeOffsetCache.find(actor->id);
+    if (cached != sSkelAnimeOffsetCache.end()) {
+        return cached->second;
+    }
+
+    int result = -1;
+    if (actor->overlayEntry != NULL && actor->overlayEntry->profile != NULL) {
+        u32 instSize = actor->overlayEntry->profile->instanceSize;
+        if (instSize >= sizeof(Actor) + sizeof(SkelAnime)) {
+            const u8* base = reinterpret_cast<const u8*>(actor);
+            int end = (int)instSize - (int)sizeof(SkelAnime);
+            for (int off = (int)sizeof(Actor); off <= end; off += 4) {
+                const SkelAnime* sa = reinterpret_cast<const SkelAnime*>(base + off);
+                if (IsLikelySkelAnime(sa, (int)instSize - off)) {
+                    result = off;
+                    break;
+                }
+            }
+        }
+    }
+
+    sSkelAnimeOffsetCache[actor->id] = result;
+    return result;
+}
+
 static void CaptureFrame() {
     if (gPlayState == NULL) {
         return;
@@ -192,6 +257,27 @@ static void CaptureFrame() {
         snapshot.player.valid = false;
     }
 
+    // Capture NPC animation state by scanning for SkelAnime in each actor's struct
+    snapshot.npcAnims.clear();
+    Actor* playerActor = (player != NULL) ? &player->actor : NULL;
+    for (int i = 0; i < ACTORCAT_MAX; i++) {
+        Actor* actor = gPlayState->actorCtx.actorLists[i].first;
+        while (actor != NULL) {
+            if (actor != playerActor) {
+                int offset = FindSkelAnimeOffset(actor);
+                if (offset >= 0) {
+                    NpcAnimEntry entry;
+                    entry.ptr = actor;
+                    const SkelAnime* sa =
+                        reinterpret_cast<const SkelAnime*>(reinterpret_cast<const u8*>(actor) + offset);
+                    CaptureSkelAnime(entry.anim, sa);
+                    snapshot.npcAnims.push_back(entry);
+                }
+            }
+            actor = actor->next;
+        }
+    }
+
     sBufferHead = (sBufferHead + 1) % REWIND_BUFFER_SIZE;
     if (sBufferCount < REWIND_BUFFER_SIZE) {
         sBufferCount++;
@@ -219,6 +305,13 @@ static void RestoreFrame() {
         sSnapshotLookup[snapshot.actors[idx].ptr] = idx;
     }
 
+    // Build NPC animation lookup
+    sNpcAnimLookup.clear();
+    sNpcAnimLookup.reserve(snapshot.npcAnims.size());
+    for (size_t idx = 0; idx < snapshot.npcAnims.size(); idx++) {
+        sNpcAnimLookup[snapshot.npcAnims[idx].ptr] = idx;
+    }
+
     // Restore actors that exist in the snapshot; hide actors spawned after this frame
     sHiddenActors.clear();
     for (int i = 0; i < ACTORCAT_MAX; i++) {
@@ -236,6 +329,16 @@ static void RestoreFrame() {
                     actor->velocity = as.velocity;
                     actor->speed = as.speed;
                     actor->gravity = as.gravity;
+
+                    // Restore NPC animation if captured
+                    auto animIt = sNpcAnimLookup.find(actor);
+                    if (animIt != sNpcAnimLookup.end()) {
+                        int offset = FindSkelAnimeOffset(actor);
+                        if (offset >= 0) {
+                            SkelAnime* sa = reinterpret_cast<SkelAnime*>(reinterpret_cast<u8*>(actor) + offset);
+                            RestoreSkelAnime(sa, snapshot.npcAnims[animIt->second].anim);
+                        }
+                    }
                 }
             } else {
                 // Actor was spawned after this snapshot frame — hide during rewind

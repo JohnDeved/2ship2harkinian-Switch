@@ -1,4 +1,6 @@
+#include <cstring>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <libultraship/bridge/consolevariablebridge.h>
@@ -16,6 +18,13 @@ extern "C" {
 // 30 seconds of history at 20 fps game logic rate
 static constexpr int REWIND_BUFFER_SIZE = 30 * 20;
 
+// Upper bound on joint/morph table entries for any skeleton in MM.
+// Player has ~24 limbs; most NPCs have fewer. 76 covers all cases.
+static constexpr int MAX_LIMBS = 76;
+
+// Hint for vector::reserve to avoid reallocation in typical scenes
+static constexpr int EXPECTED_MAX_ACTORS = 256;
+
 // Per-actor snapshot of visual/physics state.
 // ActorShape is POD (Vec3s, scalars, function pointer) so a shallow copy is safe.
 struct ActorSnapshot {
@@ -30,11 +39,39 @@ struct ActorSnapshot {
     f32 gravity;
 };
 
+// SkelAnime scalar fields + joint/morph table data for animation replay
+struct SkelAnimeSnapshot {
+    void* animation;
+    f32 startFrame;
+    f32 endFrame;
+    f32 animLength;
+    f32 curFrame;
+    f32 playSpeed;
+    f32 morphWeight;
+    f32 morphRate;
+    u8 mode;
+    u8 movementFlags;
+    s16 prevYaw;
+    Vec3s prevTransl;
+    Vec3s baseTransl;
+    u8 limbCount;
+    Vec3s jointTable[MAX_LIMBS];
+    Vec3s morphTable[MAX_LIMBS];
+};
+
+// Player-specific animation state (main body + upper body blend)
+struct PlayerSnapshot {
+    bool valid = false;
+    SkelAnimeSnapshot skelAnime;
+    SkelAnimeSnapshot skelAnimeUpper;
+};
+
 // One complete frame of game state
 struct FrameSnapshot {
     bool valid = false;
     u32 gameplayFrames = 0;
     std::vector<ActorSnapshot> actors;
+    PlayerSnapshot player;
 };
 
 static std::vector<FrameSnapshot> sRewindBuffer(REWIND_BUFFER_SIZE);
@@ -42,14 +79,75 @@ static int sBufferHead = 0;
 static int sBufferCount = 0;
 static bool sIsRewinding = false;
 
+// Reusable containers to avoid per-frame heap allocation
+static std::unordered_map<Actor*, size_t> sSnapshotLookup;
+static std::unordered_set<Actor*> sHiddenActors;
+
 static void ClearBuffer() {
     for (auto& frame : sRewindBuffer) {
         frame.valid = false;
         frame.actors.clear();
+        frame.player.valid = false;
     }
     sBufferHead = 0;
     sBufferCount = 0;
     sIsRewinding = false;
+    sHiddenActors.clear();
+}
+
+static void CaptureSkelAnime(SkelAnimeSnapshot& out, const SkelAnime* src) {
+    out.animation = src->animation;
+    out.startFrame = src->startFrame;
+    out.endFrame = src->endFrame;
+    out.animLength = src->animLength;
+    out.curFrame = src->curFrame;
+    out.playSpeed = src->playSpeed;
+    out.morphWeight = src->morphWeight;
+    out.morphRate = src->morphRate;
+    out.mode = src->mode;
+    out.movementFlags = src->movementFlags;
+    out.prevYaw = src->prevYaw;
+    out.prevTransl = src->prevTransl;
+    out.baseTransl = src->baseTransl;
+
+    int count = src->limbCount;
+    out.limbCount = (u8)count;
+    if (count > MAX_LIMBS) {
+        count = MAX_LIMBS;
+    }
+    if (src->jointTable != NULL && count > 0) {
+        memcpy(out.jointTable, src->jointTable, count * sizeof(Vec3s));
+    }
+    if (src->morphTable != NULL && count > 0) {
+        memcpy(out.morphTable, src->morphTable, count * sizeof(Vec3s));
+    }
+}
+
+static void RestoreSkelAnime(SkelAnime* dst, const SkelAnimeSnapshot& src) {
+    dst->animation = src.animation;
+    dst->startFrame = src.startFrame;
+    dst->endFrame = src.endFrame;
+    dst->animLength = src.animLength;
+    dst->curFrame = src.curFrame;
+    dst->playSpeed = src.playSpeed;
+    dst->morphWeight = src.morphWeight;
+    dst->morphRate = src.morphRate;
+    dst->mode = src.mode;
+    dst->movementFlags = src.movementFlags;
+    dst->prevYaw = src.prevYaw;
+    dst->prevTransl = src.prevTransl;
+    dst->baseTransl = src.baseTransl;
+
+    int count = src.limbCount;
+    if (count > MAX_LIMBS) {
+        count = MAX_LIMBS;
+    }
+    if (dst->jointTable != NULL && count > 0) {
+        memcpy(dst->jointTable, src.jointTable, count * sizeof(Vec3s));
+    }
+    if (dst->morphTable != NULL && count > 0) {
+        memcpy(dst->morphTable, src.morphTable, count * sizeof(Vec3s));
+    }
 }
 
 static void CaptureFrame() {
@@ -62,6 +160,8 @@ static void CaptureFrame() {
     snapshot.gameplayFrames = gPlayState->gameplayFrames;
 
     snapshot.actors.clear();
+    snapshot.actors.reserve(EXPECTED_MAX_ACTORS);
+
     for (int i = 0; i < ACTORCAT_MAX; i++) {
         Actor* actor = gPlayState->actorCtx.actorLists[i].first;
         while (actor != NULL) {
@@ -78,6 +178,16 @@ static void CaptureFrame() {
             snapshot.actors.push_back(as);
             actor = actor->next;
         }
+    }
+
+    // Capture Player animation state (main body + upper body blend)
+    Player* player = GET_PLAYER(gPlayState);
+    if (player != NULL) {
+        snapshot.player.valid = true;
+        CaptureSkelAnime(snapshot.player.skelAnime, &player->skelAnime);
+        CaptureSkelAnime(snapshot.player.skelAnimeUpper, &player->skelAnimeUpper);
+    } else {
+        snapshot.player.valid = false;
     }
 
     sBufferHead = (sBufferHead + 1) % REWIND_BUFFER_SIZE;
@@ -100,21 +210,20 @@ static void RestoreFrame() {
         return;
     }
 
-    // Build a lookup table from actor pointer to snapshot index for O(1) matching.
-    std::unordered_map<Actor*, size_t> snapshotLookup;
-    snapshotLookup.reserve(snapshot.actors.size());
+    // Build lookup table (reuse static map to avoid heap allocation)
+    sSnapshotLookup.clear();
+    sSnapshotLookup.reserve(snapshot.actors.size());
     for (size_t idx = 0; idx < snapshot.actors.size(); idx++) {
-        snapshotLookup[snapshot.actors[idx].ptr] = idx;
+        sSnapshotLookup[snapshot.actors[idx].ptr] = idx;
     }
 
-    // Restore actor states by matching live actors against the snapshot.
-    // We iterate the live actor list (safe pointers) and look up the snapshot
-    // entry. This avoids dereferencing potentially stale pointers.
+    // Restore actors that exist in the snapshot; hide actors spawned after this frame
+    sHiddenActors.clear();
     for (int i = 0; i < ACTORCAT_MAX; i++) {
         Actor* actor = gPlayState->actorCtx.actorLists[i].first;
         while (actor != NULL) {
-            auto it = snapshotLookup.find(actor);
-            if (it != snapshotLookup.end()) {
+            auto it = sSnapshotLookup.find(actor);
+            if (it != sSnapshotLookup.end()) {
                 const ActorSnapshot& as = snapshot.actors[it->second];
                 if (as.id == actor->id && as.category == actor->category) {
                     actor->world = as.world;
@@ -124,9 +233,19 @@ static void RestoreFrame() {
                     actor->speed = as.speed;
                     actor->gravity = as.gravity;
                 }
+            } else {
+                // Actor was spawned after this snapshot frame — hide during rewind
+                sHiddenActors.insert(actor);
             }
             actor = actor->next;
         }
+    }
+
+    // Restore Player animation state
+    Player* player = GET_PLAYER(gPlayState);
+    if (player != NULL && snapshot.player.valid) {
+        RestoreSkelAnime(&player->skelAnime, snapshot.player.skelAnime);
+        RestoreSkelAnime(&player->skelAnimeUpper, snapshot.player.skelAnimeUpper);
     }
 
     gPlayState->gameplayFrames = snapshot.gameplayFrames;
@@ -144,10 +263,25 @@ void RegisterRewind() {
         Input* input = CONTROLLER1(&gPlayState->state);
         bool rewindPressed = CHECK_BTN_ALL(input->cur.button, BTN_DLEFT);
 
+        bool wasRewinding = sIsRewinding;
         sIsRewinding = rewindPressed && sBufferCount > 0;
 
         if (sIsRewinding) {
             RestoreFrame();
+        } else if (wasRewinding) {
+            // Rewind just ended — kill actors that were spawned after
+            // the point we rewound to so they don't persist in the new timeline.
+            for (int i = 0; i < ACTORCAT_MAX; i++) {
+                Actor* actor = gPlayState->actorCtx.actorLists[i].first;
+                while (actor != NULL) {
+                    Actor* next = actor->next;
+                    if (sHiddenActors.count(actor) > 0) {
+                        Actor_Kill(actor);
+                    }
+                    actor = next;
+                }
+            }
+            sHiddenActors.clear();
         }
     });
 
@@ -163,6 +297,13 @@ void RegisterRewind() {
     // positions are not immediately overwritten by game logic.
     COND_HOOK(ShouldActorUpdate, CVAR, [](Actor* actor, bool* should) {
         if (sIsRewinding) {
+            *should = false;
+        }
+    });
+
+    // Hide actors that were spawned after the current rewind point.
+    COND_HOOK(ShouldActorDraw, CVAR, [](Actor* actor, bool* should) {
+        if (sIsRewinding && !sHiddenActors.empty() && sHiddenActors.count(actor) > 0) {
             *should = false;
         }
     });

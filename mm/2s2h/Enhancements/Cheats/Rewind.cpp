@@ -1,3 +1,4 @@
+#include <unordered_map>
 #include <vector>
 
 #include <libultraship/bridge/consolevariablebridge.h>
@@ -12,12 +13,15 @@ extern "C" {
 #define CVAR_NAME "gCheats.Rewind"
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
 
-static const int REWIND_BUFFER_SIZE = 600;
+// 30 seconds of history at 20 fps game logic rate
+static constexpr int REWIND_BUFFER_SIZE = 30 * 20;
 
-// Per-actor snapshot of visual/physics state
+// Per-actor snapshot of visual/physics state.
+// ActorShape is POD (Vec3s, scalars, function pointer) so a shallow copy is safe.
 struct ActorSnapshot {
     Actor* ptr;
     s16 id;
+    u8 category;
     PosRot world;
     Vec3f prevPos;
     ActorShape shape;
@@ -64,6 +68,7 @@ static void CaptureFrame() {
             ActorSnapshot as;
             as.ptr = actor;
             as.id = actor->id;
+            as.category = actor->category;
             as.world = actor->world;
             as.prevPos = actor->prevPos;
             as.shape = actor->shape;
@@ -95,21 +100,29 @@ static void RestoreFrame() {
         return;
     }
 
+    // Build a lookup table from actor pointer to snapshot index for O(1) matching.
+    std::unordered_map<Actor*, size_t> snapshotLookup;
+    snapshotLookup.reserve(snapshot.actors.size());
+    for (size_t idx = 0; idx < snapshot.actors.size(); idx++) {
+        snapshotLookup[snapshot.actors[idx].ptr] = idx;
+    }
+
     // Restore actor states by matching live actors against the snapshot.
-    // We iterate the live actor list (safe pointers) and search the snapshot
-    // for a matching entry. This avoids dereferencing potentially stale pointers.
+    // We iterate the live actor list (safe pointers) and look up the snapshot
+    // entry. This avoids dereferencing potentially stale pointers.
     for (int i = 0; i < ACTORCAT_MAX; i++) {
         Actor* actor = gPlayState->actorCtx.actorLists[i].first;
         while (actor != NULL) {
-            for (const ActorSnapshot& as : snapshot.actors) {
-                if (as.ptr == actor && as.id == actor->id) {
+            auto it = snapshotLookup.find(actor);
+            if (it != snapshotLookup.end()) {
+                const ActorSnapshot& as = snapshot.actors[it->second];
+                if (as.id == actor->id && as.category == actor->category) {
                     actor->world = as.world;
                     actor->prevPos = as.prevPos;
                     actor->shape = as.shape;
                     actor->velocity = as.velocity;
                     actor->speed = as.speed;
                     actor->gravity = as.gravity;
-                    break;
                 }
             }
             actor = actor->next;

@@ -5,6 +5,7 @@
 #include "overlays/actors/ovl_En_Elf/z_en_elf.h"
 #include "overlays/actors/ovl_En_Elforg/z_en_elforg.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 
@@ -87,9 +88,34 @@ void EnItem00_Init(Actor* thisx, PlayState* play) {
 
     if (Flags_GetCollectible(play, this->collectibleFlag)) {
         if (thisx->params == ITEM00_HEART_PIECE) {
+            // #region 2S2H [Enhancement] - Heart Piece Replacement
+            s32 heartPieceReplacement = CVarGetInteger("gEnhancements.Items.HeartPieceReplacement", 0);
+            switch (heartPieceReplacement) {
+                case 1:
+                    thisx->params = ITEM00_RUPEE_GREEN;
+                    break;
+                case 2:
+                    thisx->params = ITEM00_RUPEE_BLUE;
+                    break;
+                case 3:
+                    thisx->params = ITEM00_RUPEE_RED;
+                    break;
+                case 4:
+                    thisx->params = ITEM00_RUPEE_PURPLE;
+                    break;
+                case 5:
+                    thisx->params = ITEM00_RUPEE_HUGE;
+                    break;
+                case 6:
+                    Actor_Kill(thisx);
+                    return;
+                default:
+                    thisx->params = ITEM00_RECOVERY_HEART;
+                    break;
+            }
+            // #endregion
             sp30 = 0;
             this->collectibleFlag = 0;
-            thisx->params = ITEM00_RECOVERY_HEART;
         } else {
             Actor_Kill(thisx);
             return;

@@ -169,6 +169,16 @@ static const std::vector<const char*> goronRaceDifficultyOptions = {
     "Skip",     // GORON_RACE_DIFFICULTY_SKIP
 };
 
+static const std::vector<const char*> heartPieceReplacementOptions = {
+    "Recovery Heart", // HEART_PIECE_REPLACEMENT_RECOVERY_HEART
+    "Green Rupee",    // HEART_PIECE_REPLACEMENT_GREEN_RUPEE
+    "Blue Rupee",     // HEART_PIECE_REPLACEMENT_BLUE_RUPEE
+    "Red Rupee",      // HEART_PIECE_REPLACEMENT_RED_RUPEE
+    "Purple Rupee",   // HEART_PIECE_REPLACEMENT_PURPLE_RUPEE
+    "Huge Rupee",     // HEART_PIECE_REPLACEMENT_HUGE_RUPEE
+    "Nothing",        // HEART_PIECE_REPLACEMENT_NOTHING
+};
+
 static const std::vector<const char*> timerDisplayOptions = {
     "Off",          // TIMER_DISPLAY_NONE
     "Real-Time",    // TIMER_DISPLAY_RTA
@@ -1505,6 +1515,18 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Skip Soaring cutscene", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Songs.SkipSoaringCutscene")
         .Options(CheckboxOptions().Tooltip("Skips the cutscene when using the Song of Soaring to warp."));
+
+    // Item Enhancements
+    path.column = SECTION_COLUMN_3;
+    AddWidget(path, "Items", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Heart Piece Replacement", WIDGET_CVAR_COMBOBOX)
+        .CVar("gEnhancements.Items.HeartPieceReplacement")
+        .Options(ComboboxOptions()
+                     .Tooltip("Choose what replaces collected Heart Pieces when revisiting their location.\n"
+                              "-Recovery Heart: Vanilla behavior\n"
+                              "-Green/Blue/Red/Purple/Huge Rupee: Replaced with the corresponding rupee\n"
+                              "-Nothing: No item spawns")
+                     .ComboVec(&heartPieceReplacementOptions));
 
     // Time Savers
     path = { "Enhancements", "Time Savers", SECTION_COLUMN_1 };

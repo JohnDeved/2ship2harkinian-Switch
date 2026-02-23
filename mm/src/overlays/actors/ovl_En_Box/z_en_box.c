@@ -512,7 +512,33 @@ void EnBox_WaitOpen(EnBox* this, PlayState* play) {
         // #endregion
             if (((this->getItemId == GI_HEART_PIECE) || (this->getItemId == GI_BOTTLE)) &&
                 Flags_GetCollectible(play, this->collectableFlag)) {
-                this->getItemId = GI_RECOVERY_HEART;
+                // #region 2S2H [Enhancement] - Heart Piece Replacement
+                if (this->getItemId == GI_HEART_PIECE) {
+                    s32 heartPieceReplacement = CVarGetInteger("gEnhancements.Items.HeartPieceReplacement", 0);
+                    switch (heartPieceReplacement) {
+                        case 1:
+                            this->getItemId = GI_RUPEE_GREEN;
+                            break;
+                        case 2:
+                            this->getItemId = GI_RUPEE_BLUE;
+                            break;
+                        case 3:
+                            this->getItemId = GI_RUPEE_RED;
+                            break;
+                        case 4:
+                            this->getItemId = GI_RUPEE_PURPLE;
+                            break;
+                        case 5:
+                            this->getItemId = GI_RUPEE_HUGE;
+                            break;
+                        default:
+                            this->getItemId = GI_RECOVERY_HEART;
+                            break;
+                    }
+                } else {
+                    this->getItemId = GI_RECOVERY_HEART;
+                }
+                // #endregion
             }
             if ((this->getItemId == GI_MASK_CAPTAIN) && (INV_CONTENT(ITEM_MASK_CAPTAIN) == ITEM_MASK_CAPTAIN)) {
                 this->getItemId = GI_RECOVERY_HEART;

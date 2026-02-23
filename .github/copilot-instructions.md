@@ -80,5 +80,4 @@ Performance profiles (`gSwitchPerfMode`): MAXIMUM (1785 MHz) → HIGH → BOOST 
 - **Conserve shared memory bandwidth**: CPU and GPU share the 25.6 GB/s LPDDR4 bus. Minimize large texture uploads during active rendering.
 - **Use NEON SIMD**: The A57 has 128-bit NEON (4× f32 or 16× u8 lanes). Key intrinsics: `vmulq_n_f32`/`vmlaq_n_f32` for multiply-accumulate, `vst4_u8` for interleaved stores, `vrev16q_u8` for endian swap.
 - **Respect the L1 cache**: 32 KB L1D per core. Keep hot data structures small and access patterns sequential.
-- **Use worker cores**: Core 0 is the bottleneck (~100% load). Offload parallel work (collision OC, effects) to cores 1 and 3 via the `TaskWorkerPool`.
-- **Beware thermal throttling**: Sustained 100% Core 0 load triggers GPU clock reduction after minutes of gameplay. Spread work across cores.
+

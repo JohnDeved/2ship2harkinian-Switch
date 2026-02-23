@@ -174,6 +174,7 @@ static bool IsLikelySkelAnime(const SkelAnime* sa, int remaining) {
     if (sa->limbCount == 0 || sa->limbCount > MAX_LIMBS) {
         return false;
     }
+    // mode: 0=loop, 1=loop+interp, 2=once, 3=once+interp, 4=partial, 5=partial+interp
     if (sa->mode > 5) {
         return false;
     }
@@ -183,10 +184,16 @@ static bool IsLikelySkelAnime(const SkelAnime* sa, int remaining) {
     if (sa->jointTable == NULL || ((uintptr_t)sa->jointTable & 1) != 0) {
         return false;
     }
+    // Zero or negative animLength would cause divide-by-zero in the animation engine
     if (sa->animLength <= 0.0f) {
         return false;
     }
     return true;
+}
+
+// Return a pointer to the SkelAnime at the given byte offset within an actor.
+static SkelAnime* GetActorSkelAnime(Actor* actor, int offset) {
+    return reinterpret_cast<SkelAnime*>(reinterpret_cast<u8*>(actor) + offset);
 }
 
 // Find the byte offset of the first SkelAnime within an actor's extended struct.
@@ -204,6 +211,7 @@ static int FindSkelAnimeOffset(Actor* actor) {
         if (instSize >= sizeof(Actor) + sizeof(SkelAnime)) {
             const u8* base = reinterpret_cast<const u8*>(actor);
             int end = (int)instSize - (int)sizeof(SkelAnime);
+            // Scan at pointer-aligned (4-byte) offsets since struct fields are aligned
             for (int off = (int)sizeof(Actor); off <= end; off += 4) {
                 const SkelAnime* sa = reinterpret_cast<const SkelAnime*>(base + off);
                 if (IsLikelySkelAnime(sa, (int)instSize - off)) {
@@ -268,8 +276,7 @@ static void CaptureFrame() {
                 if (offset >= 0) {
                     NpcAnimEntry entry;
                     entry.ptr = actor;
-                    const SkelAnime* sa =
-                        reinterpret_cast<const SkelAnime*>(reinterpret_cast<const u8*>(actor) + offset);
+                    const SkelAnime* sa = GetActorSkelAnime(actor, offset);
                     CaptureSkelAnime(entry.anim, sa);
                     snapshot.npcAnims.push_back(entry);
                 }
@@ -335,8 +342,7 @@ static void RestoreFrame() {
                     if (animIt != sNpcAnimLookup.end()) {
                         int offset = FindSkelAnimeOffset(actor);
                         if (offset >= 0) {
-                            SkelAnime* sa = reinterpret_cast<SkelAnime*>(reinterpret_cast<u8*>(actor) + offset);
-                            RestoreSkelAnime(sa, snapshot.npcAnims[animIt->second].anim);
+                            RestoreSkelAnime(GetActorSkelAnime(actor, offset), snapshot.npcAnims[animIt->second].anim);
                         }
                     }
                 }

@@ -38,6 +38,8 @@ struct ActorSnapshot {
     Vec3f velocity;
     f32 speed;
     f32 gravity;
+    u32 flags;
+    u8 health;
 };
 
 // SkelAnime scalar fields + joint/morph table data for animation replay
@@ -65,6 +67,22 @@ struct PlayerSnapshot {
     bool valid = false;
     SkelAnimeSnapshot skelAnime;
     SkelAnimeSnapshot skelAnimeUpper;
+    u32 stateFlags1;
+    u32 stateFlags2;
+    u32 stateFlags3;
+};
+
+// Player resource state (health, magic, rupees)
+struct PlayerResourceSnapshot {
+    s16 health;
+    s8 magic;
+    s16 rupees;
+    s16 magicState;
+};
+
+// Scene-level flags (switches, chests, collectibles, cleared rooms)
+struct SceneFlagsSnapshot {
+    ActorContextSceneFlags flags;
 };
 
 // NPC animation entry — stores one SkelAnime snapshot for a non-Player actor
@@ -79,6 +97,8 @@ struct FrameSnapshot {
     u32 gameplayFrames = 0;
     std::vector<ActorSnapshot> actors;
     PlayerSnapshot player;
+    PlayerResourceSnapshot resources;
+    SceneFlagsSnapshot sceneFlags;
     std::vector<NpcAnimEntry> npcAnims;
 };
 
@@ -250,6 +270,8 @@ static void CaptureFrame() {
             as.velocity = actor->velocity;
             as.speed = actor->speed;
             as.gravity = actor->gravity;
+            as.flags = actor->flags;
+            as.health = actor->colChkInfo.health;
             snapshot.actors.push_back(as);
             actor = actor->next;
         }
@@ -261,9 +283,21 @@ static void CaptureFrame() {
         snapshot.player.valid = true;
         CaptureSkelAnime(snapshot.player.skelAnime, &player->skelAnime);
         CaptureSkelAnime(snapshot.player.skelAnimeUpper, &player->skelAnimeUpper);
+        snapshot.player.stateFlags1 = player->stateFlags1;
+        snapshot.player.stateFlags2 = player->stateFlags2;
+        snapshot.player.stateFlags3 = player->stateFlags3;
     } else {
         snapshot.player.valid = false;
     }
+
+    // Capture player resources (health, magic, rupees)
+    snapshot.resources.health = gSaveContext.save.saveInfo.playerData.health;
+    snapshot.resources.magic = gSaveContext.save.saveInfo.playerData.magic;
+    snapshot.resources.rupees = gSaveContext.save.saveInfo.playerData.rupees;
+    snapshot.resources.magicState = gSaveContext.magicState;
+
+    // Capture scene flags (switches, chests, collectibles, cleared rooms)
+    snapshot.sceneFlags.flags = gPlayState->actorCtx.sceneFlags;
 
     // Capture NPC animation state by scanning for SkelAnime in each actor's struct
     snapshot.npcAnims.clear();
@@ -336,6 +370,8 @@ static void RestoreFrame() {
                     actor->velocity = as.velocity;
                     actor->speed = as.speed;
                     actor->gravity = as.gravity;
+                    actor->flags = as.flags;
+                    actor->colChkInfo.health = as.health;
 
                     // Restore NPC animation if captured
                     auto animIt = sNpcAnimLookup.find(actor);
@@ -359,7 +395,19 @@ static void RestoreFrame() {
     if (player != NULL && snapshot.player.valid) {
         RestoreSkelAnime(&player->skelAnime, snapshot.player.skelAnime);
         RestoreSkelAnime(&player->skelAnimeUpper, snapshot.player.skelAnimeUpper);
+        player->stateFlags1 = snapshot.player.stateFlags1;
+        player->stateFlags2 = snapshot.player.stateFlags2;
+        player->stateFlags3 = snapshot.player.stateFlags3;
     }
+
+    // Restore player resources (health, magic, rupees)
+    gSaveContext.save.saveInfo.playerData.health = snapshot.resources.health;
+    gSaveContext.save.saveInfo.playerData.magic = snapshot.resources.magic;
+    gSaveContext.save.saveInfo.playerData.rupees = snapshot.resources.rupees;
+    gSaveContext.magicState = snapshot.resources.magicState;
+
+    // Restore scene flags (switches, chests, collectibles, cleared rooms)
+    gPlayState->actorCtx.sceneFlags = snapshot.sceneFlags.flags;
 
     gPlayState->gameplayFrames = snapshot.gameplayFrames;
 }

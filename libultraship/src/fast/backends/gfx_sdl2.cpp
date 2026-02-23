@@ -668,23 +668,6 @@ void GfxWindowBackendSDL2::HandleEvents() {
         }
     }
 #endif
-
-#ifdef __SWITCH__
-    // Detect dock/undock resolution change.
-    // When the Switch operation mode changes (handheld ↔ docked), the display
-    // resolution changes (720p ↔ 1080p). We must update the SDL window size
-    // to match, otherwise the EGL surface gets out of sync with the NWindow
-    // and SDL_GL_SwapWindow() will crash.
-    {
-        int displayW, displayH;
-        Ship::Switch::GetDisplaySize(&displayW, &displayH);
-        if (displayW != mWindowWidth || displayH != mWindowHeight) {
-            SDL_SetWindowSize(mWnd, displayW, displayH);
-            mWindowWidth = displayW;
-            mWindowHeight = displayH;
-        }
-    }
-#endif
 }
 
 bool GfxWindowBackendSDL2::IsFrameReady() {
@@ -768,6 +751,26 @@ void GfxWindowBackendSDL2::SwapBuffersBegin() {
     }
 
     SyncFramerateWithTime();
+#endif
+
+#ifdef __SWITCH__
+    // Detect dock/undock resolution change on the render thread.
+    // When the Switch operation mode changes (handheld ↔ docked), the display
+    // resolution changes (720p ↔ 1080p). We must update the SDL window and
+    // re-bind the GL context BEFORE eglSwapBuffers, or the swap will crash
+    // due to the EGL surface being out of sync with the NWindow.
+    // This check runs on the render thread which owns the GL context.
+    {
+        int displayW, displayH;
+        Ship::Switch::GetDisplaySize(&displayW, &displayH);
+        if (displayW != mWindowWidth || displayH != mWindowHeight) {
+            SDL_SetWindowSize(mWnd, displayW, displayH);
+            mWindowWidth = displayW;
+            mWindowHeight = displayH;
+            // Re-bind the GL context to refresh the EGL surface after resize
+            SDL_GL_MakeCurrent(mWnd, mCtx);
+        }
+    }
 #endif
     SDL_GL_SwapWindow(mWnd);
 }

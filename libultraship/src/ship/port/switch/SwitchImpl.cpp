@@ -18,6 +18,8 @@ static bool isRunning = true;
 static bool hasFocus = true;
 static bool isShowingVirtualKeyboard = false;
 
+std::atomic<bool> Ship::Switch::sOperationModeChanged{false};
+
 static SwkbdConfig keyboard;
 static char kbBuffer[256] = { 0 };
 
@@ -193,6 +195,7 @@ static void on_applet_hook(AppletHookType hook, void* param) {
         case AppletHookType_OnPerformanceMode:
         case AppletHookType_OnOperationMode:
             Ship::Switch::ApplyOverclock();
+            Ship::Switch::sOperationModeChanged.store(true, std::memory_order_release);
             break;
         default:
             break;

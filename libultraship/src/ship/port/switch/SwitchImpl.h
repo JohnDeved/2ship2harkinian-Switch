@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 
@@ -27,5 +28,8 @@ class Switch {
     static void ApplyOverclock();
     static void ThrowMissingOTR(std::string OTRPath);
     static void PrintErrorMessageToScreen(const char* str, ...);
+
+    // Set by applet hook on dock/undock; cleared by render thread after context recreation.
+    static std::atomic<bool> sOperationModeChanged;
 };
 }; // namespace Ship

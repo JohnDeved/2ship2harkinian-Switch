@@ -1019,10 +1019,11 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Hookshot Anywhere", WIDGET_CVAR_CHECKBOX)
         .CVar("gCheats.HookshotAnywhere")
         .Options(CheckboxOptions().Tooltip("Allows most surfaces to be hookshot-able."));
-    AddWidget(path, "Rewind on D-Pad Left", WIDGET_CVAR_CHECKBOX)
+    AddWidget(path, "Rewind on Left Stick Click", WIDGET_CVAR_CHECKBOX)
         .CVar("gCheats.Rewind")
         .Options(CheckboxOptions().Tooltip(
-            "Hold D-Pad Left to rewind time. Actors and player move backward to their previous positions. "
+            "Hold Left Stick Click (Modifier 1) to rewind time. Actors and player move backward to their previous "
+            "positions. "
             "Release to resume gameplay from the rewound point. Stores ~30 seconds of history."));
     AddWidget(path, "Moon Jump on L", WIDGET_CVAR_CHECKBOX)
         .CVar("gCheats.MoonJumpOnL")

@@ -6,6 +6,7 @@
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
+#include "2s2h/BenPort.h"
 
 extern "C" {
 #include "z64.h"
@@ -476,7 +477,7 @@ void RegisterRewind() {
         }
 
         Input* input = CONTROLLER1(&gPlayState->state);
-        bool rewindPressed = CHECK_BTN_ALL(input->cur.button, BTN_DLEFT);
+        bool rewindPressed = CHECK_BTN_ALL(input->cur.button, BTN_CUSTOM_MODIFIER1);
 
         // Don't allow rewind during pause, cutscenes, or message dialogs
         if (gPlayState->pauseCtx.state != PAUSE_STATE_OFF || gPlayState->csCtx.state != CS_STATE_IDLE ||

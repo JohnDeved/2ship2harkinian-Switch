@@ -87,4 +87,29 @@ Assets are referenced via string paths from `mm/assets/2s2h_assets.h` and header
 #endif
 ```
 
-The Switch target uses **aarch64**, **OpenGL** via SDL2, and has limited memory compared to desktop.
+### Switch Hardware Specs
+
+| Component | Specification |
+|-----------|--------------|
+| **SoC** | NVIDIA Tegra X1 |
+| **CPU** | 4× ARM Cortex-A57 @ 1020 MHz (max 1785 MHz with overclock), 32 KB L1D/core, 2 MB shared L2 |
+| **GPU** | Maxwell, 256 CUDA cores — Docked: 768 MHz, Handheld: 307–384 MHz |
+| **Memory** | 4 GB LPDDR4 @ 1600 MHz (25.6 GB/s, **shared** CPU+GPU) |
+| **Graphics API** | OpenGL ES 3.2 via NVN compatibility layer |
+| **Build** | AArch64, `-O3 -ffast-math`, devkitPro toolchain |
+
+Performance profiles (`gSwitchPerfMode`): MAXIMUM (1785 MHz) → HIGH → BOOST → STOCK (1020 MHz) → POWERSAVINGM1–M3 (714 MHz).
+
+### Performance Profile
+
+The dominant bottleneck is the **Fast3D display list interpreter** (~84% of frame time). GPU sits at ~30% utilization — CPU cannot feed GL commands fast enough. See `docs/NX_PERFORMANCE.md` for full profiler data.
+
+### Switch Optimization Guidelines
+
+- **Minimize draw calls**: The Maxwell GPU has significant per-draw overhead. Batch geometry to reduce `glDrawArrays` calls.
+- **Avoid runtime shader compilation**: Shader compilation on Maxwell is very expensive. Pre-warm all variants at load time.
+- **Conserve shared memory bandwidth**: CPU and GPU share the 25.6 GB/s LPDDR4 bus. Minimize large texture uploads during active rendering.
+- **Use NEON SIMD**: The A57 has 128-bit NEON (4× f32 or 16× u8 lanes). Key intrinsics: `vmulq_n_f32`/`vmlaq_n_f32` for multiply-accumulate, `vst4_u8` for interleaved stores, `vrev16q_u8` for endian swap.
+- **Respect the L1 cache**: 32 KB L1D per core. Keep hot data structures small and access patterns sequential.
+- **Use worker cores**: Core 0 is the bottleneck (~100% load). Offload parallel work (collision OC, effects) to cores 1 and 3 via the `TaskWorkerPool`.
+- **Beware thermal throttling**: Sustained 100% Core 0 load triggers GPU clock reduction after minutes of gameplay. Spread work across cores.

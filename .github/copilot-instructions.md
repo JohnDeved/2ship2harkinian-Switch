@@ -100,10 +100,6 @@ Assets are referenced via string paths from `mm/assets/2s2h_assets.h` and header
 
 Performance profiles (`gSwitchPerfMode`): MAXIMUM (1785 MHz) → HIGH → BOOST → STOCK (1020 MHz) → POWERSAVINGM1–M3 (714 MHz).
 
-### Performance Profile
-
-The dominant bottleneck is the **Fast3D display list interpreter** (~84% of frame time). GPU sits at ~30% utilization — CPU cannot feed GL commands fast enough. See `docs/NX_PERFORMANCE.md` for full profiler data.
-
 ### Switch Optimization Guidelines
 
 - **Minimize draw calls**: The Maxwell GPU has significant per-draw overhead. Batch geometry to reduce `glDrawArrays` calls.

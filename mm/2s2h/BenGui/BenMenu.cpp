@@ -888,7 +888,7 @@ void BenMenu::AddEnhancements() {
                      .Format("%.0f")
                      .Min(1.0f)
                      .Max(20.0f)
-                     .DefaultValue(10.0f));
+                     .DefaultValue(9.0f));
     AddWidget(path, "Max Camera Height Angle: %.0f\xC2\xB0", WIDGET_CVAR_SLIDER_FLOAT)
         .Callback([](WidgetInfo& info) { FreeLookPitchMinMax(); })
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })

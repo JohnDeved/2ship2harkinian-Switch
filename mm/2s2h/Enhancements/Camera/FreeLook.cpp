@@ -109,7 +109,7 @@ bool Camera_FreeLook(Camera* camera) {
     // Auto-follow: gradually rotate camera behind player's movement direction
     if (CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollow", 0)) {
         f32 followSpeed = CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollowSpeed", 200) / 1000.0f;
-        f32 speedThreshold = CVarGetFloat("gEnhancements.Camera.FreeLook.AutoFollowThreshold", 10.0f);
+        f32 speedThreshold = CVarGetFloat("gEnhancements.Camera.FreeLook.AutoFollowThreshold", 9.0f);
 
         // When on a horse, use the horse's speed and rotation instead of the player's
         f32 actorSpeed = (player->rideActor != NULL) ? player->rideActor->speed : player->speedXZ;

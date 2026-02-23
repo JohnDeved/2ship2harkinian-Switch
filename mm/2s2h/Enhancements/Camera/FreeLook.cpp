@@ -109,18 +109,20 @@ bool Camera_FreeLook(Camera* camera) {
     // Auto-follow: gradually rotate camera behind player's movement direction
     if (CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollow", 0)) {
         f32 followSpeed = CVarGetInteger("gEnhancements.Camera.FreeLook.AutoFollowSpeed", 200) / 1000.0f;
-        f32 speedThreshold = CVarGetFloat("gEnhancements.Camera.FreeLook.AutoFollowThreshold", 10.0f);
+        f32 speedThreshold = CVarGetFloat("gEnhancements.Camera.FreeLook.AutoFollowThreshold", 9.0f);
 
-        // When on a horse, use the horse's speed and rotation instead of the player's
+        // Compute actual movement direction from position deltas
         f32 actorSpeed = (player->rideActor != NULL) ? player->rideActor->speed : player->speedXZ;
-        s16 actorYaw = (player->rideActor != NULL) ? player->rideActor->world.rot.y : player->actor.world.rot.y;
+        Actor* followActor = (player->rideActor != NULL) ? player->rideActor : &player->actor;
+        Vec3f moveOrigin = { 0.0f, 0.0f, 0.0f };
+        Vec3f moveDelta = {
+            followActor->world.pos.x - followActor->prevPos.x,
+            followActor->world.pos.y - followActor->prevPos.y,
+            followActor->world.pos.z - followActor->prevPos.z,
+        };
+        VecGeo moveGeo = OLib_Vec3fDiffToVecGeo(&moveOrigin, &moveDelta);
 
         if (actorSpeed > speedThreshold) {
-            // Target yaw: behind the movement direction (opposite of facing)
-            s16 targetYaw = BINANG_ROT180(actorYaw);
-            s16 currentYaw = (s16)yaw;
-            s16 yawDelta = BINANG_SUB(targetYaw, currentYaw);
-
             // Scale follow strength with actor speed
             f32 speedFactor = CLAMP((actorSpeed - speedThreshold) / 8.0f, 0.0f, 1.0f);
 
@@ -130,8 +132,26 @@ bool Camera_FreeLook(Camera* camera) {
             f32 stickMag = (absStickX > absStickY) ? absStickX : absStickY;
             f32 stickFactor = CLAMP(1.0f - stickMag / 40.0f, 0.0f, 1.0f);
 
-            yaw += (f32)yawDelta * followSpeed * speedFactor * stickFactor;
-            yaw = (s16)yaw;
+            // Only use moveGeo when the actual position delta is meaningful,
+            // to avoid degenerate direction when blocked by a wall or moving purely vertically
+            f32 moveDeltaXZ = SQ(moveDelta.x) + SQ(moveDelta.z);
+            if (moveDeltaXZ > SQ(0.5f)) {
+                // Target yaw: behind the actual movement direction
+                s16 targetYaw = BINANG_ROT180(moveGeo.yaw);
+                s16 currentYaw = (s16)yaw;
+                s16 yawDelta = BINANG_SUB(targetYaw, currentYaw);
+
+                yaw += (f32)yawDelta * followSpeed * speedFactor * stickFactor;
+                yaw = (s16)yaw;
+
+                // Target pitch: default viewing angle adjusted by movement slope
+                s16 defaultPitch = DEG_TO_BINANG(14.0f);
+                s16 targetPitch = defaultPitch - moveGeo.pitch;
+                s16 currentPitch = (s16)pitch;
+                s16 pitchDelta = targetPitch - currentPitch;
+                pitch += (f32)pitchDelta * followSpeed * speedFactor * stickFactor;
+                pitch = (s16)pitch;
+            }
         }
     }
 

@@ -850,7 +850,8 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Camera.FreeLook.AutoFollow")
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
         .Options(CheckboxOptions().Tooltip(
-            "Automatically rotates the camera behind the player or mount during movement.\n"
+            "Automatically rotates the camera behind the player or mount during movement\n"
+            "and adjusts the vertical angle to follow the movement direction (slopes, etc.).\n"
             "The camera follows the direction of movement, similar to racing game cameras.\n"
             "Especially useful during Goron rolling, Zora swimming, and horse riding."));
     AddWidget(path, "Aim Camera From Camera Direction", WIDGET_CVAR_CHECKBOX)
@@ -888,7 +889,7 @@ void BenMenu::AddEnhancements() {
                      .Format("%.0f")
                      .Min(1.0f)
                      .Max(20.0f)
-                     .DefaultValue(10.0f));
+                     .DefaultValue(9.0f));
     AddWidget(path, "Max Camera Height Angle: %.0f\xC2\xB0", WIDGET_CVAR_SLIDER_FLOAT)
         .Callback([](WidgetInfo& info) { FreeLookPitchMinMax(); })
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })

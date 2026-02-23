@@ -91,10 +91,10 @@ Real-world measurements from Switch hardware (60-frame average):
 |------|--------|----------|------|
 | **0** | Main thread | Game logic, actor updates, collision AT, DL generation, rendering submission, frame interpolation | ~100% (bottleneck) |
 | **1** | Worker pool | `CollisionCheck_OC`, effects updates | ~15–25% |
-| **2** | Audio thread | `AudioMgr_CreateNextAudioBuffer` + playback | ~5–10% |
-| **3** | Worker pool | Available for parallel tasks | ~0–15% |
+| **2** | Worker pool | Available for parallel tasks | ~0–15% |
+| **3** | System reserved | Reserved for Nintendo Switch OS | — |
 
-> **Core 3 note**: The Switch OS may reserve core 3 for system tasks. Verify availability with `svcGetInfo` or by attempting `svcSetThreadCoreMask`. If unavailable, the worker pool falls back to core 1 only.
+> **Core 3 note**: Core 3 is reserved for the Nintendo Switch OS. Worker threads are pinned to cores 1 and 2 instead.
 
 ---
 
@@ -254,7 +254,7 @@ Play Update:    0.5ms  █░░░░░░░░░░░░░░░░░░
 | **Frame Profiler** | Phase timing, on-screen overlay, automated bottleneck analysis, snapshot export |
 | **DL Buffer Scanning** | Per-buffer breakdown of all 5 DL buffers (OPA/XLU/Overlay/Work/Debug) |
 | **Fast3D Profiling** | Internal counters and timing in interpreter + OpenGL backend, game-side integration |
-| **Worker Pool on Cores 1+3** | `TaskWorkerPool` with 2 threads pinned to cores 1 and 3 |
+| **Worker Pool on Cores 1+2** | `TaskWorkerPool` with 2 threads pinned to cores 1 and 2 |
 | **Parallel Collision** | AT on main thread, OC dispatched to worker thread |
 | **NEON vertex transform** | NEON-optimized 4×4 matrix-vector multiply in `GfxSpVertex` for vertex position and world_pos |
 | **NEON matrix multiply** | NEON-optimized 4×4 × 4×4 `MatrixMul` using fused multiply-add |
@@ -300,7 +300,7 @@ Phase 1: Instrumentation                              ✅ COMPLETE
   └─ Game-side Fast3D integration (BenPort.cpp)
 
 Phase 2: Core Utilization                              ✅ COMPLETE
-  ├─ TaskWorkerPool on cores 1+3
+  ├─ TaskWorkerPool on cores 1+2
   └─ Parallel collision (AT main, OC worker)
 
 Phase 3: Fast3D Interpreter Optimization               ← CURRENT FOCUS

@@ -6,6 +6,7 @@
 #include "overlays/actors/ovl_En_Elforg/z_en_elforg.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include <libultraship/bridge/consolevariablebridge.h>
+#include "2s2h/Enhancements/Enhancements.h"
 
 #include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 
@@ -91,22 +92,22 @@ void EnItem00_Init(Actor* thisx, PlayState* play) {
             // #region 2S2H [Enhancement] - Heart Piece Replacement
             s32 heartPieceReplacement = CVarGetInteger("gEnhancements.Items.HeartPieceReplacement", 0);
             switch (heartPieceReplacement) {
-                case 1:
+                case HEART_PIECE_REPLACEMENT_GREEN_RUPEE:
                     thisx->params = ITEM00_RUPEE_GREEN;
                     break;
-                case 2:
+                case HEART_PIECE_REPLACEMENT_BLUE_RUPEE:
                     thisx->params = ITEM00_RUPEE_BLUE;
                     break;
-                case 3:
+                case HEART_PIECE_REPLACEMENT_RED_RUPEE:
                     thisx->params = ITEM00_RUPEE_RED;
                     break;
-                case 4:
+                case HEART_PIECE_REPLACEMENT_PURPLE_RUPEE:
                     thisx->params = ITEM00_RUPEE_PURPLE;
                     break;
-                case 5:
+                case HEART_PIECE_REPLACEMENT_HUGE_RUPEE:
                     thisx->params = ITEM00_RUPEE_HUGE;
                     break;
-                case 6:
+                case HEART_PIECE_REPLACEMENT_NOTHING:
                     Actor_Kill(thisx);
                     return;
                 default:

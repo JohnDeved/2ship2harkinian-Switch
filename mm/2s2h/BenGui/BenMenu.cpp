@@ -846,6 +846,18 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "Enables free look camera control.\nNote: You must remap C buttons off of the right "
             "stick in the controller config menu, and map the camera stick to the right stick."));
+    AddWidget(path, "Auto-Follow Movement", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Camera.FreeLook.AutoFollow")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
+        .Options(CheckboxOptions().Tooltip(
+            "Automatically rotates the camera behind the player or mount during movement.\n"
+            "The camera follows the direction of movement, similar to racing game cameras.\n"
+            "Especially useful during Goron rolling, Zora swimming, and horse riding."));
+    AddWidget(path, "Aim Camera From Camera Direction", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Camera.AimingFirstPersonCamera")
+        .Options(CheckboxOptions().Tooltip(
+            "When aiming (bow, slingshot, etc.), the aiming camera starts from the direction the camera "
+            "is currently looking instead of the direction the player character is facing."));
     AddWidget(path, "Camera Distance: %d", WIDGET_CVAR_SLIDER_INT)
         .CVar("gEnhancements.Camera.FreeLook.MaxCameraDistance")
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
@@ -855,6 +867,28 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Camera.FreeLook.TransitionSpeed")
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
         .Options(IntSliderOptions().Min(1).Max(900).DefaultValue(25));
+    AddWidget(path, "Auto-Follow Speed: %d", WIDGET_CVAR_SLIDER_INT)
+        .CVar("gEnhancements.Camera.FreeLook.AutoFollowSpeed")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
+        .Options(IntSliderOptions()
+                     .Tooltip("How aggressively the camera follows movement direction.\n"
+                              "Lower values give a smoother, more cinematic feel.\n"
+                              "Higher values make the camera snap behind the player or mount faster.")
+                     .Min(1)
+                     .Max(400)
+                     .DefaultValue(200));
+    AddWidget(path, "Auto-Follow Speed Threshold: %.0f", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.Camera.FreeLook.AutoFollowThreshold")
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
+        .Options(FloatSliderOptions()
+                     .Tooltip("Minimum movement speed before auto-follow activates.\n"
+                              "Uses mount speed when riding.\n"
+                              "Default is high enough to avoid triggering during normal walking or running.\n"
+                              "Lower values will make it activate sooner.")
+                     .Format("%.0f")
+                     .Min(1.0f)
+                     .Max(20.0f)
+                     .DefaultValue(10.0f));
     AddWidget(path, "Max Camera Height Angle: %.0f\xC2\xB0", WIDGET_CVAR_SLIDER_FLOAT)
         .Callback([](WidgetInfo& info) { FreeLookPitchMinMax(); })
         .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_FREE_LOOK_OFF).active; })
@@ -883,6 +917,11 @@ void BenMenu::AddEnhancements() {
             }
         })
         .Options(CheckboxOptions().Tooltip("Enables debug camera control."));
+    AddWidget(path, "R3 Toggle Debug Camera", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Camera.DebugCam.RStickToggle")
+        .Options(CheckboxOptions().Tooltip(
+            "When enabled, pressing the right stick (R3) will toggle the debug camera on and off.\n"
+            "This also works when Free Look is enabled."));
     AddWidget(path, "Invert Camera X Axis", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Camera.RightStick.InvertXAxis")
         .PreFunc([](WidgetInfo& info) {
@@ -1044,6 +1083,10 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Faster Push/Pull", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.FasterPushAndPull")
         .Options(CheckboxOptions().Tooltip("Speeds up the time it takes to push/pull various objects."));
+    AddWidget(path, "Open Chests From Any Direction", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.OpenChestsFromAnyDirection")
+        .Options(CheckboxOptions().Tooltip("Allows you to open chests from any direction while facing them, instead of "
+                                           "requiring you to stand in front of the chest."));
     AddWidget(path, "Prevent Diving Over Water", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.PreventDiveOverWater")
         .Options(CheckboxOptions().Tooltip("Prevents Link from automatically diving over bodies of water."));
@@ -1053,6 +1096,35 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Manual Jump", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ManualJump")
         .Options(CheckboxOptions().Tooltip("Z + A to Jump and B while midair to Jump Attack."));
+    AddWidget(path, "Modern Z-Targeting", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.ModernZTargeting")
+        .Options(CheckboxOptions().Tooltip(
+            "Enables modern Zelda-style targeting enhancements (BotW/TotK). "
+            "Toggle the individual features below."));
+    AddWidget(path, "  Camera-Based Lock-On", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.ModernZTargeting.CameraBasedLock")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Initial lock-on picks the target closest to the camera center instead of the player's facing direction.")
+            .DefaultValue(true));
+    AddWidget(path, "  Right Stick Target Switch", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.ModernZTargeting.RightStickSwitch")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Push the right stick left/right while locked on to switch between nearby targets.")
+            .DefaultValue(true));
+    AddWidget(path, "  Z-Toggle Release", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.ModernZTargeting.ZToggleRelease")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Pressing Z while locked on releases the lock instead of switching targets.")
+            .DefaultValue(true));
     AddWidget(path, "Dpad Equips", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Dpad.DpadEquips")
         .Options(CheckboxOptions().Tooltip("Allows you to equip items to your D-pad."));
@@ -1079,6 +1151,14 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.PlayerActions.ArrowCycle")
         .Options(CheckboxOptions().Tooltip(
             "While aiming the bow, use R to cycle between Normal, Fire, Ice and Light arrows."));
+    AddWidget(path, "  D-Pad Arrow Cycling", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.PlayerActions.ArrowCycleDpad")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_ARROW_CYCLE_OFF).active;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "While aiming the bow, use D-Pad Left/Right to cycle between arrow types. "
+            "Disables R-based arrow cycling; R will shield/exit as normal."));
     AddWidget(path, "Remote Bombchu Control", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.PlayerActions.RemoteBombchu")
         .Options(CheckboxOptions().Tooltip(
@@ -2056,6 +2136,15 @@ void BenMenu::AddDevTools() {
         .CVar("gWindows.FrameProfiler")
         .Options(ButtonOptions().Tooltip("Shows per-phase CPU timing for each frame, helping identify bottlenecks."))
         .WindowName("Frame Profiler");
+
+    path = { "Dev Tools", "Benchmark", SECTION_COLUMN_1 };
+    AddSidebarEntry("Dev Tools", "Benchmark", 1);
+    AddWidget(path, "Popout Benchmark", WIDGET_WINDOW_BUTTON)
+        .CVar("gWindows.Benchmark")
+        .Options(ButtonOptions().Tooltip(
+            "Automated performance benchmark that warps through heavy scenes and collects profiler data "
+            "for deterministic, consistent performance comparisons across builds."))
+        .WindowName("Benchmark");
 }
 
 BenMenu::BenMenu(const std::string& consoleVariable, const std::string& name)
@@ -2190,6 +2279,16 @@ void BenMenu::InitElement() {
                return CVarGetInteger("gEnhancements.Minigames.BoatArcheryInvincible", 0);
            },
             "Koume is Invincible" } },
+        { DISABLE_FOR_MODERN_ZTARGETING_OFF,
+          { [](disabledInfo& info) -> bool {
+               return !CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0);
+           },
+            "Modern Z-Targeting is Disabled" } },
+        { DISABLE_FOR_ARROW_CYCLE_OFF,
+          { [](disabledInfo& info) -> bool {
+               return !CVarGetInteger("gEnhancements.PlayerActions.ArrowCycle", 0);
+           },
+            "Arrow Type Cycling is Disabled" } },
     };
 }
 

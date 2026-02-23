@@ -1376,6 +1376,11 @@ void Interpreter::ImportTextureMask(int i, int tile) {
         return;
     }
 
+    // Skip string construction + map lookup when no masked textures are registered
+    if (mMaskedTextures.empty()) {
+        return;
+    }
+
     auto maskIter = mMaskedTextures.find(GetBaseTexturePath(metadata.resource->GetInitData()->Path));
     if (maskIter == mMaskedTextures.end()) {
         return;
@@ -2180,6 +2185,59 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         }
     }
 
+#ifdef __SWITCH__
+    // Fast-path: if rendering state hasn't changed since the last triangle, skip all state
+    // validation (depth, viewport, combiner, texture, shader, alpha checks) and reuse the
+    // cached vertex-processing parameters. This saves ~400-600ns per triangle.
+    // Expected hit rate: ~80% (consecutive same-state triangles within a draw call).
+    //
+    // Pre-declare all variables with non-vacuous initialization that the goto would
+    // cross. C++ forbids jumping past a variable's initialization even for trivial types.
+    // Variables without initializers (POD arrays, raw struct declarations) have vacuous
+    // initialization and are safe to jump past.
+    uint8_t depth_test_and_mask;
+    bool depth_changed;
+    bool zmode_decal;
+    bool decal_changed;
+    bool viewport_changed;
+    bool scissor_changed;
+    uint64_t cc_id;
+    uint64_t cc_options;
+    bool use_alpha;
+    bool use_fog;
+    bool texture_edge;
+    bool use_noise;
+    bool use_2cyc;
+    bool alpha_threshold;
+    bool invisible;
+    bool use_grayscale;
+    ShaderMod shader;
+    uint32_t tm;
+    struct ShaderProgram* prg;
+    uint8_t numInputs;
+    const bool* usedTextures;
+    struct GfxClipParameters clip_parameters;
+    bool usedFastPath;
+    bool linearFilter;
+    float linearOffset;
+    int numAlphaPasses;
+
+    if (!mTriStateDirty) {
+        usedFastPath = true;
+        // Jump directly to vertex processing using cached parameters.
+        // Clear accumulated textures_changed flags that were set by
+        // repeat-iteration handlers (SetTile, LoadBlock, etc.) — they
+        // are redundant and would cause unnecessary slow-path work later.
+        mRdp->textures_changed[0] = false;
+        mRdp->textures_changed[1] = false;
+        mRdp->geometry_mode_changed = false;
+        mRdp->other_mode_changed = false;
+        mRdp->viewport_or_scissor_changed = false;
+        goto fast_path_vertex_processing;
+    }
+    usedFastPath = false;
+#endif
+
     // --- State check section: depth, viewport, texture, shader, alpha ---
 
     // Only recompute other_mode_l / geometry_mode derived flags when they've actually changed
@@ -2210,6 +2268,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRdp->other_mode_changed = false;
     }
 
+#ifndef __SWITCH__
     uint8_t depth_test_and_mask = mCachedModeFlags.depth_test_and_mask;
     bool depth_changed = (depth_test_and_mask != mRenderingState.depth_test_and_mask);
 
@@ -2218,6 +2277,16 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     bool viewport_changed = false;
     bool scissor_changed = false;
+#else
+    depth_test_and_mask = mCachedModeFlags.depth_test_and_mask;
+    depth_changed = (depth_test_and_mask != mRenderingState.depth_test_and_mask);
+
+    zmode_decal = mCachedModeFlags.zmode_decal;
+    decal_changed = (zmode_decal != mRenderingState.decal_mode);
+
+    viewport_changed = false;
+    scissor_changed = false;
+#endif
     if (mRdp->viewport_or_scissor_changed) {
         viewport_changed = memcmp(&mRdp->viewport, &mRenderingState.viewport, sizeof(mRdp->viewport)) != 0;
         scissor_changed = memcmp(&mRdp->scissor, &mRenderingState.scissor, sizeof(mRdp->scissor)) != 0;
@@ -2249,6 +2318,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRdp->viewport_or_scissor_changed = false;
     }
 
+#ifndef __SWITCH__
     uint64_t cc_id = mRdp->combine_mode;
     uint64_t cc_options = 0;
     bool use_alpha = mCachedModeFlags.use_alpha;
@@ -2260,6 +2330,19 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     bool invisible = mCachedModeFlags.invisible;
     bool use_grayscale = mRdp->grayscale;
     auto shader = mRdp->current_shader;
+#else
+    cc_id = mRdp->combine_mode;
+    cc_options = 0;
+    use_alpha = mCachedModeFlags.use_alpha;
+    use_fog = mCachedModeFlags.use_fog;
+    texture_edge = mCachedModeFlags.texture_edge;
+    use_noise = mCachedModeFlags.use_noise;
+    use_2cyc = mCachedModeFlags.use_2cyc;
+    alpha_threshold = mCachedModeFlags.alpha_threshold;
+    invisible = mCachedModeFlags.invisible;
+    use_grayscale = mRdp->grayscale;
+    shader = mRdp->current_shader;
+#endif
 
     if (texture_edge) {
         if (use_alpha) {
@@ -2329,7 +2412,11 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mCachedCombiner = comb;
     }
 
+#ifndef __SWITCH__
     uint32_t tm = 0;
+#else
+    tm = 0;
+#endif
     uint32_t tex_width[2], tex_height[2], tex_width2[2], tex_height2[2];
 
     for (int i = 0; i < 2; i++) {
@@ -2450,7 +2537,11 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         }
     }
 
+#ifndef __SWITCH__
     struct ShaderProgram* prg = comb->prg[tm];
+#else
+    prg = comb->prg[tm];
+#endif
     if (prg == NULL) {
         comb->prg[tm] = prg =
             LookupOrCreateShaderProgram(comb->shader_id0, comb->shader_id1 | tm * SHADER_OPT(TEXEL0_CLAMP_S));
@@ -2474,6 +2565,7 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         mRapi->SetUseAlpha(use_alpha);
         mRenderingState.alpha_blend = use_alpha;
     }
+#ifndef __SWITCH__
     uint8_t numInputs = mCachedNumInputs;
     const bool* usedTextures = mCachedUsedTextures;
 
@@ -2482,6 +2574,17 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
     // Pre-compute texture parameters that are constant across all 3 vertices
     const bool linearFilter = mCachedModeFlags.linear_filter;
     const float linearOffset = (linearFilter && !is_rect) ? 0.5f : 0.0f;
+#else
+    numInputs = mCachedNumInputs;
+    usedTextures = mCachedUsedTextures;
+
+    clip_parameters = mCachedClipParams;
+
+    // Pre-compute texture parameters that are constant across all 3 vertices
+    linearFilter = mCachedModeFlags.linear_filter;
+    linearOffset = (linearFilter && !is_rect) ? 0.5f : 0.0f;
+#endif
+    // Arrays below have vacuous initialization (POD without initializers) — safe for goto
     float invTexWidth[2], invTexHeight[2];
     float clampSVal[2], clampTVal[2];
     bool clampS[2], clampT[2];
@@ -2513,7 +2616,11 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 
     // Pre-compute constant color combiner inputs (everything except G_CCMUX_SHADE)
     // These are the same for all 3 vertices, so we compute the float values once
+#ifndef __SWITCH__
     const int numAlphaPasses = use_alpha ? 2 : 1;
+#else
+    numAlphaPasses = use_alpha ? 2 : 1;
+#endif
 
     // Pre-compute per-input colors that don't depend on the vertex
     struct PrecomputedInput {
@@ -2590,6 +2697,126 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
         grayB = mRdp->grayscale_color.b * INV_255;
         grayA = mRdp->grayscale_color.a * INV_255;
     }
+
+#ifdef __SWITCH__
+    // Populate the cached parameters for the fast-path (next triangle with same state)
+    mCachedTriParams.cc_options = cc_options;
+    mCachedTriParams.tm = tm;
+    mCachedTriParams.comb = comb;
+    mCachedTriParams.prg = prg;
+    mCachedTriParams.numInputs = numInputs;
+    mCachedTriParams.numAlphaPasses = numAlphaPasses;
+    mCachedTriParams.usedTextures[0] = usedTextures[0];
+    mCachedTriParams.usedTextures[1] = usedTextures[1];
+    mCachedTriParams.useFog = use_fog;
+    mCachedTriParams.useGrayscale = use_grayscale;
+    // Cache per-texture tile parameters
+    for (int t = 0; t < 2; t++) {
+        if (!usedTextures[t]) continue;
+        uint32_t tile = mRdp->first_tile_index + t;
+        mCachedTriParams.tex[t].tex_width = tex_width[t];
+        mCachedTriParams.tex[t].tex_height = tex_height[t];
+        mCachedTriParams.tex[t].tex_width2 = tex_width2[t];
+        mCachedTriParams.tex[t].tex_height2 = tex_height2[t];
+        mCachedTriParams.tex[t].invTexWidth = invTexWidth[t];
+        mCachedTriParams.tex[t].invTexHeight = invTexHeight[t];
+        mCachedTriParams.tex[t].clampS = clampS[t];
+        mCachedTriParams.tex[t].clampT = clampT[t];
+        mCachedTriParams.tex[t].clampSVal = clampSVal[t];
+        mCachedTriParams.tex[t].clampTVal = clampTVal[t];
+        mCachedTriParams.tex[t].shiftsMul = shiftsMul[t];
+        mCachedTriParams.tex[t].shifttMul = shifttMul[t];
+        mCachedTriParams.tex[t].ulsOffset = ulsOffset[t];
+        mCachedTriParams.tex[t].ultOffset = ultOffset[t];
+    }
+    // Cache precomputed combiner inputs
+    for (int k = 0; k < numAlphaPasses; k++) {
+        for (int j = 0; j < numInputs; j++) {
+            mCachedTriParams.precomputed[k][j].r = precomputed[k][j].r;
+            mCachedTriParams.precomputed[k][j].g = precomputed[k][j].g;
+            mCachedTriParams.precomputed[k][j].b = precomputed[k][j].b;
+            mCachedTriParams.precomputed[k][j].a = precomputed[k][j].a;
+            mCachedTriParams.precomputed[k][j].isShade = precomputed[k][j].isShade;
+        }
+    }
+    if (use_fog) {
+        mCachedTriParams.fogR = fogR;
+        mCachedTriParams.fogG = fogG;
+        mCachedTriParams.fogB = fogB;
+    }
+    if (use_grayscale) {
+        mCachedTriParams.grayR = grayR;
+        mCachedTriParams.grayG = grayG;
+        mCachedTriParams.grayB = grayB;
+        mCachedTriParams.grayA = grayA;
+    }
+    mCachedTriParams.clipParams = clip_parameters;
+    mCachedTriParams.linearFilter = linearFilter;
+    mCachedTriParams.linearOffset = linearOffset;
+    // Clear the dirty flag — next triangle will use fast-path
+    mTriStateDirty = false;
+    // Fall through to vertex processing
+#endif
+
+fast_path_vertex_processing:
+#ifdef __SWITCH__
+    // Only restore from cache on fast-path entry (skipped slow-path validation).
+    // On slow-path, the local variables were already populated above.
+    if (usedFastPath) {
+        // Fast path: restore variables from cache
+        cc_options = mCachedTriParams.cc_options;
+        tm = mCachedTriParams.tm;
+        comb = mCachedTriParams.comb;
+        prg = mCachedTriParams.prg;
+        numInputs = mCachedTriParams.numInputs;
+        numAlphaPasses = mCachedTriParams.numAlphaPasses;
+        usedTextures = mCachedTriParams.usedTextures;
+        use_fog = mCachedTriParams.useFog;
+        use_grayscale = mCachedTriParams.useGrayscale;
+        // Restore per-texture parameters
+        for (int t = 0; t < 2; t++) {
+            if (!mCachedTriParams.usedTextures[t]) continue;
+            tex_width[t] = mCachedTriParams.tex[t].tex_width;
+            tex_height[t] = mCachedTriParams.tex[t].tex_height;
+            tex_width2[t] = mCachedTriParams.tex[t].tex_width2;
+            tex_height2[t] = mCachedTriParams.tex[t].tex_height2;
+            invTexWidth[t] = mCachedTriParams.tex[t].invTexWidth;
+            invTexHeight[t] = mCachedTriParams.tex[t].invTexHeight;
+            clampS[t] = mCachedTriParams.tex[t].clampS;
+            clampT[t] = mCachedTriParams.tex[t].clampT;
+            clampSVal[t] = mCachedTriParams.tex[t].clampSVal;
+            clampTVal[t] = mCachedTriParams.tex[t].clampTVal;
+            shiftsMul[t] = mCachedTriParams.tex[t].shiftsMul;
+            shifttMul[t] = mCachedTriParams.tex[t].shifttMul;
+            ulsOffset[t] = mCachedTriParams.tex[t].ulsOffset;
+            ultOffset[t] = mCachedTriParams.tex[t].ultOffset;
+        }
+        // Restore precomputed combiner inputs
+        for (int k = 0; k < numAlphaPasses; k++) {
+            for (int j = 0; j < numInputs; j++) {
+                precomputed[k][j].r = mCachedTriParams.precomputed[k][j].r;
+                precomputed[k][j].g = mCachedTriParams.precomputed[k][j].g;
+                precomputed[k][j].b = mCachedTriParams.precomputed[k][j].b;
+                precomputed[k][j].a = mCachedTriParams.precomputed[k][j].a;
+                precomputed[k][j].isShade = mCachedTriParams.precomputed[k][j].isShade;
+            }
+        }
+        if (use_fog) {
+            fogR = mCachedTriParams.fogR;
+            fogG = mCachedTriParams.fogG;
+            fogB = mCachedTriParams.fogB;
+        }
+        if (use_grayscale) {
+            grayR = mCachedTriParams.grayR;
+            grayG = mCachedTriParams.grayG;
+            grayB = mCachedTriParams.grayB;
+            grayA = mCachedTriParams.grayA;
+        }
+        clip_parameters = mCachedTriParams.clipParams;
+        linearFilter = mCachedTriParams.linearFilter;
+        linearOffset = mCachedTriParams.linearOffset;
+    }
+#endif
 
     // Write the float pointer once to avoid repeated member access
     float* __restrict vbo = mBufVbo + mBufVboLen;
@@ -2719,14 +2946,24 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
 }
 
 void Interpreter::GfxSpGeometryMode(uint32_t clear, uint32_t set) {
-    mRsp->geometry_mode &= ~clear;
-    mRsp->geometry_mode |= set;
+    uint32_t new_mode = (mRsp->geometry_mode & ~clear) | set;
+#ifdef __SWITCH__
+    if (mRsp->geometry_mode != new_mode) {
+        mTriStateDirty = true;
+    }
+#endif
+    mRsp->geometry_mode = new_mode;
     mRdp->geometry_mode_changed = true;
 }
 
 void Interpreter::GfxSpExtraGeometryMode(uint32_t clear, uint32_t set) {
-    mRsp->extra_geometry_mode &= ~clear;
-    mRsp->extra_geometry_mode |= set;
+    uint32_t new_mode = (mRsp->extra_geometry_mode & ~clear) | set;
+#ifdef __SWITCH__
+    if (mRsp->extra_geometry_mode != new_mode) {
+        mTriStateDirty = true;
+    }
+#endif
+    mRsp->extra_geometry_mode = new_mode;
 }
 
 void Interpreter::AdjustVIewportOrScissor(XYWidthHeight* area) {
@@ -2768,6 +3005,11 @@ void Interpreter::CalcAndSetViewport(const F3DVp_t* viewport) {
     float x = (viewport->vtrans[0] / 4.0f) - width / 2.0f;
     float y = ((viewport->vtrans[1] / 4.0f) + height / 2.0f);
 
+#ifdef __SWITCH__
+    float oldX = mRdp->viewport.x, oldY = mRdp->viewport.y;
+    float oldW = mRdp->viewport.width, oldH = mRdp->viewport.height;
+#endif
+
     mRdp->viewport.x = x;
     mRdp->viewport.y = y;
     mRdp->viewport.width = width;
@@ -2776,6 +3018,12 @@ void Interpreter::CalcAndSetViewport(const F3DVp_t* viewport) {
     AdjustVIewportOrScissor(&mRdp->viewport);
 
     mRdp->viewport_or_scissor_changed = true;
+#ifdef __SWITCH__
+    if (mRdp->viewport.x != oldX || mRdp->viewport.y != oldY ||
+        mRdp->viewport.width != oldW || mRdp->viewport.height != oldH) {
+        mTriStateDirty = true;
+    }
+#endif
 }
 
 void Interpreter::GfxSpMovememF3dex2(uint8_t index, uint8_t offset, const void* data) {
@@ -2870,11 +3118,19 @@ void Interpreter::GfxSpMovewordF3d(uint8_t index, uint16_t offset, uintptr_t dat
 }
 
 void Interpreter::GfxSpTexture(uint16_t sc, uint16_t tc, uint8_t level, uint8_t tile, uint8_t on) {
+#ifdef __SWITCH__
+    bool changed = (mRsp->texture_scaling_factor.s != sc || mRsp->texture_scaling_factor.t != tc);
+#endif
     mRsp->texture_scaling_factor.s = sc;
     mRsp->texture_scaling_factor.t = tc;
     if (mRdp->first_tile_index != tile) {
         mRdp->textures_changed[0] = true;
         mRdp->textures_changed[1] = true;
+#ifdef __SWITCH__
+        mTriStateDirty = true;
+    } else if (changed) {
+        mTriStateDirty = true;
+#endif
     }
 
     mRdp->first_tile_index = tile;
@@ -2886,6 +3142,11 @@ void Interpreter::GfxDpSetScissor(uint32_t mode, uint32_t ulx, uint32_t uly, uin
     float width = (lrx - ulx) / 4.0f;
     float height = (lry - uly) / 4.0f;
 
+#ifdef __SWITCH__
+    float oldX = mRdp->scissor.x, oldY = mRdp->scissor.y;
+    float oldW = mRdp->scissor.width, oldH = mRdp->scissor.height;
+#endif
+
     mRdp->scissor.x = x;
     mRdp->scissor.y = y;
     mRdp->scissor.width = width;
@@ -2894,6 +3155,12 @@ void Interpreter::GfxDpSetScissor(uint32_t mode, uint32_t ulx, uint32_t uly, uin
     AdjustVIewportOrScissor(&mRdp->scissor);
 
     mRdp->viewport_or_scissor_changed = true;
+#ifdef __SWITCH__
+    if (mRdp->scissor.x != oldX || mRdp->scissor.y != oldY ||
+        mRdp->scissor.width != oldW || mRdp->scissor.height != oldH) {
+        mTriStateDirty = true;
+    }
+#endif
 }
 
 void Interpreter::GfxDpSetTextureImage(uint32_t format, uint32_t size, uint32_t width, const char* texPath,
@@ -2937,6 +3204,9 @@ void Interpreter::GfxDpSetTile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_
 
     mRdp->textures_changed[0] = true;
     mRdp->textures_changed[1] = true;
+#ifdef __SWITCH__
+    mTriStateDirty = true;
+#endif
 }
 
 void Interpreter::GfxDpSetTileSize(uint8_t tile, uint16_t uls, uint16_t ult, uint16_t lrs, uint16_t lrt) {
@@ -2946,9 +3216,13 @@ void Interpreter::GfxDpSetTileSize(uint8_t tile, uint16_t uls, uint16_t ult, uin
     mRdp->texture_tile[tile].lrt = lrt;
     mRdp->textures_changed[0] = true;
     mRdp->textures_changed[1] = true;
+#ifdef __SWITCH__
+    mTriStateDirty = true;
+#endif
 }
 
 void Interpreter::GfxDpLoadTlut(uint8_t tile, uint32_t high_index) {
+    Fast3DScopedTimer timer(mFrameStats.timeTextureLoading, mProfilingEnabled);
     SUPPORT_CHECK(mRdp->texture_to_load.siz == G_IM_SIZ_16b);
 
     if (mRdp->texture_tile[tile].tmem == 256) {
@@ -2959,9 +3233,13 @@ void Interpreter::GfxDpLoadTlut(uint8_t tile, uint32_t high_index) {
     } else {
         mRdp->palettes[1] = mRdp->texture_to_load.addr;
     }
+#ifdef __SWITCH__
+    mTriStateDirty = true;
+#endif
 }
 
 void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t dxt) {
+    Fast3DScopedTimer timer(mFrameStats.timeTextureLoading, mProfilingEnabled);
     SUPPORT_CHECK(uls == 0);
     SUPPORT_CHECK(ult == 0);
 
@@ -2989,36 +3267,43 @@ void Interpreter::GfxDpLoadBlock(uint8_t tile, uint32_t uls, uint32_t ult, uint3
         size_bytes *= mRdp->texture_to_load.raw_tex_metadata.h_byte_scale;
         size_bytes *= mRdp->texture_to_load.raw_tex_metadata.v_pixel_scale;
     }
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes = orig_size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes = size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes = size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].full_image_line_size_bytes = size_bytes;
+    uint32_t tmemIdx = mRdp->texture_tile[tile].tmem_index;
+    mRdp->loaded_texture[tmemIdx].orig_size_bytes = orig_size_bytes;
+    mRdp->loaded_texture[tmemIdx].size_bytes = size_bytes;
+    mRdp->loaded_texture[tmemIdx].line_size_bytes = size_bytes;
+    mRdp->loaded_texture[tmemIdx].full_image_line_size_bytes = size_bytes;
     // assert(size_bytes <= 4096 && "bug: too big texture");
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags = mRdp->texture_to_load.tex_flags;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr;
-    // fprintf(stderr, "GfxDpLoadBlock: line_size = 0x%x; orig = 0x%x; bpp=%d; lrs=%d\n", size_bytes,
-    // orig_size_bytes,
-    //         mRdp->texture_to_load.siz, lrs);
+    mRdp->loaded_texture[tmemIdx].tex_flags = mRdp->texture_to_load.tex_flags;
+    mRdp->loaded_texture[tmemIdx].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
+    mRdp->loaded_texture[tmemIdx].addr = mRdp->texture_to_load.addr;
 
-    const std::string& texPath =
-        mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
-            ? GetBaseTexturePath(mRdp->texture_to_load.raw_tex_metadata.resource->GetInitData()->Path)
-            : "";
-    auto maskedTextureIter = mMaskedTextures.find(texPath);
-    if (maskedTextureIter != mMaskedTextures.end()) {
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].masked = true;
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].blended =
-            maskedTextureIter->second.replacementData != nullptr;
+    // Skip expensive string construction + map lookup when no masked textures are registered
+    if (!mMaskedTextures.empty()) {
+        const std::string& texPath =
+            mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
+                ? GetBaseTexturePath(mRdp->texture_to_load.raw_tex_metadata.resource->GetInitData()->Path)
+                : "";
+        auto maskedTextureIter = mMaskedTextures.find(texPath);
+        if (maskedTextureIter != mMaskedTextures.end()) {
+            mRdp->loaded_texture[tmemIdx].masked = true;
+            mRdp->loaded_texture[tmemIdx].blended = maskedTextureIter->second.replacementData != nullptr;
+        } else {
+            mRdp->loaded_texture[tmemIdx].masked = false;
+            mRdp->loaded_texture[tmemIdx].blended = false;
+        }
     } else {
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].masked = false;
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].blended = false;
+        mRdp->loaded_texture[tmemIdx].masked = false;
+        mRdp->loaded_texture[tmemIdx].blended = false;
     }
 
-    mRdp->textures_changed[mRdp->texture_tile[tile].tmem_index] = true;
+    mRdp->textures_changed[tmemIdx] = true;
+#ifdef __SWITCH__
+    mTriStateDirty = true;
+#endif
 }
 
 void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t lrt) {
+    Fast3DScopedTimer timer(mFrameStats.timeTextureLoading, mProfilingEnabled);
     SUPPORT_CHECK(tile == G_TX_LOADTILE);
 
     uint32_t word_size_shift = 0;
@@ -3061,28 +3346,34 @@ void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32
         tile_line_size_bytes *= h_byte_scale;
     }
 
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes = orig_size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes = size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].full_image_line_size_bytes = full_image_line_size_bytes;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes = tile_line_size_bytes;
+    uint32_t tmemIdx = mRdp->texture_tile[tile].tmem_index;
+    mRdp->loaded_texture[tmemIdx].orig_size_bytes = orig_size_bytes;
+    mRdp->loaded_texture[tmemIdx].size_bytes = size_bytes;
+    mRdp->loaded_texture[tmemIdx].full_image_line_size_bytes = full_image_line_size_bytes;
+    mRdp->loaded_texture[tmemIdx].line_size_bytes = tile_line_size_bytes;
 
     //    assert(size_bytes <= 4096 && "bug: too big texture");
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].tex_flags = mRdp->texture_to_load.tex_flags;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
-    mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].addr = mRdp->texture_to_load.addr + start_offset_bytes;
+    mRdp->loaded_texture[tmemIdx].tex_flags = mRdp->texture_to_load.tex_flags;
+    mRdp->loaded_texture[tmemIdx].raw_tex_metadata = mRdp->texture_to_load.raw_tex_metadata;
+    mRdp->loaded_texture[tmemIdx].addr = mRdp->texture_to_load.addr + start_offset_bytes;
 
-    const std::string& texPath =
-        mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
-            ? GetBaseTexturePath(mRdp->texture_to_load.raw_tex_metadata.resource->GetInitData()->Path)
-            : "";
-    auto maskedTextureIter = mMaskedTextures.find(texPath);
-    if (maskedTextureIter != mMaskedTextures.end()) {
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].masked = true;
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].blended =
-            maskedTextureIter->second.replacementData != nullptr;
+    // Skip expensive string construction + map lookup when no masked textures are registered
+    if (!mMaskedTextures.empty()) {
+        const std::string& texPath =
+            mRdp->texture_to_load.raw_tex_metadata.resource != nullptr
+                ? GetBaseTexturePath(mRdp->texture_to_load.raw_tex_metadata.resource->GetInitData()->Path)
+                : "";
+        auto maskedTextureIter = mMaskedTextures.find(texPath);
+        if (maskedTextureIter != mMaskedTextures.end()) {
+            mRdp->loaded_texture[tmemIdx].masked = true;
+            mRdp->loaded_texture[tmemIdx].blended = maskedTextureIter->second.replacementData != nullptr;
+        } else {
+            mRdp->loaded_texture[tmemIdx].masked = false;
+            mRdp->loaded_texture[tmemIdx].blended = false;
+        }
     } else {
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].masked = false;
-        mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].blended = false;
+        mRdp->loaded_texture[tmemIdx].masked = false;
+        mRdp->loaded_texture[tmemIdx].blended = false;
     }
 
     mRdp->texture_tile[tile].uls = uls;
@@ -3090,7 +3381,10 @@ void Interpreter::GfxDpLoadTile(uint8_t tile, uint32_t uls, uint32_t ult, uint32
     mRdp->texture_tile[tile].lrs = lrs;
     mRdp->texture_tile[tile].lrt = lrt;
 
-    mRdp->textures_changed[mRdp->texture_tile[tile].tmem_index] = true;
+    mRdp->textures_changed[tmemIdx] = true;
+#ifdef __SWITCH__
+    mTriStateDirty = true;
+#endif
 }
 
 /*static uint8_t color_comb_component(uint32_t v) {
@@ -3126,7 +3420,14 @@ static void GfxDpSetCombineMode(uint32_t rgb, uint32_t alpha) {
 }*/
 
 void Interpreter::GfxDpSetCombineMode(uint32_t rgb, uint32_t alpha, uint32_t rgb_cyc2, uint32_t alpha_cyc2) {
-    mRdp->combine_mode = rgb | (alpha << 16) | ((uint64_t)rgb_cyc2 << 28) | ((uint64_t)alpha_cyc2 << 44);
+    Fast3DScopedTimer timer(mFrameStats.timeCombinerSetup, mProfilingEnabled);
+    uint64_t new_mode = rgb | (alpha << 16) | ((uint64_t)rgb_cyc2 << 28) | ((uint64_t)alpha_cyc2 << 44);
+#ifdef __SWITCH__
+    if (mRdp->combine_mode != new_mode) {
+        mTriStateDirty = true;
+    }
+#endif
+    mRdp->combine_mode = new_mode;
 }
 
 static inline uint32_t color_comb(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
@@ -3138,6 +3439,12 @@ static inline uint32_t alpha_comb(uint32_t a, uint32_t b, uint32_t c, uint32_t d
 }
 
 void Interpreter::GfxDpSetGrayscaleColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+#ifdef __SWITCH__
+    if (mRdp->grayscale_color.r != r || mRdp->grayscale_color.g != g ||
+        mRdp->grayscale_color.b != b || mRdp->grayscale_color.a != a) {
+        mTriStateDirty = true;
+    }
+#endif
     mRdp->grayscale_color.r = r;
     mRdp->grayscale_color.g = g;
     mRdp->grayscale_color.b = b;
@@ -3145,6 +3452,12 @@ void Interpreter::GfxDpSetGrayscaleColor(uint8_t r, uint8_t g, uint8_t b, uint8_
 }
 
 void Interpreter::GfxDpSetEnvColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+#ifdef __SWITCH__
+    if (mRdp->env_color.r != r || mRdp->env_color.g != g ||
+        mRdp->env_color.b != b || mRdp->env_color.a != a) {
+        mTriStateDirty = true;
+    }
+#endif
     mRdp->env_color.r = r;
     mRdp->env_color.g = g;
     mRdp->env_color.b = b;
@@ -3152,6 +3465,13 @@ void Interpreter::GfxDpSetEnvColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
 }
 
 void Interpreter::GfxDpSetPrimColor(uint8_t m, uint8_t l, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+#ifdef __SWITCH__
+    if (mRdp->prim_color.r != r || mRdp->prim_color.g != g ||
+        mRdp->prim_color.b != b || mRdp->prim_color.a != a ||
+        mRdp->prim_lod_fraction != l) {
+        mTriStateDirty = true;
+    }
+#endif
     mRdp->prim_lod_fraction = l;
     mRdp->prim_color.r = r;
     mRdp->prim_color.g = g;
@@ -3160,6 +3480,12 @@ void Interpreter::GfxDpSetPrimColor(uint8_t m, uint8_t l, uint8_t r, uint8_t g, 
 }
 
 void Interpreter::GfxDpSetFogColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+#ifdef __SWITCH__
+    if (mRdp->fog_color.r != r || mRdp->fog_color.g != g ||
+        mRdp->fog_color.b != b || mRdp->fog_color.a != a) {
+        mTriStateDirty = true;
+    }
+#endif
     mRdp->fog_color.r = r;
     mRdp->fog_color.g = g;
     mRdp->fog_color.b = b;
@@ -3259,10 +3585,14 @@ void Interpreter::GfxDrawRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_
         mRdp->other_mode_h = saved_other_mode_h;
         mRdp->other_mode_changed = true;
     }
+#ifdef __SWITCH__
+    mTriStateDirty = true;  // Geometry mode + viewport restored
+#endif
 }
 
 void Interpreter::GfxDpTextureRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry, uint8_t tile, int16_t uls,
                                         int16_t ult, int16_t dsdx, int16_t dtdy, bool flip) {
+    Fast3DScopedTimer timer(mFrameStats.timeRectDrawing, mProfilingEnabled);
     // printf("render %d at %d\n", tile, lrx);
     uint64_t saved_combine_mode = mRdp->combine_mode;
     if ((mRdp->other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_COPY) {
@@ -3325,6 +3655,9 @@ void Interpreter::GfxDpTextureRectangle(int32_t ulx, int32_t uly, int32_t lrx, i
     }
     mRdp->first_tile_index = saved_tile;
     mRdp->combine_mode = saved_combine_mode;
+#ifdef __SWITCH__
+    mTriStateDirty = true;  // Tile + combiner restored
+#endif
 }
 
 void Interpreter::GfxDpImageRectangle(int32_t tile, int32_t w, int32_t h, int32_t ulx, int32_t uly, int16_t uls,
@@ -3376,6 +3709,7 @@ void Interpreter::GfxDpImageRectangle(int32_t tile, int32_t w, int32_t h, int32_
 }
 
 void Interpreter::GfxDpFillRectangle(int32_t ulx, int32_t uly, int32_t lrx, int32_t lry) {
+    Fast3DScopedTimer timer(mFrameStats.timeRectDrawing, mProfilingEnabled);
     if (mRdp->color_image_address == mRdp->z_buf_address) {
         // Don't clear Z buffer here since we already did it with glClear
         return;
@@ -3416,19 +3750,30 @@ void Interpreter::GfxDpSetZImage(void* zBufAddr) {
 }
 
 void Interpreter::GfxDpSetColorImage(uint32_t format, uint32_t size, uint32_t width, void* address) {
+    Fast3DScopedTimer timer(mFrameStats.timeFramebufferOps, mProfilingEnabled);
     mRdp->color_image_address = address;
 }
 
 void Interpreter::GfxSpSetOtherMode(uint32_t shift, uint32_t num_bits, uint64_t mode) {
     uint64_t mask = (((uint64_t)1 << num_bits) - 1) << shift;
     uint64_t om = mRdp->other_mode_l | ((uint64_t)mRdp->other_mode_h << 32);
-    om = (om & ~mask) | mode;
-    mRdp->other_mode_l = (uint32_t)om;
-    mRdp->other_mode_h = (uint32_t)(om >> 32);
+    uint64_t new_om = (om & ~mask) | mode;
+#ifdef __SWITCH__
+    if (om != new_om) {
+        mTriStateDirty = true;
+    }
+#endif
+    mRdp->other_mode_l = (uint32_t)new_om;
+    mRdp->other_mode_h = (uint32_t)(new_om >> 32);
     mRdp->other_mode_changed = true;
 }
 
 void Interpreter::GfxDpSetOtherMode(uint32_t h, uint32_t l) {
+#ifdef __SWITCH__
+    if (mRdp->other_mode_h != h || mRdp->other_mode_l != l) {
+        mTriStateDirty = true;
+    }
+#endif
     mRdp->other_mode_h = h;
     mRdp->other_mode_l = l;
     mRdp->other_mode_changed = true;
@@ -4044,8 +4389,10 @@ bool gfx_modify_vtx_handler_f3dex2(F3DGfx** cmd0) {
 // F3D, F3DEX, and F3DEX2 do the same thing but F3DEX2 has its own opcode number
 bool gfx_dl_handler_common(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeDisplayListOps, gfx->mProfilingEnabled);
     F3DGfx* cmd = *cmd0;
     F3DGfx* subGFX = (F3DGfx*)gfx->SegAddr(cmd->words.w1);
+
     if (C0(16, 1) == 0) {
         // Push return address
         if (subGFX != nullptr) {
@@ -4139,6 +4486,7 @@ bool gfx_branch_z_otr_handler_f3dex2(F3DGfx** cmd0) {
 // F3D, F3DEX, and F3DEX2 do the same thing but F3DEX2 has its own opcode number
 bool gfx_end_dl_handler_common(F3DGfx** cmd0) {
     Interpreter* gfx = sInstance;
+    Fast3DScopedTimer timer(gfx->mFrameStats.timeDisplayListOps, gfx->mProfilingEnabled);
     gfx->mMarkerOn = false;
     *cmd0 = g_exec_stack.ret();
     return true;
@@ -4550,6 +4898,9 @@ bool gfx_set_grayscale_handler_custom(F3DGfx** cmd0) {
     F3DGfx* cmd = *cmd0;
 
     gfx->mRdp->grayscale = cmd->words.w1;
+#ifdef __SWITCH__
+    gfx->mTriStateDirty = true;
+#endif
     return false;
 }
 
@@ -5425,6 +5776,10 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             auto& stepCmd = g_exec_stack.currCmd();
             uint8_t opcode = (uint8_t)(stepCmd->words.w0 >> 24);
 
+            if (mProfilingEnabled) {
+                mFrameStats.commandsProcessed++;
+            }
+
 #ifdef USE_GBI_TRACE
             if (stepCmd->words.trace.valid &&
                 Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger("gEnableGFXTrace", 0)) {
@@ -5434,8 +5789,9 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
 #endif
 
 #ifdef __SWITCH__
-            // Fast-path: inline no-op RDP sync commands (0xe6-0xe9) to avoid
-            // function pointer dispatch overhead for ~109+ sync cmds/iteration.
+            // Fast-path: skip sync no-ops without function pointer dispatch.
+            // These are the most frequent commands (~109+ per iteration) and do nothing.
+            // Keeping only sync commands here avoids I-cache bloat from a larger switch.
             if (opcode >= 0xe6 && opcode <= 0xe9) {
                 ++stepCmd;
                 continue;

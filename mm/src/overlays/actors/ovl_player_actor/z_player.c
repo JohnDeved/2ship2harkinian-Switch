@@ -3924,7 +3924,13 @@ void Player_ProcessItemButtons(Player* this, PlayState* play) {
 
         // #region 2S2H [Dpad]
         if (CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0)) {
-            if (i >= EQUIP_SLOT_A) {
+            // Don't process dpad equips when arrow cycle dpad is active and player is aiming with a bow,
+            // as the dpad is being used to cycle arrow types in that case.
+            s32 isAimingBow =
+                (this->heldItemAction >= PLAYER_IA_BOW && this->heldItemAction <= PLAYER_IA_BOW_LIGHT) &&
+                ((this->unk_AA5 == PLAYER_UNKAA5_3) || (this->upperActionFunc == Player_UpperAction_7));
+            if (i >= EQUIP_SLOT_A &&
+                !(CVarGetInteger("gEnhancements.PlayerActions.ArrowCycleDpad", 0) && isAimingBow)) {
                 DpadEquipSlot j = func_Dpad_8082FDC4();
                 ItemId dpadItem = Player_Dpad_GetItemOnButton(play, this, j);
                 if (dpadItem < item) {
@@ -5083,6 +5089,15 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
                 ((this->heldItemAction != PLAYER_IA_FISHING_ROD) || (this->unk_B28 == 0)) &&
                 CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_Z)) {
 
+                // #region 2S2H [Enhancement] Modern Z-Targeting: Z-toggle releases lock-on
+                if (CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0) &&
+                    CVarGetInteger("gEnhancements.Player.ModernZTargeting.ZToggleRelease", 1) &&
+                    this->focusActor != NULL && this == GET_PLAYER(play)) {
+                    Player_ReleaseLockOn(this);
+                    this->stateFlags1 |= PLAYER_STATE1_LOCK_ON_FORCED_TO_RELEASE;
+                } else {
+                // #endregion
+
                 if (this == GET_PLAYER(play)) {
                     // The next lock-on actor defaults to the actor Tatl is hovering over.
                     // This may change to the arrow hover actor below.
@@ -5133,6 +5148,8 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
                         Player_SetParallel(this);
                     }
                 }
+
+                } // #endregion 2S2H Modern Z-Targeting
             }
 
             if (this->focusActor != NULL) {

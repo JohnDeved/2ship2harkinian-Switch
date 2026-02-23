@@ -62,6 +62,7 @@ void RegisterTimeMovesWhenYouMove() {
 
     COND_ID_HOOK(OnActorUpdate, ACTOR_PLAYER, CVAR, [](Actor* actor) {
         Player* player = GET_PLAYER(gPlayState);
+        bool isRidingHorse = (player->stateFlags1 & PLAYER_STATE1_800000) && player->rideActor != NULL;
 
         // Detect actual position changes (covers "Move while aiming" and any other feature that
         // directly modifies actor.world.pos without updating speedXZ).
@@ -70,7 +71,7 @@ void RegisterTimeMovesWhenYouMove() {
 
         bool timeShouldMove = (player->stateFlags2 & PLAYER_STATE2_USING_OCARINA) || player->speedXZ != 0.0f ||
                               Play_InCsMode(gPlayState) || (player->stateFlags1 & PLAYER_STATE1_20) ||
-                              positionChanged;
+                              positionChanged || (isRidingHorse && player->rideActor->speed != 0.0f);
 
         if (timeShouldMove && sStoredTimeOffset != DEFAULT_TIME_OFFSET) {
             gSaveContext.save.timeSpeedOffset = sStoredTimeOffset;

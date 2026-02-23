@@ -418,6 +418,15 @@ struct Fast3DStats {
     uint64_t timePixelDepth;   // pixel depth prepare + readback
     uint64_t timeFrameSetup;   // Run() setup/teardown, framebuffer ops, clear, MSAA resolve
 
+    // Command handler timing breakdown (subset of timeGbiDispatch)
+    uint64_t timeTextureLoading;   // GfxDpLoadBlock, GfxDpLoadTlut, GfxDpLoadTile
+    uint64_t timeRectDrawing;      // GfxDpTextureRectangle, GfxDpFillRectangle
+    uint64_t timeDisplayListOps;   // Display list call/branch (stack push/pop)
+    uint64_t timeCombinerSetup;    // GfxDpSetCombineMode (hash lookup + cache)
+    uint64_t timeFramebufferOps;   // GfxDpSetColorImage (framebuffer changes)
+
+    uint32_t commandsProcessed;    // total commands walked through the dispatch loop
+
     // Batch size histogram: how many draws fall into each size bucket
     // Bucket 0: 1-2 tris, 1: 3-8, 2: 9-32, 3: 33-128, 4: 129+
     static constexpr int BATCH_HISTOGRAM_BUCKETS = 5;
@@ -439,11 +448,13 @@ struct Fast3DStats {
         usPerTriangle = trianglesSubmitted > 0 ? (float)timeTotal / (float)trianglesSubmitted / 1000.0f : 0.0f;
         usPerDrawCall = drawCalls > 0 ? (float)timeTotal / (float)drawCalls / 1000.0f : 0.0f;
 
-        // Note: timeDrawSubmit is NOT in accounted because it is nested inside
-        // timeTriProcessing (Flush->DrawTriangles called from GfxSpTri1).
-        // Including it would double-count, inflating dispatch artificially.
-        const uint64_t accounted = timeTriProcessing + timeTextureSetup + timeShaderSetup +
-                                    timeVertexLoad + timeMatrixOps +
+        // Note: timeDrawSubmit, timeTextureSetup, and timeShaderSetup are NOT
+        // in accounted because they are nested inside timeTriProcessing
+        // (Flush/DrawTriangles, ImportTexture, and LoadShader are only called
+        // from within GfxSpTri1). Including them would double-count.
+        // Similarly, the command handler timings (timeTextureLoading, timeRectDrawing,
+        // etc.) are subtracted from timeGbiDispatch in post-processing, not here.
+        const uint64_t accounted = timeTriProcessing + timeVertexLoad + timeMatrixOps +
                                     timePixelDepth + timeFrameSetup;
         timeGbiDispatch = timeTotal > accounted ? (timeTotal - accounted) : 0;
     }
@@ -657,6 +668,46 @@ class Interpreter {
     // Cached combiner key + result (skip LookupOrCreateColorCombiner on ~85% of triangles)
     ColorCombinerKey mCachedCombinerKey{};
     ColorCombiner* mCachedCombiner = nullptr;
+
+#ifdef __SWITCH__
+    // Tri-state dirty flag: set by ANY command that changes rendering state
+    // consumed by GfxSpTri1. When clean, consecutive triangles skip all state
+    // validation (depth, viewport, combiner, texture, shader, alpha checks)
+    // and reuse cached vertex-processing parameters — saving ~400-600ns per tri.
+    bool mTriStateDirty = true;
+
+    // Cached vertex-processing parameters for the fast-path (valid when !mTriStateDirty).
+    // Populated by the slow path in GfxSpTri1 after full state validation.
+    struct CachedTriParams {
+        uint64_t cc_options;
+        uint32_t tm;
+        ColorCombiner* comb;
+        struct ShaderProgram* prg;
+        uint8_t numInputs;
+        int numAlphaPasses;
+        bool usedTextures[2];
+        bool useFog;
+        bool useGrayscale;
+        // Per-texture tile parameters
+        struct {
+            uint32_t tex_width, tex_height, tex_width2, tex_height2;
+            float invTexWidth, invTexHeight;
+            bool clampS, clampT;
+            float clampSVal, clampTVal;
+            float shiftsMul, shifttMul;
+            float ulsOffset, ultOffset;
+        } tex[2];
+        // Precomputed combiner inputs (constant across vertices)
+        struct { float r, g, b, a; bool isShade; } precomputed[2][7];
+        // Fog/grayscale constants
+        float fogR, fogG, fogB;
+        float grayR, grayG, grayB, grayA;
+        // Clip/filter parameters
+        GfxClipParameters clipParams;
+        bool linearFilter;
+        float linearOffset;
+    } mCachedTriParams{};
+#endif
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

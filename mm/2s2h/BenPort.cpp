@@ -949,6 +949,216 @@ extern "C" void Graph_StartFrame() {
 #endif
 }
 
+#if defined(__SWITCH__)
+struct SwitchTelemetrySample {
+    bool servicesInitAttempted = false;
+    bool psmAvailable = false;
+    bool tsAvailable = false;
+    bool tcAvailable = false;
+    bool hasIdleBaseline = false;
+    u64 lastSystemTick = 0;
+    u64 lastIdleTickCount[4] = {};
+    float cpuUsagePct = 0.0f;
+    float cpuUsagePerCorePct[4] = {};
+    float ramUsagePct = 0.0f;
+    float ramUsedMb = 0.0f;
+    float ramTotalMb = 0.0f;
+    float cpuClockMhz = 0.0f;
+    float gpuClockMhz = 0.0f;
+    float emcClockMhz = 0.0f;
+    float socTempC = 0.0f;
+    float pcbTempC = 0.0f;
+    float skinTempC = 0.0f;
+    float batteryTempC = 0.0f;
+    float batteryChargePct = 0.0f;
+    float batteryAgePct = 0.0f;
+    float batteryVoltageMv = 0.0f;
+    float chargerType = 0.0f;
+    float chargerVoltageLimitMv = 0.0f;
+    float chargerCurrentLimitMa = 0.0f;
+};
+static SwitchTelemetrySample sSwitchTelemetry;
+
+static bool QueryClockRateHz(PcvModule legacyModule, PcvModuleId moduleId, u32* outHz) {
+    if (outHz == nullptr) {
+        return false;
+    }
+    *outHz = 0;
+
+    if (hosversionBefore(8, 0, 0)) {
+        return R_SUCCEEDED(pcvGetClockRate(legacyModule, outHz));
+    }
+
+    ClkrstSession session = {};
+    Result rc = clkrstOpenSession(&session, moduleId, 3);
+    if (R_FAILED(rc)) {
+        return false;
+    }
+    rc = clkrstGetClockRate(&session, outHz);
+    clkrstCloseSession(&session);
+    return R_SUCCEEDED(rc);
+}
+
+static void InitSwitchTelemetryServices() {
+    if (sSwitchTelemetry.servicesInitAttempted) {
+        return;
+    }
+
+    sSwitchTelemetry.servicesInitAttempted = true;
+    sSwitchTelemetry.psmAvailable = R_SUCCEEDED(psmInitialize());
+    sSwitchTelemetry.tsAvailable = R_SUCCEEDED(tsInitialize());
+    if (hosversionAtLeast(5, 0, 0)) {
+        sSwitchTelemetry.tcAvailable = R_SUCCEEDED(tcInitialize());
+    }
+}
+
+static float QueryTsTemperatureC(TsLocation location) {
+    s32 tempMilliC = 0;
+    if (R_SUCCEEDED(tsGetTemperatureMilliC(location, &tempMilliC))) {
+        return (float)tempMilliC / 1000.0f;
+    }
+
+    s32 tempC = 0;
+    if (R_SUCCEEDED(tsGetTemperature(location, &tempC))) {
+        return (float)tempC;
+    }
+
+    return 0.0f;
+}
+
+static void SampleSwitchSystemTelemetry() {
+    InitSwitchTelemetryServices();
+
+    // Process RAM usage (relative to process memory budget).
+    u64 usedMemory = 0;
+    u64 totalMemory = 0;
+    if (R_SUCCEEDED(svcGetInfo(&usedMemory, InfoType_UsedMemorySize, INVALID_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&totalMemory, InfoType_TotalMemorySize, INVALID_HANDLE, 0)) && totalMemory > 0) {
+        sSwitchTelemetry.ramUsedMb = (float)usedMemory / (1024.0f * 1024.0f);
+        sSwitchTelemetry.ramTotalMb = (float)totalMemory / (1024.0f * 1024.0f);
+        sSwitchTelemetry.ramUsagePct = (float)usedMemory * 100.0f / (float)totalMemory;
+    }
+
+    // CPU usage from per-core idle tick deltas.
+    const u64 nowTick = armGetSystemTick();
+    u64 idleTickCount[4] = {};
+    bool gotAllIdle = true;
+    for (int core = 0; core < 4; core++) {
+        if (R_FAILED(svcGetInfo(&idleTickCount[core], InfoType_IdleTickCount, INVALID_HANDLE, core))) {
+            gotAllIdle = false;
+            break;
+        }
+    }
+
+    bool updatedCpuFromIdleTicks = false;
+    if (gotAllIdle) {
+        if (sSwitchTelemetry.hasIdleBaseline && nowTick > sSwitchTelemetry.lastSystemTick) {
+            const double elapsedTicks = (double)(nowTick - sSwitchTelemetry.lastSystemTick);
+            double busySum = 0.0;
+            for (int core = 0; core < 4; core++) {
+                u64 idleDelta = 0;
+                if (idleTickCount[core] >= sSwitchTelemetry.lastIdleTickCount[core]) {
+                    idleDelta = idleTickCount[core] - sSwitchTelemetry.lastIdleTickCount[core];
+                }
+                const double idleRatio = std::clamp((double)idleDelta / elapsedTicks, 0.0, 1.0);
+                const float coreBusyPct = (float)((1.0 - idleRatio) * 100.0);
+                sSwitchTelemetry.cpuUsagePerCorePct[core] = coreBusyPct;
+                busySum += coreBusyPct;
+            }
+            sSwitchTelemetry.cpuUsagePct = (float)(busySum * 0.25); // average across 4 cores, in percent
+            updatedCpuFromIdleTicks = true;
+        }
+
+        sSwitchTelemetry.hasIdleBaseline = true;
+        sSwitchTelemetry.lastSystemTick = nowTick;
+        for (int core = 0; core < 4; core++) {
+            sSwitchTelemetry.lastIdleTickCount[core] = idleTickCount[core];
+        }
+    }
+
+    // Fallback when idle tick sampling is unavailable or still warming up.
+    if (!updatedCpuFromIdleTicks) {
+        const float core0Ms = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_AT) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_DAMAGE) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_UPDATE) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_ACTOR_DRAW) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_SCENE_DRAW) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS) +
+            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_AUDIO_WAIT);
+        const float workerMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_COLLISION_OC);
+        const float frameBudgetMs = 1000.0f / 60.0f;
+        const float core0Pct = std::clamp(core0Ms / frameBudgetMs * 100.0f, 0.0f, 100.0f);
+        const float workerPct = std::clamp(workerMs / frameBudgetMs * 100.0f, 0.0f, 100.0f);
+        sSwitchTelemetry.cpuUsagePct = (core0Pct + workerPct) * 0.25f; // normalize across 4 Switch CPU cores
+        sSwitchTelemetry.cpuUsagePerCorePct[0] = core0Pct;
+        sSwitchTelemetry.cpuUsagePerCorePct[1] = 0.0f;
+        sSwitchTelemetry.cpuUsagePerCorePct[2] = 0.0f;
+        sSwitchTelemetry.cpuUsagePerCorePct[3] = workerPct;
+    }
+
+    // Current operating clocks (good context for performance runs).
+    u32 hz = 0;
+    if (QueryClockRateHz(PcvModule_CpuBus, PcvModuleId_CpuBus, &hz)) {
+        sSwitchTelemetry.cpuClockMhz = (float)hz / 1000000.0f;
+    }
+    if (QueryClockRateHz(PcvModule_GPU, PcvModuleId_GPU, &hz)) {
+        sSwitchTelemetry.gpuClockMhz = (float)hz / 1000000.0f;
+    }
+    if (QueryClockRateHz(PcvModule_EMC, PcvModuleId_EMC, &hz)) {
+        sSwitchTelemetry.emcClockMhz = (float)hz / 1000000.0f;
+    }
+
+    // Temperature telemetry
+    if (sSwitchTelemetry.tsAvailable) {
+        sSwitchTelemetry.pcbTempC = QueryTsTemperatureC(TsLocation_Internal);
+        sSwitchTelemetry.socTempC = QueryTsTemperatureC(TsLocation_External);
+    }
+    if (sSwitchTelemetry.tcAvailable) {
+        s32 skinMilliC = 0;
+        if (R_SUCCEEDED(tcGetSkinTemperatureMilliC(&skinMilliC))) {
+            sSwitchTelemetry.skinTempC = (float)skinMilliC / 1000.0f;
+        }
+    }
+
+    // Battery / charger telemetry
+    if (sSwitchTelemetry.psmAvailable) {
+        PsmBatteryChargeInfoFields fields = {};
+        if (R_SUCCEEDED(psmGetBatteryChargeInfoFields(&fields))) {
+            sSwitchTelemetry.batteryTempC = (float)fields.temperature_celcius / 1000.0f;
+            sSwitchTelemetry.batteryChargePct = (float)fields.battery_charge_percentage / 1000.0f;
+            sSwitchTelemetry.batteryAgePct = (float)fields.battery_age_percentage / 1000.0f;
+            sSwitchTelemetry.batteryVoltageMv = (float)fields.battery_charge_milli_voltage;
+            sSwitchTelemetry.chargerType = (float)fields.charger_type;
+            sSwitchTelemetry.chargerVoltageLimitMv = (float)fields.charger_input_voltage_limit;
+            sSwitchTelemetry.chargerCurrentLimitMa = (float)fields.charger_input_current_limit;
+        }
+    }
+
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_USAGE_PCT, sSwitchTelemetry.cpuUsagePct);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_RAM_USAGE_PCT, sSwitchTelemetry.ramUsagePct);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_RAM_USED_MB, sSwitchTelemetry.ramUsedMb);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_RAM_TOTAL_MB, sSwitchTelemetry.ramTotalMb);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ, sSwitchTelemetry.cpuClockMhz);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ, sSwitchTelemetry.gpuClockMhz);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ, sSwitchTelemetry.emcClockMhz);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CORE0_USAGE_PCT, sSwitchTelemetry.cpuUsagePerCorePct[0]);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CORE1_USAGE_PCT, sSwitchTelemetry.cpuUsagePerCorePct[1]);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CORE2_USAGE_PCT, sSwitchTelemetry.cpuUsagePerCorePct[2]);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CPU_CORE3_USAGE_PCT, sSwitchTelemetry.cpuUsagePerCorePct[3]);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_SOC_TEMP_C, sSwitchTelemetry.socTempC);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_PCB_TEMP_C, sSwitchTelemetry.pcbTempC);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_SKIN_TEMP_C, sSwitchTelemetry.skinTempC);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_BATTERY_TEMP_C, sSwitchTelemetry.batteryTempC);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_BATTERY_CHARGE_PCT, sSwitchTelemetry.batteryChargePct);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_BATTERY_AGE_PCT, sSwitchTelemetry.batteryAgePct);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_BATTERY_VOLTAGE_MV, sSwitchTelemetry.batteryVoltageMv);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CHARGER_TYPE, sSwitchTelemetry.chargerType);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CHARGER_VOLTAGE_LIMIT_MV, sSwitchTelemetry.chargerVoltageLimitMv);
+    FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_CHARGER_CURRENT_LIMIT_MA, sSwitchTelemetry.chargerCurrentLimitMa);
+}
+#endif
+
 void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>>& mtx_replacements) {
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(OTRGlobals::Instance->context->GetWindow());
 
@@ -996,6 +1206,13 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)stats.pixelDepthQueries);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
 
+            // Command handler timing breakdown
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEXTURE_LOADING_MS, (float)stats.timeTextureLoading / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_RECT_DRAWING_MS, (float)stats.timeRectDrawing / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DL_OPS_MS, (float)stats.timeDisplayListOps / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_COMBINER_SETUP_MS, (float)stats.timeCombinerSetup / 1000000.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_FRAMEBUFFER_OPS_MS, (float)stats.timeFramebufferOps / 1000000.0f);
+
             // Flush cause breakdown
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE, (float)stats.flushCauseTexture);
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER, (float)stats.flushCauseSampler);
@@ -1010,6 +1227,15 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
                 FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)stats.batchHistogram[b]);
             }
             FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_GL_COMMANDS_PROCESSED, (float)stats.commandsProcessed);
+
+            // Proxy metric: time spent blocked in GL driver calls vs a 60 FPS frame budget.
+            const float gpuDriverMs =
+                ((float)stats.timeVboUpload + (float)stats.timeGlDraw + (float)stats.timeFrameSetup +
+                 (float)stats.timePixelDepth) /
+                1000000.0f;
+            const float gpuUsageEstimatePct = std::clamp((gpuDriverMs / (1000.0f / 60.0f)) * 100.0f, 0.0f, 100.0f);
+            FrameProfiler_AddCounter(PROFILE_COUNTER_SYS_GPU_USAGE_EST_PCT, gpuUsageEstimatePct);
         }
 
         intp->mInterpolationIndex++;
@@ -1036,6 +1262,12 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
         audio.processing = true;
     }
     audio.cv_to_thread.notify_one();
+
+#if defined(__SWITCH__)
+    if (FrameProfiler_IsEnabled() != 0) {
+        SampleSwitchSystemTelemetry();
+    }
+#endif
 
     thread_local std::vector<std::unordered_map<Mtx*, MtxF>> mtx_replacements;
     mtx_replacements.clear();
@@ -1130,44 +1362,77 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             wnd->HandleEvents();
             const bool profilerEnabled = FrameProfiler_IsEnabled() != 0;
             wnd->SetProfilingEnabled(profilerEnabled);
-            // Adaptive sub-frame dropping: track elapsed time per game frame.
-            // Budget = 1 game frame = 1/original_fps seconds (e.g. 50ms at 20fps).
-            // If rendering falls behind, skip intermediate sub-frames to keep game
-            // logic running at constant speed. Always render first and last sub-frames.
-            const auto frameBudget = std::chrono::nanoseconds(1000000000LL / original_fps);
-            const auto frameStart = std::chrono::steady_clock::now();
+
+            // Lambda to process saved stats (30+ AddCounter calls).
+            // Called AFTER SubmitRenderWork so it overlaps with rendering.
+            // Static so the last sub-frame's stats (captured after WaitForGlCommandsDone)
+            // persist across ticks and get processed at the start of the next tick.
+            static Fast::Fast3DStats savedStats;
+            static bool hasSavedStats = false;
+            auto processSavedStats = [&]() {
+                if (!hasSavedStats) {
+                    return;
+                }
+                if (!profilerEnabled) {
+                    // Discard any queued stats when profiling is disabled to avoid
+                    // stale stats being attributed to a later frame.
+                    hasSavedStats = false;
+                    return;
+                }
+                hasSavedStats = false;
+                const auto& s = savedStats;
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, (float)s.drawCalls);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BATCH_FLUSHES, (float)s.batchFlushes);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BUFFER_FULL_FLUSHES, (float)s.bufferFullFlushes);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_STATE_FLUSHES, (float)s.stateChangeFlushes);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_SWITCHES, (float)s.shaderSwitches);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_COMPILATIONS, (float)s.shaderCompilations);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_BINDS, (float)s.textureBinds);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_CACHE_MISSES, (float)s.textureCacheMisses);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_VERTICES_SUBMITTED, (float)s.verticesSubmitted);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED, (float)s.trianglesSubmitted);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TOTAL_MS, (float)s.timeTotal / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DISPATCH_MS, (float)s.timeGbiDispatch / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TRI_MS, (float)s.timeTriProcessing / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEX_MS, (float)s.timeTextureSetup / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)s.timeShaderSetup / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DRAW_MS, (float)s.timeDrawSubmit / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VBO_UPLOAD_MS, (float)s.timeVboUpload / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_GL_DRAW_MS, (float)s.timeGlDraw / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VTX_MS, (float)s.timeVertexLoad / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_MTX_MS, (float)s.timeMatrixOps / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DEPTH_MS, (float)s.timePixelDepth / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SETUP_MS, (float)s.timeFrameSetup / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)s.pixelDepthQueries);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, s.avgBatchSize);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEXTURE_LOADING_MS, (float)s.timeTextureLoading / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_RECT_DRAWING_MS, (float)s.timeRectDrawing / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DL_OPS_MS, (float)s.timeDisplayListOps / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_COMBINER_SETUP_MS, (float)s.timeCombinerSetup / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_FRAMEBUFFER_OPS_MS, (float)s.timeFramebufferOps / 1000000.0f);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE, (float)s.flushCauseTexture);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER, (float)s.flushCauseSampler);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER, (float)s.flushCauseShader);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_ALPHA, (float)s.flushCauseAlpha);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_DEPTH_VIEWPORT, (float)s.flushCauseDepthViewport);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER, (float)s.flushCauseCombiner);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS, (float)s.textureReloadSkips);
+                for (int b = 0; b < Fast::Fast3DStats::BATCH_HISTOGRAM_BUCKETS; b++) {
+                    FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)s.batchHistogram[b]);
+                }
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)s.maxBatchSize);
+                FrameProfiler_AddCounter(PROFILE_COUNTER_GL_COMMANDS_PROCESSED, (float)s.commandsProcessed);
+            };
 
             for (size_t i = 0; i < sub_frames.size(); i++) {
-                // Skip intermediate sub-frames if over budget (keep first + last)
-                if (i > 0 && i < sub_frames.size() - 1) {
-                    auto elapsed = std::chrono::steady_clock::now() - frameStart;
-                    if (elapsed >= frameBudget) {
-                        continue;
-                    }
-                }
-                // For the last sub-frame (identity at fraction=1.0), ensure we use
-                // the correct empty matrix replacement even if we skipped intermediates.
+                // For the last sub-frame (identity at fraction=1.0), use empty matrix
                 if (i == sub_frames.size() - 1 && sub_frames[i].isIdentity) {
                     current_m.clear();
                 }
-                // Set interpolation index to the actual sub-frame index (not sequential).
-                // DL commands (G_MW_SEGMENT_INTERP, tile size interp) check this index
-                // to apply per-sub-frame state. Must match even when sub-frames are skipped.
                 if (intp) { intp->mInterpolationIndex = (int)i; }
 
-                // Start async interpolation for the NEXT non-skipped sub-frame (if any).
-                // Note: The async submit + wait pair are always in the same iteration body
-                // (iteration i submits work for the next frame and waits for it at the end),
-                // so there's no leaked async work when sub-frames are skipped.
-                // Find the next sub-frame index that won't be skipped:
-                // - Last sub-frame is never skipped
-                // - Intermediate sub-frames are skipped when over budget
+                // Start async interpolation for the NEXT sub-frame on Core 3
                 size_t nextIdx = i + 1;
-                bool overBudget = (std::chrono::steady_clock::now() - frameStart) >= frameBudget;
-                // Skip past intermediate sub-frames that would be dropped
-                while (nextIdx > 0 && nextIdx < sub_frames.size() - 1 && overBudget) {
-                    nextIdx++;
-                }
                 AsyncInterpJob nextJob;
                 bool hasNext = (nextIdx < sub_frames.size());
                 if (hasNext && !sub_frames[nextIdx].isIdentity) {
@@ -1176,53 +1441,50 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                 }
 
                 // Submit render work to Core 1 render thread
-                // (while Core 3 computes next interpolation concurrently)
                 FrameProfiler_StartPhase(PROFILE_PHASE_GFX_COMMANDS);
                 FrameProfiler_StartPhase(PROFILE_PHASE_DL_PROCESS);
 
-                wnd->SubmitRenderWork(commands, current_m);
-                // Wait for render thread to finish this sub-frame's GL work
+                const bool isLastSubFrame = !hasNext;
+
+                // Render ImGui only on the FIRST sub-frame, skip it on all subsequent ones.
+                // Earlier sub-frames still wait for full vsync (16.67ms), so ImGui overhead
+                // (~5ms) there doesn't add to the critical path. The last sub-frame, however,
+                // uses WaitForGlCommandsDone (frame-ahead) instead of a full vsync wait, so
+                // skipping ImGui on that and other later sub-frames reduces GL work from
+                // ~15ms to ~10ms, increasing the vsync gap available for game logic overlap.
+                const bool renderImGui = (i == 0);
+
+                wnd->SubmitRenderWork(commands, std::move(current_m), renderImGui);
+
+                // Process PREVIOUS iteration's saved stats while Core 1 renders.
+                // This overlaps stats processing (~2ms) with rendering, hiding it
+                // inside the vsync period instead of adding it to the critical path.
+                processSavedStats();
+
+                // Frame-ahead: for the last sub-frame, wait only for GL commands
+                // to finish (not the full vsync wait). Core 0 starts game logic
+                // while Core 1 sleeps in SDL_GL_SwapWindow (vsync).
+                if (isLastSubFrame) {
+                    wnd->WaitForGlCommandsDone();
+                    // Capture last sub-frame stats for deferred processing next tick.
+                    // GL commands are done so interpreter stats are final and safe to read.
+                    if (profilerEnabled) {
+                        savedStats = wnd->GetFrameStats();
+                        hasSavedStats = true;
+                        FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
+                    }
+                    FrameProfiler_EndPhase(PROFILE_PHASE_DL_PROCESS);
+                    FrameProfiler_EndPhase(PROFILE_PHASE_GFX_COMMANDS);
+                    break;
+                }
+
+                // Wait for render thread to finish this sub-frame
                 wnd->WaitForRenderDone();
 
+                // Save stats for deferred processing during NEXT sub-frame's render
                 if (profilerEnabled) {
-                    const auto& stats = wnd->GetFrameStats();
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_DRAW_CALLS, (float)stats.drawCalls);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BATCH_FLUSHES, (float)stats.batchFlushes);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_BUFFER_FULL_FLUSHES, (float)stats.bufferFullFlushes);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_STATE_FLUSHES, (float)stats.stateChangeFlushes);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_SWITCHES, (float)stats.shaderSwitches);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_SHADER_COMPILATIONS, (float)stats.shaderCompilations);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_BINDS, (float)stats.textureBinds);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_CACHE_MISSES, (float)stats.textureCacheMisses);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_VERTICES_SUBMITTED, (float)stats.verticesSubmitted);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED, (float)stats.trianglesSubmitted);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TOTAL_MS, (float)stats.timeTotal / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DISPATCH_MS, (float)stats.timeGbiDispatch / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TRI_MS, (float)stats.timeTriProcessing / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEX_MS, (float)stats.timeTextureSetup / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SHADER_MS, (float)stats.timeShaderSetup / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DRAW_MS, (float)stats.timeDrawSubmit / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VBO_UPLOAD_MS, (float)stats.timeVboUpload / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_GL_DRAW_MS, (float)stats.timeGlDraw / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_VTX_MS, (float)stats.timeVertexLoad / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_MTX_MS, (float)stats.timeMatrixOps / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DEPTH_MS, (float)stats.timePixelDepth / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SETUP_MS, (float)stats.timeFrameSetup / 1000000.0f);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)stats.pixelDepthQueries);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE, (float)stats.flushCauseTexture);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER, (float)stats.flushCauseSampler);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER, (float)stats.flushCauseShader);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_ALPHA, (float)stats.flushCauseAlpha);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_DEPTH_VIEWPORT, (float)stats.flushCauseDepthViewport);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER, (float)stats.flushCauseCombiner);
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS, (float)stats.textureReloadSkips);
-                    for (int b = 0; b < Fast::Fast3DStats::BATCH_HISTOGRAM_BUCKETS; b++) {
-                        FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)stats.batchHistogram[b]);
-                    }
-                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
-                }
-                if (profilerEnabled) {
+                    savedStats = wnd->GetFrameStats();
+                    hasSavedStats = true;
                     FrameProfiler_AddCounter(PROFILE_COUNTER_DL_ITERATIONS, 1.0f);
                 }
 
@@ -1304,6 +1566,11 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_SETUP_MS, (float)stats.timeFrameSetup / 1000000.0f);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES, (float)stats.pixelDepthQueries);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_AVG_BATCH_SIZE, stats.avgBatchSize);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_TEXTURE_LOADING_MS, (float)stats.timeTextureLoading / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_RECT_DRAWING_MS, (float)stats.timeRectDrawing / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_DL_OPS_MS, (float)stats.timeDisplayListOps / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_COMBINER_SETUP_MS, (float)stats.timeCombinerSetup / 1000000.0f);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_TIME_FRAMEBUFFER_OPS_MS, (float)stats.timeFramebufferOps / 1000000.0f);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE, (float)stats.flushCauseTexture);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER, (float)stats.flushCauseSampler);
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER, (float)stats.flushCauseShader);
@@ -1315,6 +1582,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
                         FrameProfiler_AddCounter((ProfileCounter)(PROFILE_COUNTER_GL_BATCH_HIST_0 + b), (float)stats.batchHistogram[b]);
                     }
                     FrameProfiler_AddCounter(PROFILE_COUNTER_GL_MAX_BATCH_SIZE, (float)stats.maxBatchSize);
+                    FrameProfiler_AddCounter(PROFILE_COUNTER_GL_COMMANDS_PROCESSED, (float)stats.commandsProcessed);
                 }
 
                 if (intp) { intp->mInterpolationIndex++; }

@@ -2,6 +2,9 @@
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
 #include "CameraUtils.h"
+#include <SDL2/SDL.h>
+#include <ship/Context.h>
+#include <ship/controller/controldeck/ControlDeck.h>
 
 extern "C" {
 #include "macros.h"
@@ -17,6 +20,30 @@ extern Vec3f Camera_CalcUpVec(s16 pitch, s16 yaw, s16 roll);
 
 // Static Data Used For Free Camera
 static bool sDebugCamRefreshParams = true;
+static bool sDebugCamRStickActive = false;
+static bool sPrevR3State = false;
+
+bool IsDebugCamActive() {
+    return CVarGetInteger("gEnhancements.Camera.DebugCam.Enable", 0) || sDebugCamRStickActive;
+}
+
+static bool CheckR3Pressed() {
+    auto deck = Ship::Context::GetInstance()->GetControlDeck();
+    auto physDevMgr = deck->GetConnectedPhysicalDeviceManager();
+
+    s32 controllerPort = CVarGetInteger("gEnhancements.Camera.DebugCam.Port", CAMERA_DEBUG_DEFAULT_PORT) - 1;
+    if (controllerPort > 3 || controllerPort < 0) {
+        controllerPort = 0;
+    }
+
+    auto gamepads = physDevMgr->GetConnectedSDLGamepadsForPort(controllerPort);
+    for (auto& [instanceId, gamepad] : gamepads) {
+        if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_RIGHTSTICK)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 Vec3f Camera_RotatePointAroundAxis(Vec3f* point, Vec3f* axis, s16 angle) {
     f32 q0 = Math_CosS(angle / 2);
@@ -217,13 +244,38 @@ void Camera_DebugCam(Camera* camera) {
 void RegisterDebugCam() {
     sDebugCamRefreshParams = true;
 
-    COND_VB_SHOULD(VB_USE_CUSTOM_CAMERA, CVarGetInteger("gEnhancements.Camera.DebugCam.Enable", 0), {
-        Camera* camera = va_arg(args, Camera*);
-        Camera_DebugCam(camera);
-        *should = false;
+    bool debugCamEnabled = CVarGetInteger("gEnhancements.Camera.DebugCam.Enable", 0);
+    bool rStickToggleEnabled = CVarGetInteger("gEnhancements.Camera.DebugCam.RStickToggle", 0);
+
+    if (!rStickToggleEnabled) {
+        sDebugCamRStickActive = false;
+        sPrevR3State = false;
+    }
+
+    COND_HOOK(OnGameStateUpdate, rStickToggleEnabled, []() {
+        if (!gPlayState) {
+            return;
+        }
+        bool r3Pressed = CheckR3Pressed();
+        if (r3Pressed && !sPrevR3State) {
+            sDebugCamRStickActive = !sDebugCamRStickActive;
+            sDebugCamRefreshParams = true;
+        }
+        sPrevR3State = r3Pressed;
     });
 
-    COND_HOOK(OnPassPlayerInputs, CVarGetInteger("gEnhancements.Camera.DebugCam.Enable", 0), [](Input* input) {
+    COND_VB_SHOULD(VB_USE_CUSTOM_CAMERA, debugCamEnabled || rStickToggleEnabled, {
+        Camera* camera = va_arg(args, Camera*);
+        if (IsDebugCamActive()) {
+            Camera_DebugCam(camera);
+            *should = false;
+        }
+    });
+
+    COND_HOOK(OnPassPlayerInputs, debugCamEnabled || rStickToggleEnabled, [](Input* input) {
+        if (!IsDebugCamActive()) {
+            return;
+        }
         s32 controllerPort = CVarGetInteger("gEnhancements.Camera.DebugCam.Port", CAMERA_DEBUG_DEFAULT_PORT) - 1;
         if (controllerPort > 3 || controllerPort < 0) {
             controllerPort = CAMERA_DEBUG_DEFAULT_PORT - 1;
@@ -236,4 +288,6 @@ void RegisterDebugCam() {
     });
 }
 
-static RegisterShipInitFunc initFunc(RegisterDebugCam, { "gEnhancements.Camera.DebugCam.Enable" });
+static RegisterShipInitFunc initFunc(RegisterDebugCam,
+                                     { "gEnhancements.Camera.DebugCam.Enable",
+                                       "gEnhancements.Camera.DebugCam.RStickToggle" });

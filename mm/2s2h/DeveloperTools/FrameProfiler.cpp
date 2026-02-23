@@ -151,16 +151,47 @@ extern "C" void FrameProfiler_AddCounter(ProfileCounter counter, float value) {
     // Note: Counters are assumed to be incremented from the main thread only.
     // If a counter is used from worker threads, it must be made atomic.
     const int ri = sRingIndex.load(std::memory_order_relaxed);
+    if (counter == PROFILE_COUNTER_GL_AVG_BATCH_SIZE) {
+        // Derived from triangle/draw counters; ignore direct additive writes.
+        return;
+    }
+    // Some counters should not be additive within a frame slot.
+    if (counter == PROFILE_COUNTER_GL_MAX_BATCH_SIZE) {
+        const float oldVal = sCounterRing[counter][ri];
+        if (value > oldVal) {
+            sCounterRing[counter][ri] = value;
+            sCounterRunningSum[counter] += (value - oldVal);
+        }
+        return;
+    }
     sCounterRing[counter][ri] += value;
     sCounterRunningSum[counter] += value;
+    if (counter == PROFILE_COUNTER_GL_DRAW_CALLS || counter == PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED) {
+        const float draws = sCounterRing[PROFILE_COUNTER_GL_DRAW_CALLS][ri];
+        const float tris = sCounterRing[PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED][ri];
+        const float oldAvg = sCounterRing[PROFILE_COUNTER_GL_AVG_BATCH_SIZE][ri];
+        const float newAvg = (draws > 0.5f) ? (tris / draws) : 0.0f;
+        sCounterRing[PROFILE_COUNTER_GL_AVG_BATCH_SIZE][ri] = newAvg;
+        sCounterRunningSum[PROFILE_COUNTER_GL_AVG_BATCH_SIZE] += (newAvg - oldAvg);
+    }
 }
 
 extern "C" float FrameProfiler_GetCounterAvg(ProfileCounter counter) {
+    if (counter == PROFILE_COUNTER_GL_AVG_BATCH_SIZE) {
+        const float drawsAvg = sCounterRunningSum[PROFILE_COUNTER_GL_DRAW_CALLS] / PROFILE_RING_SIZE;
+        const float trisAvg = sCounterRunningSum[PROFILE_COUNTER_GL_TRIANGLES_SUBMITTED] / PROFILE_RING_SIZE;
+        return (drawsAvg > 0.5f) ? (trisAvg / drawsAvg) : 0.0f;
+    }
     return sCounterRunningSum[counter] / PROFILE_RING_SIZE;
 }
 
 extern "C" int FrameProfiler_IsEnabled(void) {
     return sEnabled.load(std::memory_order_relaxed);
+}
+
+extern "C" void FrameProfiler_KeepAlive(void) {
+    sEnabled.store(1, std::memory_order_relaxed);
+    sDrawCountdown = PROFILE_KEEPALIVE_FRAMES;
 }
 
 // ── GBI Display List Scanner ───────────────────────────────────────────
@@ -281,14 +312,14 @@ extern "C" DLBufferStats FrameProfiler_GetBufferStats(int bufIdx) {
     if (bufIdx < 0 || bufIdx >= PROFILE_DL_BUFFER_COUNT)
         return stats;
 
-    stats.commands = (int)(sBufferStatsRunningSum[bufIdx][0] / PROFILE_RING_SIZE);
-    stats.triangles = (int)(sBufferStatsRunningSum[bufIdx][1] / PROFILE_RING_SIZE);
-    stats.vertices = (int)(sBufferStatsRunningSum[bufIdx][2] / PROFILE_RING_SIZE);
-    stats.texLoads = (int)(sBufferStatsRunningSum[bufIdx][3] / PROFILE_RING_SIZE);
-    stats.mtxLoads = (int)(sBufferStatsRunningSum[bufIdx][4] / PROFILE_RING_SIZE);
-    stats.pipeSyncs = (int)(sBufferStatsRunningSum[bufIdx][5] / PROFILE_RING_SIZE);
-    stats.subcalls = (int)(sBufferStatsRunningSum[bufIdx][6] / PROFILE_RING_SIZE);
-    stats.setCombine = (int)(sBufferStatsRunningSum[bufIdx][7] / PROFILE_RING_SIZE);
+    stats.commands = (int)std::lround(sBufferStatsRunningSum[bufIdx][0] / PROFILE_RING_SIZE);
+    stats.triangles = (int)std::lround(sBufferStatsRunningSum[bufIdx][1] / PROFILE_RING_SIZE);
+    stats.vertices = (int)std::lround(sBufferStatsRunningSum[bufIdx][2] / PROFILE_RING_SIZE);
+    stats.texLoads = (int)std::lround(sBufferStatsRunningSum[bufIdx][3] / PROFILE_RING_SIZE);
+    stats.mtxLoads = (int)std::lround(sBufferStatsRunningSum[bufIdx][4] / PROFILE_RING_SIZE);
+    stats.pipeSyncs = (int)std::lround(sBufferStatsRunningSum[bufIdx][5] / PROFILE_RING_SIZE);
+    stats.subcalls = (int)std::lround(sBufferStatsRunningSum[bufIdx][6] / PROFILE_RING_SIZE);
+    stats.setCombine = (int)std::lround(sBufferStatsRunningSum[bufIdx][7] / PROFILE_RING_SIZE);
     return stats;
 }
 
@@ -318,17 +349,22 @@ static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
 };
 
 static const char* sCounterNames[PROFILE_COUNTER_MAX] = {
-    "DL Iterations",      "DL Replay Iters",   "DL Replay Fallback", "DL Replay BranchZ", "DL Replay Cooldown",
-    "DL Commands",        "Triangles",         "Vertices",           "Tex Loads",
-    "Matrix Loads",       "Pipe Syncs",        "DL Subcalls",        "SetCombine",       "GL Draw Calls",
-    "GL Batch Flushes",   "GL BufFull Flushes", "GL State Flushes",  "GL Shader Switches", "GL Shader Compiles", "GL Texture Binds",
-    "GL Tex Cache Miss",  "GL Vert Submitted", "GL Tri Submitted",   "GL Time Total ms", "GL Time Dispatch ms",
-    "GL Time Tri ms",     "GL Time Tex ms",    "GL Time Shader ms",  "GL Time Draw ms",  "GL Time Vtx ms",
-    "GL Time Mtx ms",     "GL Time Depth ms",  "GL Time Setup ms",   "GL Depth Queries", "GL Avg Batch Size",
-    "Flush:Texture",      "Flush:Sampler",     "Flush:Shader",       "Flush:Alpha",      "Flush:Depth/VP",
-    "Flush:Combiner",     "Tex Reload Skips",
-    "Batch:1-2 tris",    "Batch:3-8 tris",   "Batch:9-32 tris",  "Batch:33-128 tris", "Batch:129+ tris",
-    "Max Batch Size",
+    "DL Iterations", "DL Replay Iters", "DL Replay Fallback", "DL Replay BranchZ", "DL Replay Cooldown",
+    "DL Commands", "Triangles", "Vertices", "Tex Loads", "Matrix Loads", "Pipe Syncs", "DL Subcalls", "SetCombine",
+    "GL Draw Calls", "GL Batch Flushes", "GL BufFull Flushes", "GL State Flushes", "GL Shader Switches",
+    "GL Shader Compiles", "GL Texture Binds", "GL Tex Cache Miss", "GL Vert Submitted", "GL Tri Submitted",
+    "GL Time Total ms", "GL Time Dispatch ms", "GL Time Tri ms", "GL Time Tex ms", "GL Time Shader ms",
+    "GL Time Draw ms", "GL Time VBO Upload ms", "GL Time glDraw ms", "GL Time Vtx ms", "GL Time Mtx ms",
+    "GL Time Depth ms", "GL Time Setup ms", "GL Depth Queries", "GL Avg Batch Size",
+    "GL Time TexLoad ms", "GL Time RectDraw ms", "GL Time DLOps ms", "GL Time CombSetup ms", "GL Time FBOps ms",
+    "Flush:Texture", "Flush:Sampler", "Flush:Shader", "Flush:Alpha", "Flush:Depth/VP", "Flush:Combiner",
+    "Tex Reload Skips", "Batch:1-2 tris", "Batch:3-8 tris", "Batch:9-32 tris", "Batch:33-128 tris",
+    "Batch:129+ tris", "Max Batch Size", "Sys CPU Usage %", "Sys GPU Usage Est %", "Sys RAM Usage %",
+    "Sys RAM Used MB", "Sys RAM Total MB", "Sys CPU Clock MHz", "Sys GPU Clock MHz", "Sys EMC Clock MHz",
+    "Sys CPU Core0 Usage %", "Sys CPU Core1 Usage %", "Sys CPU Core2 Usage %", "Sys CPU Core3 Usage %",
+    "Sys SoC Temp C", "Sys PCB Temp C", "Sys Skin Temp C", "Sys Battery Temp C", "Sys Battery Charge %",
+    "Sys Battery Age %", "Sys Battery Voltage mV", "Sys Charger Type", "Sys Charger Volt Limit mV",
+    "Sys Charger Current Limit mA",
 };
 
 // ── Helper functions ───────────────────────────────────────────────────
@@ -348,6 +384,134 @@ static float GetAccountedTimeMs(void) {
            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_AUDIO_WAIT) +
            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_FRAME_INTERP) +
            FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_DL_PROCESS);
+}
+
+extern "C" FrameProfilerRenderMetrics FrameProfiler_MakeRenderMetrics(float totalMs, float dlIterations) {
+    FrameProfilerRenderMetrics metrics = {};
+    metrics.totalMs = totalMs;
+    metrics.dlIterations = (dlIterations < 1.0f) ? 1.0f : dlIterations;
+    metrics.renderFrameMs = metrics.totalMs / metrics.dlIterations;
+    metrics.renderFps = (metrics.renderFrameMs > 0.01f) ? (1000.0f / metrics.renderFrameMs) : 0.0f;
+    metrics.tickFps = (metrics.totalMs > 0.01f) ? (1000.0f / metrics.totalMs) : 0.0f;
+    return metrics;
+}
+
+extern "C" FrameProfilerRenderMetrics FrameProfiler_GetAverageRenderMetrics(void) {
+    return FrameProfiler_MakeRenderMetrics(FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME),
+                                           FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS));
+}
+
+struct RenderFpsStats {
+    float avg = 0.0f;
+    float low1 = 0.0f;
+    float low01 = 0.0f;
+    int sampleCount = 0;
+};
+
+static RenderFpsStats ComputeRenderFpsStatsFromRing(void) {
+    RenderFpsStats stats = {};
+    float fpsSamples[PROFILE_RING_SIZE] = {};
+    int n = 0;
+
+    for (int f = 0; f < PROFILE_RING_SIZE; f++) {
+        FrameProfilerRenderMetrics metrics = FrameProfiler_MakeRenderMetrics(
+            sPhaseRing[PROFILE_PHASE_TOTAL_FRAME][f], sCounterRing[PROFILE_COUNTER_DL_ITERATIONS][f]);
+        if (metrics.totalMs <= 0.01f || metrics.renderFrameMs <= 0.01f) {
+            continue;
+        }
+        fpsSamples[n++] = metrics.renderFps;
+    }
+
+    if (n <= 0) {
+        return stats;
+    }
+
+    float sum = 0.0f;
+    for (int i = 0; i < n; i++) {
+        sum += fpsSamples[i];
+    }
+    stats.avg = sum / n;
+
+    std::sort(fpsSamples, fpsSamples + n);
+    const int nLow1 = std::max(1, (int)std::ceil(n * 0.01f));
+    const int nLow01 = std::max(1, (int)std::ceil(n * 0.001f));
+    float low1Sum = 0.0f;
+    float low01Sum = 0.0f;
+    for (int i = 0; i < nLow1; i++) {
+        low1Sum += fpsSamples[i];
+    }
+    for (int i = 0; i < nLow01; i++) {
+        low01Sum += fpsSamples[i];
+    }
+    stats.low1 = low1Sum / nLow1;
+    stats.low01 = low01Sum / nLow01;
+    stats.sampleCount = n;
+    return stats;
+}
+
+struct SystemTelemetrySnapshot {
+    float cpuUsagePct = 0.0f;
+    float cpuCoreUsagePct[4] = {};
+    float gpuUsageEstPct = 0.0f;
+    float ramUsagePct = 0.0f;
+    float ramUsedMb = 0.0f;
+    float ramTotalMb = 0.0f;
+    float cpuClockMhz = 0.0f;
+    float gpuClockMhz = 0.0f;
+    float emcClockMhz = 0.0f;
+    float socTempC = 0.0f;
+    float pcbTempC = 0.0f;
+    float skinTempC = 0.0f;
+    float batteryTempC = 0.0f;
+    float batteryChargePct = 0.0f;
+    float batteryAgePct = 0.0f;
+    float batteryVoltageMv = 0.0f;
+    float chargerType = 0.0f;
+    float chargerVoltageLimitMv = 0.0f;
+    float chargerCurrentLimitMa = 0.0f;
+};
+
+static SystemTelemetrySnapshot GetSystemTelemetrySnapshot(void) {
+    SystemTelemetrySnapshot t = {};
+    t.cpuUsagePct = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_USAGE_PCT);
+    t.cpuCoreUsagePct[0] = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_CORE0_USAGE_PCT);
+    t.cpuCoreUsagePct[1] = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_CORE1_USAGE_PCT);
+    t.cpuCoreUsagePct[2] = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_CORE2_USAGE_PCT);
+    t.cpuCoreUsagePct[3] = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_CORE3_USAGE_PCT);
+    t.gpuUsageEstPct = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_GPU_USAGE_EST_PCT);
+    t.ramUsagePct = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_RAM_USAGE_PCT);
+    t.ramUsedMb = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_RAM_USED_MB);
+    t.ramTotalMb = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_RAM_TOTAL_MB);
+    t.cpuClockMhz = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ);
+    t.gpuClockMhz = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ);
+    t.emcClockMhz = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ);
+    t.socTempC = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_SOC_TEMP_C);
+    t.pcbTempC = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_PCB_TEMP_C);
+    t.skinTempC = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_SKIN_TEMP_C);
+    t.batteryTempC = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_BATTERY_TEMP_C);
+    t.batteryChargePct = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_BATTERY_CHARGE_PCT);
+    t.batteryAgePct = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_BATTERY_AGE_PCT);
+    t.batteryVoltageMv = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_BATTERY_VOLTAGE_MV);
+    t.chargerType = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CHARGER_TYPE);
+    t.chargerVoltageLimitMv = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CHARGER_VOLTAGE_LIMIT_MV);
+    t.chargerCurrentLimitMa = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_SYS_CHARGER_CURRENT_LIMIT_MA);
+    return t;
+}
+
+extern "C" const char* FrameProfiler_ChargerTypeToString(float chargerType) {
+    const int type = (int)(chargerType + 0.5f);
+    switch (type) {
+        case 0:
+            return "Unconnected";
+        case 1:
+            return "Enough Power";
+        case 2:
+            return "Low Power";
+        case 3:
+            return "Not Supported";
+        default:
+            return "Unknown";
+    }
 }
 
 // ── Snapshot export ─────────────────────────────────────────────────────
@@ -436,11 +600,14 @@ static void FrameProfiler_ExportSnapshot(void) {
         return;
     }
 
-    float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
-    float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
-    if (dlIter < 1.0f) dlIter = 1.0f;
-    float renderFrameMs = totalMs / dlIter;
-    float fps = (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
+    FrameProfilerRenderMetrics renderMetrics = FrameProfiler_GetAverageRenderMetrics();
+    float totalMs = renderMetrics.totalMs;
+    float dlIter = renderMetrics.dlIterations;
+    float renderFrameMs = renderMetrics.renderFrameMs;
+    float fps = renderMetrics.renderFps;
+    float tickFps = renderMetrics.tickFps;
+    RenderFpsStats fpsStats = ComputeRenderFpsStatsFromRing();
+    SystemTelemetrySnapshot sys = GetSystemTelemetrySnapshot();
 
     out << "=== 2S2H Frame Profiler Snapshot ===" << std::endl;
     out << "Timestamp: " << timeBuf << std::endl;
@@ -462,8 +629,12 @@ static void FrameProfiler_ExportSnapshot(void) {
 
     out << "--- Summary (" << PROFILE_RING_SIZE << "-frame average) ---" << std::endl;
     out << "Total Update Time:              " << std::fixed << std::setprecision(2) << totalMs << " ms (" << std::setprecision(0) << dlIter << " DL iterations)" << std::endl;
-    out << "Per Rendered Frame:             " << std::fixed << std::setprecision(2) << renderFrameMs << " ms" << std::endl;
-    out << "FPS:                            " << std::fixed << std::setprecision(1) << fps << std::endl;
+    out << "Game Tick:                      " << std::fixed << std::setprecision(2) << totalMs << " ms (" << std::setprecision(1) << tickFps << " FPS-equivalent)" << std::endl;
+    out << "Per Rendered Frame:             " << std::fixed << std::setprecision(2) << renderFrameMs << " ms (" << std::setprecision(1) << fps << " FPS)" << std::endl;
+    if (fpsStats.sampleCount > 0) {
+        out << "FPS Stability:                  " << std::setprecision(1) << fpsStats.avg << " avg | "
+            << fpsStats.low1 << " (1% low) | " << fpsStats.low01 << " (0.1% low)" << std::endl;
+    }
     out << "Target (60 FPS):                " << std::fixed << std::setprecision(2) << PROFILE_TARGET_FRAME_MS << " ms" << std::endl;
     if (renderFrameMs > PROFILE_TARGET_FRAME_MS) {
         float overhead = ((renderFrameMs / PROFILE_TARGET_FRAME_MS) - 1.0f) * 100.0f;
@@ -473,6 +644,42 @@ static void FrameProfiler_ExportSnapshot(void) {
         out << "Performance:                    " << std::fixed << std::setprecision(1) << headroom << "% headroom remaining" << std::endl;
     }
     out << std::endl;
+
+    bool hasSystemTelemetry = sys.gpuUsageEstPct > 0.01f || sys.cpuUsagePct > 0.01f || sys.ramTotalMb > 0.01f ||
+        sys.cpuClockMhz > 0.01f || sys.gpuClockMhz > 0.01f || sys.emcClockMhz > 0.01f || sys.socTempC > 0.01f ||
+        sys.pcbTempC > 0.01f || sys.skinTempC > 0.01f || sys.batteryChargePct > 0.01f || sys.batteryVoltageMv > 0.01f ||
+        sys.chargerVoltageLimitMv > 0.01f || sys.chargerCurrentLimitMa > 0.01f;
+    if (hasSystemTelemetry) {
+        out << "--- System Telemetry ---" << std::endl;
+        out << "CPU Usage (avg cores):          " << std::setprecision(1) << sys.cpuUsagePct << "%" << std::endl;
+        out << "CPU Usage (C0/C1/C2/C3):        " << std::setprecision(1)
+            << sys.cpuCoreUsagePct[0] << "% / " << sys.cpuCoreUsagePct[1] << "% / "
+            << sys.cpuCoreUsagePct[2] << "% / " << sys.cpuCoreUsagePct[3] << "%" << std::endl;
+        out << "GPU Usage (estimate):           " << std::setprecision(1) << sys.gpuUsageEstPct << "% (proxy)" << std::endl;
+        if (sys.ramTotalMb > 0.01f) {
+            out << "RAM Usage:                      " << std::setprecision(0) << sys.ramUsedMb << " / "
+                << sys.ramTotalMb << " MB (" << std::setprecision(1) << sys.ramUsagePct << "%)" << std::endl;
+        }
+        if (sys.cpuClockMhz > 0.01f || sys.gpuClockMhz > 0.01f || sys.emcClockMhz > 0.01f) {
+            out << "Clocks (CPU/GPU/EMC):           " << std::setprecision(0) << sys.cpuClockMhz << " / "
+                << sys.gpuClockMhz << " / " << sys.emcClockMhz << " MHz" << std::endl;
+        }
+        if (sys.socTempC > 0.01f || sys.pcbTempC > 0.01f || sys.skinTempC > 0.01f) {
+            out << "Temps (SoC/PCB/Skin):           " << std::setprecision(1) << sys.socTempC << " / "
+                << sys.pcbTempC << " / " << sys.skinTempC << " C" << std::endl;
+        }
+        if (sys.batteryChargePct > 0.01f || sys.batteryVoltageMv > 0.01f) {
+            out << "Battery (charge/health/temp):   " << std::setprecision(1) << sys.batteryChargePct << "% / "
+                << sys.batteryAgePct << "% / " << sys.batteryTempC << " C" << std::endl;
+            out << "Battery Voltage:                " << std::setprecision(0) << sys.batteryVoltageMv << " mV" << std::endl;
+        }
+        if (sys.chargerVoltageLimitMv > 0.01f || sys.chargerCurrentLimitMa > 0.01f || sys.chargerType > 0.01f) {
+            out << "Charger:                        " << FrameProfiler_ChargerTypeToString(sys.chargerType) << " ("
+                << std::setprecision(0) << sys.chargerVoltageLimitMv << " mV / "
+                << sys.chargerCurrentLimitMa << " mA limit)" << std::endl;
+        }
+        out << std::endl;
+    }
 
     out << "--- Per-Phase Breakdown ---" << std::endl;
     int worstPhase = -1;
@@ -531,7 +738,9 @@ static void FrameProfiler_ExportSnapshot(void) {
     float glTimeDepth = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DEPTH_MS);
     float glTimeSetup = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_SETUP_MS);
     float glDepthQueries = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES);
-    float glAvgBatch = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_AVG_BATCH_SIZE);
+    // Derive avg batch from totals; additive averaging of per-iteration ratios
+    // can overstate this when multiple DL iterations are present.
+    float glAvgBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
 
     // GBI/Display List counters (game-side)
     out << "DL Iterations:                  " << std::fixed << std::setprecision(0) << dlIter << std::endl;
@@ -560,9 +769,11 @@ static void FrameProfiler_ExportSnapshot(void) {
     out << "Fast3D Backend (OpenGL):" << std::endl;
     out << "Est. Draw Calls (from PipeSyncs): ~" << std::fixed << std::setprecision(0) << pipeSyncs << " (upper bound, actual may differ)" << std::endl;
     out << "GL Draw Calls (actual):         " << std::fixed << std::setprecision(0) << glDrawCalls << std::endl;
-    out << "GL Batch Flushes:               " << std::fixed << std::setprecision(0) << glBatchFlushes 
-        << " (state: " << std::fixed << std::setprecision(0) << (glBatchFlushes - glBufferFullFlushes) 
-        << ", buf-full: " << std::setprecision(0) << glBufferFullFlushes << ")" << std::endl;
+    const float glBufferFullFlushesClamped = std::clamp(glBufferFullFlushes, 0.0f, glBatchFlushes);
+    const float glStateFlushesFromBatch = std::max(0.0f, glBatchFlushes - glBufferFullFlushesClamped);
+    out << "GL Batch Flushes:               " << std::fixed << std::setprecision(0) << glBatchFlushes
+        << " (state: " << std::fixed << std::setprecision(0) << glStateFlushesFromBatch
+        << ", buf-full: " << std::setprecision(0) << glBufferFullFlushesClamped << ")" << std::endl;
     out << "GL Shader Switches:             " << std::fixed << std::setprecision(0) << glShaderSwitches 
         << " (compiles: " << std::fixed << std::setprecision(0) << glShaderCompiles << ")" << std::endl;
     out << "GL Texture Binds:               " << std::fixed << std::setprecision(0) << glTextureBinds 
@@ -697,17 +908,18 @@ static void FrameProfiler_ExportSnapshot(void) {
 
     // Flush efficiency analysis
     out << "--- Flush Efficiency ---" << std::endl;
-    float emptyFlushes = glBatchFlushes - glDrawCalls;
-    float stateActualFlushes = glBatchFlushes - glBufferFullFlushes;
+    float emptyFlushes = std::max(0.0f, glBatchFlushes - glDrawCalls);
+    float stateActualFlushes = glStateFlushesFromBatch;
     float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
     float effectiveBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
     out << "Total Flushes:                  " << std::fixed << std::setprecision(0) << glBatchFlushes << std::endl;
     out << "  State-change driven:          " << std::fixed << std::setprecision(0) << stateActualFlushes << std::endl;
-    out << "  Buffer-full:                  " << std::fixed << std::setprecision(0) << glBufferFullFlushes << std::endl;
+    out << "  Buffer-full:                  " << std::fixed << std::setprecision(0) << glBufferFullFlushesClamped << std::endl;
     out << "  Empty (no geometry):          " << std::fixed << std::setprecision(0) << emptyFlushes 
         << " (" << std::fixed << std::setprecision(1) << emptyPct << "%)" << std::endl;
-    out << "State change events:            " << std::fixed << std::setprecision(0) << glStateFlushes 
-        << " (includes " << std::setprecision(0) << (glStateFlushes - stateActualFlushes) << " with empty buffer)" << std::endl;
+    out << "State change events:            " << std::fixed << std::setprecision(0) << glStateFlushes
+        << " (includes " << std::setprecision(0) << std::max(0.0f, glStateFlushes - stateActualFlushes)
+        << " with empty buffer)" << std::endl;
     out << "Actual Draw Calls:              " << std::fixed << std::setprecision(0) << glDrawCalls << std::endl;
     out << "Effective Batch Size:           " << std::fixed << std::setprecision(1) << effectiveBatch << " tris/draw" << std::endl;
 #ifdef __SWITCH__
@@ -750,6 +962,12 @@ static void FrameProfiler_ExportSnapshot(void) {
         totalDrawsHist += batchHist[b];
     }
     float maxBatchSeen = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_MAX_BATCH_SIZE);
+    const float histEps = 0.001f;
+    if (batchHist[4] <= histEps && maxBatchSeen > 128.0f) maxBatchSeen = 128.0f;
+    if (batchHist[3] <= histEps && maxBatchSeen > 32.0f) maxBatchSeen = 32.0f;
+    if (batchHist[2] <= histEps && maxBatchSeen > 8.0f) maxBatchSeen = 8.0f;
+    if (batchHist[1] <= histEps && maxBatchSeen > 2.0f) maxBatchSeen = 2.0f;
+    if (batchHist[0] <= histEps && maxBatchSeen > 0.0f) maxBatchSeen = 0.0f;
     for (int b = 0; b < 5; b++) {
         float pct = (totalDrawsHist > 0.5f) ? (batchHist[b] / totalDrawsHist * 100.0f) : 0.0f;
         // Visual bar: each # = 2%
@@ -1084,23 +1302,30 @@ void FrameProfilerWindow::DrawElement() {
     }
     ImGui::Separator();
 
-    float totalMs = FrameProfiler_GetPhaseAvgMs(PROFILE_PHASE_TOTAL_FRAME);
-    float dlIter = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_DL_ITERATIONS);
-    if (dlIter < 1.0f) dlIter = 1.0f;
-    float renderFrameMs = totalMs / dlIter;
-    float fps = (renderFrameMs > 0.01f) ? (1000.0f / renderFrameMs) : 0.0f;
+    FrameProfilerRenderMetrics renderMetrics = FrameProfiler_GetAverageRenderMetrics();
+    float totalMs = renderMetrics.totalMs;
+    float dlIter = renderMetrics.dlIterations;
+    float renderFrameMs = renderMetrics.renderFrameMs;
+    float fps = renderMetrics.renderFps;
+    float tickFps = renderMetrics.tickFps;
+    RenderFpsStats fpsStats = ComputeRenderFpsStatsFromRing();
 
     // Enhanced summary with color coding and deltas
     if (renderFrameMs > 20.0f) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Render: %.2f ms (%.1f FPS) | Tick: %.2f ms (%.1f FPS)", renderFrameMs, fps, totalMs, tickFps);
     } else if (renderFrameMs > PROFILE_TARGET_FRAME_MS) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Render: %.2f ms (%.1f FPS) | Tick: %.2f ms (%.1f FPS)", renderFrameMs, fps, totalMs, tickFps);
     } else {
-        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Frame: %.2f ms  (%.1f FPS)", renderFrameMs, fps);
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Render: %.2f ms (%.1f FPS) | Tick: %.2f ms (%.1f FPS)", renderFrameMs, fps, totalMs, tickFps);
     }
     ShowDelta(renderFrameMs, sPrevSnapshot.renderFrameMs, true);  // lower frame time = better
     ImGui::SameLine();
-    ImGui::TextDisabled("Target: %.2f ms (60 FPS)", PROFILE_TARGET_FRAME_MS);
+    ImGui::TextDisabled("Target: %.2f ms (60 FPS), DL iters: %.1f", PROFILE_TARGET_FRAME_MS, dlIter);
+
+    if (fpsStats.sampleCount > 0) {
+        ImGui::Text("FPS Stability: %.1f avg | %.1f (1%% low) | %.1f (0.1%% low)",
+                    fpsStats.avg, fpsStats.low1, fpsStats.low01);
+    }
     
     // Show FPS delta
     if (sPrevSnapshot.valid) {
@@ -1192,7 +1417,7 @@ void FrameProfilerWindow::DrawElement() {
     float glTimeDepth = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_DEPTH_MS);
     float glTimeSetup = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_TIME_SETUP_MS);
     float glDepthQueries = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES);
-    float glAvgBatch = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_AVG_BATCH_SIZE);
+    float glAvgBatch = (glDrawCalls > 0.5f) ? (glTris / glDrawCalls) : 0.0f;
 
     ImGui::Text("DL Iterations: %.0f   Total Commands: %.0f", dlIter, dlCmds);
     ImGui::Text("Replay Iters: %.0f   Fallbacks: %.0f   BranchZ: %.0f   Cooldown Skips: %.0f",
@@ -1221,14 +1446,15 @@ void FrameProfilerWindow::DrawElement() {
         ImGui::SetTooltip("Upper bound estimate based on PipeSync commands\nActual draw calls may be lower due to batching");
     }
     
-    float stateActualFlushesGui = glBatchFlushes - glBufferFullFlushes;
+    float glBufferFullFlushesGui = std::clamp(glBufferFullFlushes, 0.0f, glBatchFlushes);
+    float stateActualFlushesGui = std::max(0.0f, glBatchFlushes - glBufferFullFlushesGui);
     ImGui::Text("GL Draw Calls: %.0f", glDrawCalls);
     ShowDelta(glDrawCalls, sPrevSnapshot.glDrawCalls, true);  // fewer draws = better
     ImGui::SameLine();
-    ImGui::Text("  Flushes: %.0f (state: %.0f, buf-full: %.0f)", glBatchFlushes, stateActualFlushesGui, glBufferFullFlushes);
+    ImGui::Text("  Flushes: %.0f (state: %.0f, buf-full: %.0f)", glBatchFlushes, stateActualFlushesGui, glBufferFullFlushesGui);
     
     // Flush efficiency warning
-    float emptyFlushes = glBatchFlushes - glDrawCalls;
+    float emptyFlushes = std::max(0.0f, glBatchFlushes - glDrawCalls);
     float emptyPct = (glBatchFlushes > 0.5f) ? (emptyFlushes / glBatchFlushes * 100.0f) : 0.0f;
     if (emptyPct > 30.0f) {
         ImGui::SameLine();
@@ -1310,6 +1536,12 @@ void FrameProfilerWindow::DrawElement() {
             totalDrawsHist += batchHist[b];
         }
         float maxBatchSeen = FrameProfiler_GetCounterAvg(PROFILE_COUNTER_GL_MAX_BATCH_SIZE);
+        const float histEps = 0.001f;
+        if (batchHist[4] <= histEps && maxBatchSeen > 128.0f) maxBatchSeen = 128.0f;
+        if (batchHist[3] <= histEps && maxBatchSeen > 32.0f) maxBatchSeen = 32.0f;
+        if (batchHist[2] <= histEps && maxBatchSeen > 8.0f) maxBatchSeen = 8.0f;
+        if (batchHist[1] <= histEps && maxBatchSeen > 2.0f) maxBatchSeen = 2.0f;
+        if (batchHist[0] <= histEps && maxBatchSeen > 0.0f) maxBatchSeen = 0.0f;
 
         for (int b = 0; b < 5; b++) {
             if (batchHist[b] < 0.5f) continue;

@@ -189,8 +189,9 @@ static void on_applet_hook(AppletHookType hook, void* param) {
 
             break;
 
-            /* Performance mode */
+            /* Performance mode / Operation mode (dock/undock) */
         case AppletHookType_OnPerformanceMode:
+        case AppletHookType_OnOperationMode:
             Ship::Switch::ApplyOverclock();
             break;
         default:

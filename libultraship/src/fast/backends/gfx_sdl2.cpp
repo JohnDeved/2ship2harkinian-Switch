@@ -341,7 +341,10 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
 #if defined(__APPLE__)
     bool use_opengl = strcmp(gfxApiName, "OpenGL") == 0;
 #elif defined(ENABLE_DEKO3D)
-    bool use_opengl = strcmp(gfxApiName, "deko3d") != 0;
+    bool use_opengl = false;
+    if (strcmp(gfxApiName, "deko3d") != 0) {
+        SPDLOG_WARN("Invalid graphics API '{}' for this build; forcing 'deko3d'", gfxApiName);
+    }
 #else
     constexpr bool use_opengl = true;
 #endif

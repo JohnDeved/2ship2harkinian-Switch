@@ -1440,7 +1440,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
         // Each vertex: 4 (pos) + 2 (tex) + 4 (color) = 10 floats
         size_t floatsPerVert = 10;
         size_t vtxBytes = vtxCount * floatsPerVert * sizeof(float);
-        size_t idxBytes = idxCount * sizeof(ImDrawIdx);
+        size_t idxBytes = idxCount * sizeof(uint32_t);
         size_t idxOffsetBytes = (vtxBytes + 3) & ~((size_t)3);
         size_t uploadBytes = idxOffsetBytes + idxBytes;
 
@@ -1480,9 +1480,27 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
             vboDst += floatsPerVert;
         }
 
+        // Build index buffer with VtxOffset pre-applied.
+        // This avoids relying on base-vertex behavior in drawIndexed on deko3d.
+        std::vector<uint32_t> adjustedIndices(idxCount, 0);
+        for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++) {
+            const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
+            if (pcmd->UserCallback) {
+                continue;
+            }
+
+            const size_t start = static_cast<size_t>(pcmd->IdxOffset);
+            const size_t end = std::min(idxCount, start + static_cast<size_t>(pcmd->ElemCount));
+            const uint32_t vtxOffset = static_cast<uint32_t>(pcmd->VtxOffset);
+            for (size_t i = start; i < end; i++) {
+                uint32_t idx = static_cast<uint32_t>(idxBuf[i]) + vtxOffset;
+                adjustedIndices[i] = (idx < vtxCount) ? idx : 0;
+            }
+        }
+
         // Upload index buffer directly after vertices
         void* idxDst = (uint8_t*)mVboMem.getCpuAddr() + mVboOffset + idxOffsetBytes;
-        memcpy(idxDst, idxBuf, idxBytes);
+        memcpy(idxDst, adjustedIndices.data(), idxBytes);
 
         // Bind vertex buffer
         DkBufExtents vboBuf;
@@ -1491,8 +1509,7 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
         mCmdBuf.bindVtxBuffers(0, dk::detail::ArrayProxy<DkBufExtents const>(1, &vboBuf));
 
         // Bind index buffer
-        DkIdxFormat idxFormat = sizeof(ImDrawIdx) == 2 ? DkIdxFormat_Uint16 : DkIdxFormat_Uint32;
-        mCmdBuf.bindIdxBuffer(idxFormat, mVboMem.getGpuAddr() + mVboOffset + idxOffsetBytes);
+        mCmdBuf.bindIdxBuffer(DkIdxFormat_Uint32, mVboMem.getGpuAddr() + mVboOffset + idxOffsetBytes);
 
         // Set up vertex attributes: pos(4) + texcoord(2) + color(4) mapped to shader locations 0-9
         DkVtxAttribState fullAttribs[10];
@@ -1615,9 +1632,8 @@ void GfxRenderingAPIDeko3d::RenderImGuiDrawData(ImDrawData* drawData) {
                                      dk::detail::ArrayProxy<DkResHandle const>(1, &handle));
             }
 
-            // Indexed draw: use command-local firstIndex and vertexOffset from ImGui.
-            mCmdBuf.drawIndexed(DkPrimitive_Triangles, pcmd->ElemCount, 1, pcmd->IdxOffset,
-                                (int32_t)pcmd->VtxOffset, 0);
+            // Indexed draw: indices already include VtxOffset, so vertexOffset remains 0.
+            mCmdBuf.drawIndexed(DkPrimitive_Triangles, pcmd->ElemCount, 1, pcmd->IdxOffset, 0, 0);
         }
     }
 

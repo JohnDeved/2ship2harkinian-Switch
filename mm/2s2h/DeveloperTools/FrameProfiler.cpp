@@ -333,7 +333,7 @@ static const char* sPhaseNames[PROFILE_PHASE_MAX] = {
 // Core assignment labels for display
 static const char* sPhaseCoreLabels[PROFILE_PHASE_MAX] = {
     "Core 0", // AT (main thread)
-    "Core 3", // OC (worker thread on Switch; may fall back)
+    "Core 2", // OC (worker thread on Switch; may fall back)
     "Core 0", // Damage
     "Core 0", // Actor Update
     "Core 0", // Effects
@@ -1075,7 +1075,7 @@ static void FrameProfiler_ExportSnapshot(void) {
 
     out << "--- Core Utilization (Multi-threading Status) ---" << std::endl;
     out << "Core 0 Active Time:             " << std::fixed << std::setprecision(2) << core0Ms << " ms (main thread)" << std::endl;
-    out << "Worker Core Active Time:        " << std::fixed << std::setprecision(2) << core1Ms << " ms (Switch: usually Core 3)" << std::endl;
+    out << "Worker Core Active Time:        " << std::fixed << std::setprecision(2) << core1Ms << " ms (Switch: usually Core 2)" << std::endl;
     out << "Worker/Core 0 Ratio:            " << std::fixed << std::setprecision(1) << (imbalance * 100.0f) << "% (100% = balanced)" << std::endl;
     if (imbalance < 0.5f) {
         out << "Note: Worker core is significantly underutilized. Consider moving more work to worker threads." << std::endl;

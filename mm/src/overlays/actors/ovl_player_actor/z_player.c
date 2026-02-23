@@ -3924,7 +3924,13 @@ void Player_ProcessItemButtons(Player* this, PlayState* play) {
 
         // #region 2S2H [Dpad]
         if (CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0)) {
-            if (i >= EQUIP_SLOT_A) {
+            // Don't process dpad equips when arrow cycle dpad is active and player is aiming with a bow,
+            // as the dpad is being used to cycle arrow types in that case.
+            s32 isAimingBow =
+                (this->heldItemAction >= PLAYER_IA_BOW && this->heldItemAction <= PLAYER_IA_BOW_LIGHT) &&
+                ((this->unk_AA5 == PLAYER_UNKAA5_3) || (this->upperActionFunc == Player_UpperAction_7));
+            if (i >= EQUIP_SLOT_A &&
+                !(CVarGetInteger("gEnhancements.PlayerActions.ArrowCycleDpad", 0) && isAimingBow)) {
                 DpadEquipSlot j = func_Dpad_8082FDC4();
                 ItemId dpadItem = Player_Dpad_GetItemOnButton(play, this, j);
                 if (dpadItem < item) {

@@ -5,8 +5,12 @@
 #include "2s2h/CustomMessage/CustomMessage.h"
 #include "2s2h/CustomItem/CustomItem.h"
 
+#include "2s2h/Enhancements/Enhancements.h"
+
 #define CVAR_NAME "gEnhancements.Timesavers.AutoBankDeposit"
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
+#define NOTIFICATION_CVAR_NAME "gEnhancements.Timesavers.AutoBankDepositNotifications"
+#define NOTIFICATION_CVAR CVarGetInteger(NOTIFICATION_CVAR_NAME, AUTO_BANK_DEPOSIT_NOTIFICATION_ALWAYS)
 
 #define BANK_MAX_CAPACITY 5000
 
@@ -127,6 +131,17 @@ static bool CrossedNotificationThreshold(s16 balanceBeforeDeposit, s16 balanceAf
     return false;
 }
 
+static bool ShouldNotify(s16 balanceBeforeDeposit, s16 balanceAfterDeposit) {
+    switch (NOTIFICATION_CVAR) {
+        case AUTO_BANK_DEPOSIT_NOTIFICATION_ALWAYS:
+            return true;
+        case AUTO_BANK_DEPOSIT_NOTIFICATION_MILESTONES:
+            return CrossedNotificationThreshold(balanceBeforeDeposit, balanceAfterDeposit);
+        default:
+            return false;
+    }
+}
+
 static void HandleWalletOverflow() {
     s16 currentBankBalance = HS_GET_BANK_RUPEES();
 
@@ -144,7 +159,7 @@ static void HandleWalletOverflow() {
         HS_SET_BANK_RUPEES(balanceAfterDeposit);
         gSaveContext.rupeeAccumulator -= depositAmount;
 
-        if (CrossedNotificationThreshold(balanceBeforeDeposit, balanceAfterDeposit)) {
+        if (ShouldNotify(balanceBeforeDeposit, balanceAfterDeposit)) {
             EmitDepositNotification(balanceAfterDeposit);
         }
         GrantBankerReward(balanceBeforeDeposit, balanceAfterDeposit);

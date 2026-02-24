@@ -23,6 +23,10 @@ static constexpr int REWIND_BUFFER_SIZE = 30 * 20;
 // MM skeletons rarely exceed ~30 limbs. 40 covers all known cases.
 static constexpr int MAX_LIMBS = 40;
 
+// Minimum number of captured frames before rewind can activate.
+// Prevents accidental single-frame rewinds from button taps.
+static constexpr int MIN_REWIND_FRAMES = 3;
+
 // Hint for vector::reserve to avoid reallocation in typical scenes
 static constexpr int EXPECTED_MAX_ACTORS = 256;
 
@@ -88,16 +92,6 @@ struct PlayerResourceSnapshot {
     s16 magicState;
 };
 
-// Camera state for smooth rewind visuals
-struct CameraSnapshot {
-    Vec3f eye;
-    Vec3f at;
-    Vec3f up;
-    Vec3f eyeNext;
-    f32 fov;
-    f32 dist;
-};
-
 // Scene-level flags (switches, chests, collectibles, cleared rooms)
 struct SceneFlagsSnapshot {
     ActorContextSceneFlags flags;
@@ -111,7 +105,6 @@ struct FrameSnapshot {
     PlayerSnapshot player;
     PlayerResourceSnapshot resources;
     SceneFlagsSnapshot sceneFlags;
-    CameraSnapshot camera;
 };
 
 static std::vector<FrameSnapshot> sRewindBuffer(REWIND_BUFFER_SIZE);
@@ -197,6 +190,11 @@ static void CaptureFrame() {
         return;
     }
 
+    // Don't capture while paused — actor state is stale and unchanged
+    if (gPlayState->pauseCtx.state != PAUSE_STATE_OFF) {
+        return;
+    }
+
     FrameSnapshot& snapshot = sRewindBuffer[sBufferHead];
     snapshot.valid = true;
     snapshot.gameplayFrames = gPlayState->gameplayFrames;
@@ -256,17 +254,6 @@ static void CaptureFrame() {
     // Capture scene flags (switches, chests, collectibles, cleared rooms)
     snapshot.sceneFlags.flags = gPlayState->actorCtx.sceneFlags;
 
-    // Capture camera state for smooth rewind visuals
-    Camera* mainCam = GET_ACTIVE_CAM(gPlayState);
-    if (mainCam != NULL) {
-        snapshot.camera.eye = mainCam->eye;
-        snapshot.camera.at = mainCam->at;
-        snapshot.camera.up = mainCam->up;
-        snapshot.camera.eyeNext = mainCam->eyeNext;
-        snapshot.camera.fov = mainCam->fov;
-        snapshot.camera.dist = mainCam->dist;
-    }
-
     sBufferHead = (sBufferHead + 1) % REWIND_BUFFER_SIZE;
     if (sBufferCount < REWIND_BUFFER_SIZE) {
         sBufferCount++;
@@ -296,6 +283,9 @@ static void RestoreFrame() {
 
     // Restore actors that exist in the snapshot; hide actors spawned after this frame
     sHiddenActors.clear();
+    Player* player = GET_PLAYER(gPlayState);
+    Actor* playerActor = (player != NULL) ? &player->actor : NULL;
+
     for (int i = 0; i < ACTORCAT_MAX; i++) {
         Actor* actor = gPlayState->actorCtx.actorLists[i].first;
         while (actor != NULL) {
@@ -319,8 +309,9 @@ static void RestoreFrame() {
                     actor->colorFilterTimer = as.colorFilterTimer;
                     actor->freezeTimer = as.freezeTimer;
                 }
-            } else {
-                // Actor was spawned after this snapshot frame — hide during rewind
+            } else if (actor != playerActor) {
+                // Actor was spawned after this snapshot frame — hide during rewind.
+                // Never hide the Player actor to avoid soft-locking.
                 sHiddenActors.insert(actor);
             }
             actor = actor->next;
@@ -328,11 +319,11 @@ static void RestoreFrame() {
     }
 
     // Restore Player animation state
-    Player* player = GET_PLAYER(gPlayState);
     if (player != NULL && player->actor.update != NULL && snapshot.player.valid) {
         RestoreSkelAnime(&player->skelAnime, snapshot.player.skelAnime);
         RestoreSkelAnime(&player->skelAnimeUpper, snapshot.player.skelAnimeUpper);
-        player->stateFlags1 = snapshot.player.stateFlags1;
+        // Mask out PLAYER_STATE1_DEAD to prevent soft-locking into a death state
+        player->stateFlags1 = snapshot.player.stateFlags1 & ~PLAYER_STATE1_DEAD;
         player->stateFlags2 = snapshot.player.stateFlags2;
         player->stateFlags3 = snapshot.player.stateFlags3;
         player->transformation = snapshot.player.transformation;
@@ -341,6 +332,10 @@ static void RestoreFrame() {
 
     // Restore player resources (health, magic, rupees)
     gSaveContext.save.saveInfo.playerData.health = snapshot.resources.health;
+    // Prevent restoring zero health — clamp to at least 1 heart piece (0x10)
+    if (gSaveContext.save.saveInfo.playerData.health <= 0) {
+        gSaveContext.save.saveInfo.playerData.health = 16; // 0x10 = 1 heart piece
+    }
     gSaveContext.save.saveInfo.playerData.magic = snapshot.resources.magic;
     gSaveContext.save.saveInfo.playerData.rupees = snapshot.resources.rupees;
     gSaveContext.magicState = snapshot.resources.magicState;
@@ -348,21 +343,19 @@ static void RestoreFrame() {
     // Restore scene flags (switches, chests, collectibles, cleared rooms)
     gPlayState->actorCtx.sceneFlags = snapshot.sceneFlags.flags;
 
-    // Restore camera state for smooth rewind visuals
-    Camera* mainCam = GET_ACTIVE_CAM(gPlayState);
-    if (mainCam != NULL) {
-        mainCam->eye = snapshot.camera.eye;
-        mainCam->at = snapshot.camera.at;
-        mainCam->up = snapshot.camera.up;
-        mainCam->eyeNext = snapshot.camera.eyeNext;
-        mainCam->fov = snapshot.camera.fov;
-        mainCam->dist = snapshot.camera.dist;
-    }
-
     gPlayState->gameplayFrames = snapshot.gameplayFrames;
 }
 
 void RegisterRewind() {
+    // When CVar is disabled, clean up any active rewind state to prevent
+    // stale hidden actors or dangling state if toggled off mid-rewind.
+    if (!CVAR) {
+        if (sIsRewinding || !sHiddenActors.empty()) {
+            sIsRewinding = false;
+            sHiddenActors.clear();
+        }
+    }
+
     // At the start of each frame: check input and restore state if rewinding.
     // Restoring here (before Play_Main) means the camera update inside Play_Main
     // will naturally track the restored player position.
@@ -377,6 +370,17 @@ void RegisterRewind() {
         // Don't allow rewind during pause, cutscenes, or message dialogs
         if (gPlayState->pauseCtx.state != PAUSE_STATE_OFF || gPlayState->csCtx.state != CS_STATE_IDLE ||
             gPlayState->msgCtx.msgMode != MSGMODE_NONE) {
+            rewindPressed = false;
+        }
+
+        // Don't allow rewind if player is dead
+        Player* player = GET_PLAYER(gPlayState);
+        if (player != NULL && (player->stateFlags1 & PLAYER_STATE1_DEAD)) {
+            rewindPressed = false;
+        }
+
+        // Require minimum buffer fill before allowing activation
+        if (sBufferCount < MIN_REWIND_FRAMES) {
             rewindPressed = false;
         }
 
@@ -399,6 +403,10 @@ void RegisterRewind() {
                 }
             }
             sHiddenActors.clear();
+
+            // Reset collision context to flush stale collision data from
+            // the pre-rewind frame. Play_Main will rebuild it fresh.
+            CollisionCheck_ClearContext(gPlayState, &gPlayState->colChkCtx);
         }
     });
 

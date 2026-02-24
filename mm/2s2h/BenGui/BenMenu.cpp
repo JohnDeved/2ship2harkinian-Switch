@@ -1669,6 +1669,9 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "Fixes a bug that results in the wrong audio playing upon receiving a 4th piece of heart to "
             "fill a new heart container."));
+    AddWidget(path, "Fix Cow Shadow Flickering", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Fixes.CowShadowFlicker")
+        .Options(CheckboxOptions().Tooltip("Fixes flickering shadows on cows during their breathing animation."));
 
     // Restorations
     path = { "Enhancements", "Restorations", SECTION_COLUMN_1 };

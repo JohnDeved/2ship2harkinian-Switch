@@ -20,9 +20,8 @@ extern "C" {
 static constexpr int REWIND_BUFFER_SIZE = 30 * 20;
 
 // Upper bound on joint/morph table entries per skeleton.
-// SkelAnime.limbCount is u8, but MM skeletons rarely exceed ~30 limbs.
-// 76 provides a safe margin for any actor without wasting excessive memory.
-static constexpr int MAX_LIMBS = 76;
+// MM skeletons rarely exceed ~30 limbs. 40 covers all known cases.
+static constexpr int MAX_LIMBS = 40;
 
 // Hint for vector::reserve to avoid reallocation in typical scenes
 static constexpr int EXPECTED_MAX_ACTORS = 256;
@@ -48,7 +47,8 @@ struct ActorSnapshot {
     u16 freezeTimer;
 };
 
-// SkelAnime scalar fields + joint/morph table data for animation replay
+// SkelAnime scalar fields + joint/morph table data for animation replay.
+// Only used for the Player actor, whose SkelAnime offsets are known at compile time.
 struct SkelAnimeSnapshot {
     void* animation;
     f32 startFrame;
@@ -103,12 +103,6 @@ struct SceneFlagsSnapshot {
     ActorContextSceneFlags flags;
 };
 
-// NPC animation entry — stores one SkelAnime snapshot for a non-Player actor
-struct NpcAnimEntry {
-    Actor* ptr;
-    SkelAnimeSnapshot anim;
-};
-
 // One complete frame of game state
 struct FrameSnapshot {
     bool valid = false;
@@ -118,7 +112,6 @@ struct FrameSnapshot {
     PlayerResourceSnapshot resources;
     SceneFlagsSnapshot sceneFlags;
     CameraSnapshot camera;
-    std::vector<NpcAnimEntry> npcAnims;
 };
 
 static std::vector<FrameSnapshot> sRewindBuffer(REWIND_BUFFER_SIZE);
@@ -129,10 +122,6 @@ static bool sIsRewinding = false;
 // Reusable containers to avoid per-frame heap allocation
 static std::unordered_map<Actor*, size_t> sSnapshotLookup;
 static std::unordered_set<Actor*> sHiddenActors;
-static std::unordered_map<Actor*, size_t> sNpcAnimLookup;
-
-// Cache: actor ID -> byte offset of first SkelAnime within actor struct, -1 = none
-static std::unordered_map<s16, int> sSkelAnimeOffsetCache;
 
 static void ClearBuffer() {
     for (auto& frame : sRewindBuffer) {
@@ -140,13 +129,11 @@ static void ClearBuffer() {
         frame.actors.clear();
         frame.actors.reserve(EXPECTED_MAX_ACTORS);
         frame.player.valid = false;
-        frame.npcAnims.clear();
     }
     sBufferHead = 0;
     sBufferCount = 0;
     sIsRewinding = false;
     sHiddenActors.clear();
-    sSkelAnimeOffsetCache.clear();
 }
 
 static void CaptureSkelAnime(SkelAnimeSnapshot& out, const SkelAnime* src) {
@@ -205,66 +192,6 @@ static void RestoreSkelAnime(SkelAnime* dst, const SkelAnimeSnapshot& src) {
     }
 }
 
-// Heuristic check: does memory at this location look like a valid SkelAnime?
-static bool IsLikelySkelAnime(const SkelAnime* sa, int remaining) {
-    if (remaining < (int)sizeof(SkelAnime)) {
-        return false;
-    }
-    if (sa->limbCount == 0 || sa->limbCount > MAX_LIMBS) {
-        return false;
-    }
-    // mode: 0=loop, 1=loop+interp, 2=once, 3=once+interp, 4=partial, 5=partial+interp
-    if (sa->mode > 5) {
-        return false;
-    }
-    if (sa->skeleton == NULL || ((uintptr_t)sa->skeleton & 3) != 0) {
-        return false;
-    }
-    if (sa->jointTable == NULL || ((uintptr_t)sa->jointTable & 1) != 0) {
-        return false;
-    }
-    // Zero or negative animLength would cause divide-by-zero in the animation engine
-    if (sa->animLength <= 0.0f) {
-        return false;
-    }
-    return true;
-}
-
-// Return a pointer to the SkelAnime at the given byte offset within an actor.
-static SkelAnime* GetActorSkelAnime(Actor* actor, int offset) {
-    return reinterpret_cast<SkelAnime*>(reinterpret_cast<u8*>(actor) + offset);
-}
-
-// Find the byte offset of the first SkelAnime within an actor's extended struct.
-// Result is cached by actor ID since all instances of the same actor type share
-// the same struct layout. Returns -1 if no SkelAnime is found.
-static int FindSkelAnimeOffset(Actor* actor) {
-    auto cached = sSkelAnimeOffsetCache.find(actor->id);
-    if (cached != sSkelAnimeOffsetCache.end()) {
-        return cached->second;
-    }
-
-    int result = -1;
-    if (actor->overlayEntry != NULL && actor->overlayEntry->profile != NULL) {
-        u32 instSize = actor->overlayEntry->profile->instanceSize;
-        if (instSize >= sizeof(Actor) + sizeof(SkelAnime)) {
-            const u8* base = reinterpret_cast<const u8*>(actor);
-            int end = (int)instSize - (int)sizeof(SkelAnime);
-            // Scan at pointer-aligned (4-byte) offsets since struct fields are aligned
-            for (int off = (int)sizeof(Actor); off <= end; off += 4) {
-                const SkelAnime* sa = reinterpret_cast<const SkelAnime*>(base + off);
-                if (IsLikelySkelAnime(sa, (int)instSize - off)) {
-                    result = off;
-                    break;
-                }
-            }
-        }
-    }
-
-    sSkelAnimeOffsetCache[actor->id] = result;
-    return result;
-}
-
 static void CaptureFrame() {
     if (gPlayState == NULL) {
         return;
@@ -279,31 +206,35 @@ static void CaptureFrame() {
     for (int i = 0; i < ACTORCAT_MAX; i++) {
         Actor* actor = gPlayState->actorCtx.actorLists[i].first;
         while (actor != NULL) {
-            ActorSnapshot as;
-            as.ptr = actor;
-            as.id = actor->id;
-            as.category = actor->category;
-            as.world = actor->world;
-            as.focus = actor->focus;
-            as.prevPos = actor->prevPos;
-            as.scale = actor->scale;
-            as.shape = actor->shape;
-            as.velocity = actor->velocity;
-            as.speed = actor->speed;
-            as.gravity = actor->gravity;
-            as.flags = actor->flags;
-            as.health = actor->colChkInfo.health;
-            as.colorFilterParams = actor->colorFilterParams;
-            as.colorFilterTimer = actor->colorFilterTimer;
-            as.freezeTimer = actor->freezeTimer;
-            snapshot.actors.push_back(as);
+            // Skip actors being destroyed (update pointer cleared by Actor_Kill)
+            if (actor->update != NULL) {
+                ActorSnapshot as;
+                as.ptr = actor;
+                as.id = actor->id;
+                as.category = actor->category;
+                as.world = actor->world;
+                as.focus = actor->focus;
+                as.prevPos = actor->prevPos;
+                as.scale = actor->scale;
+                as.shape = actor->shape;
+                as.velocity = actor->velocity;
+                as.speed = actor->speed;
+                as.gravity = actor->gravity;
+                as.flags = actor->flags;
+                as.health = actor->colChkInfo.health;
+                as.colorFilterParams = actor->colorFilterParams;
+                as.colorFilterTimer = actor->colorFilterTimer;
+                as.freezeTimer = actor->freezeTimer;
+                snapshot.actors.push_back(as);
+            }
             actor = actor->next;
         }
     }
 
-    // Capture Player animation state (main body + upper body blend)
+    // Capture Player animation state (main body + upper body blend).
+    // Player's SkelAnime offsets are known at compile time so this is safe.
     Player* player = GET_PLAYER(gPlayState);
-    if (player != NULL) {
+    if (player != NULL && player->actor.update != NULL) {
         snapshot.player.valid = true;
         CaptureSkelAnime(snapshot.player.skelAnime, &player->skelAnime);
         CaptureSkelAnime(snapshot.player.skelAnimeUpper, &player->skelAnimeUpper);
@@ -336,26 +267,6 @@ static void CaptureFrame() {
         snapshot.camera.dist = mainCam->dist;
     }
 
-    // Capture NPC animation state by scanning for SkelAnime in each actor's struct
-    snapshot.npcAnims.clear();
-    Actor* playerActor = (player != NULL) ? &player->actor : NULL;
-    for (int i = 0; i < ACTORCAT_MAX; i++) {
-        Actor* actor = gPlayState->actorCtx.actorLists[i].first;
-        while (actor != NULL) {
-            if (actor != playerActor) {
-                int offset = FindSkelAnimeOffset(actor);
-                if (offset >= 0) {
-                    NpcAnimEntry entry;
-                    entry.ptr = actor;
-                    const SkelAnime* sa = GetActorSkelAnime(actor, offset);
-                    CaptureSkelAnime(entry.anim, sa);
-                    snapshot.npcAnims.push_back(entry);
-                }
-            }
-            actor = actor->next;
-        }
-    }
-
     sBufferHead = (sBufferHead + 1) % REWIND_BUFFER_SIZE;
     if (sBufferCount < REWIND_BUFFER_SIZE) {
         sBufferCount++;
@@ -383,13 +294,6 @@ static void RestoreFrame() {
         sSnapshotLookup[snapshot.actors[idx].ptr] = idx;
     }
 
-    // Build NPC animation lookup
-    sNpcAnimLookup.clear();
-    sNpcAnimLookup.reserve(snapshot.npcAnims.size());
-    for (size_t idx = 0; idx < snapshot.npcAnims.size(); idx++) {
-        sNpcAnimLookup[snapshot.npcAnims[idx].ptr] = idx;
-    }
-
     // Restore actors that exist in the snapshot; hide actors spawned after this frame
     sHiddenActors.clear();
     for (int i = 0; i < ACTORCAT_MAX; i++) {
@@ -414,15 +318,6 @@ static void RestoreFrame() {
                     actor->colorFilterParams = as.colorFilterParams;
                     actor->colorFilterTimer = as.colorFilterTimer;
                     actor->freezeTimer = as.freezeTimer;
-
-                    // Restore NPC animation if captured
-                    auto animIt = sNpcAnimLookup.find(actor);
-                    if (animIt != sNpcAnimLookup.end()) {
-                        int offset = FindSkelAnimeOffset(actor);
-                        if (offset >= 0) {
-                            RestoreSkelAnime(GetActorSkelAnime(actor, offset), snapshot.npcAnims[animIt->second].anim);
-                        }
-                    }
                 }
             } else {
                 // Actor was spawned after this snapshot frame — hide during rewind
@@ -434,7 +329,7 @@ static void RestoreFrame() {
 
     // Restore Player animation state
     Player* player = GET_PLAYER(gPlayState);
-    if (player != NULL && snapshot.player.valid) {
+    if (player != NULL && player->actor.update != NULL && snapshot.player.valid) {
         RestoreSkelAnime(&player->skelAnime, snapshot.player.skelAnime);
         RestoreSkelAnime(&player->skelAnimeUpper, snapshot.player.skelAnimeUpper);
         player->stateFlags1 = snapshot.player.stateFlags1;

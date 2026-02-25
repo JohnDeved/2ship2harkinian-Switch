@@ -13,6 +13,7 @@ extern "C" {
 #include "z64save.h"
 #include "variables.h"
 #include "functions.h"
+#include "sequence.h"
 }
 
 extern "C" PlayState* gPlayState;
@@ -21,8 +22,10 @@ extern "C" u8* gSystemHeap;
 extern "C" MtxF* sMatrixStack;
 extern "C" MtxF* sCurrentMatrix;
 extern "C" LightsBuffer sLightsBuffer;
+extern "C" ActiveSequence gActiveSeqs[];
 
 #define MATRIX_STACK_SIZE 20
+#define NUM_SEQ_PLAYERS 5
 #define SAVE_STATE_MAX_SLOTS 6
 
 // Sparse page-based heap storage: only stores non-zero 4KB pages
@@ -147,6 +150,12 @@ struct SaveStateInfo {
     MtxF currentMtxCopy;
     AudioContext audioCtxCopy;
 
+    // Active sequence state (BSS globals, not on any heap)
+    ActiveSequence activeSeqsCopy[NUM_SEQ_PLAYERS];
+
+    // Unrelocated seq script state (pc/stack stored as offsets from gAudioHeap)
+    SeqScriptState seqScriptStateCopy[NUM_SEQ_PLAYERS];
+
     bool occupied;
 };
 
@@ -174,12 +183,27 @@ bool SaveState::Save() {
     memcpy(&info->mtxStackCopy, sMatrixStack, sizeof(MtxF) * MATRIX_STACK_SIZE);
     memcpy(&info->currentMtxCopy, sCurrentMatrix, sizeof(MtxF));
     memcpy(&info->audioCtxCopy, &gAudioCtx, sizeof(AudioContext));
+    memcpy(&info->activeSeqsCopy, gActiveSeqs, sizeof(ActiveSequence) * NUM_SEQ_PLAYERS);
+
+    // Unrelocate seq script state: store pc/stack as offsets from gAudioHeap
+    // so they remain valid after audio heap restore (following SoH's approach)
+    for (int i = 0; i < NUM_SEQ_PLAYERS; i++) {
+        SeqScriptState* src = &gAudioCtx.seqPlayers[i].scriptState;
+        SeqScriptState* dst = &info->seqScriptStateCopy[i];
+        dst->value = src->value;
+        dst->depth = src->depth;
+        memcpy(dst->remLoopIters, src->remLoopIters, sizeof(dst->remLoopIters));
+        dst->pc = (u8*)((uintptr_t)src->pc - (uintptr_t)gAudioHeap);
+        for (int j = 0; j < 4; j++) {
+            dst->stack[j] = (u8*)((uintptr_t)src->stack[j] - (uintptr_t)gAudioHeap);
+        }
+    }
 
     info->occupied = true;
 
     size_t totalBytes = info->sysHeapCopy.GetStoredBytes() + info->audioHeapCopy.GetStoredBytes() +
                         sizeof(SaveContext) + sizeof(LightsBuffer) + sizeof(MtxF) * (MATRIX_STACK_SIZE + 1) +
-                        sizeof(AudioContext);
+                        sizeof(AudioContext) + sizeof(ActiveSequence) * NUM_SEQ_PLAYERS;
     SPDLOG_INFO("[2S2H] Save state slot {}: {:.1f} MB (sys {}/{} pages, audio {}/{} pages)", slot,
                 totalBytes / (1024.0 * 1024.0), info->sysHeapCopy.storedPages, info->sysHeapCopy.pageCount,
                 info->audioHeapCopy.storedPages, info->audioHeapCopy.pageCount);
@@ -199,6 +223,20 @@ void SaveState::Load() {
     memcpy(sMatrixStack, &info->mtxStackCopy, sizeof(MtxF) * MATRIX_STACK_SIZE);
     memcpy(sCurrentMatrix, &info->currentMtxCopy, sizeof(MtxF));
     memcpy(&gAudioCtx, &info->audioCtxCopy, sizeof(AudioContext));
+    memcpy(gActiveSeqs, &info->activeSeqsCopy, sizeof(ActiveSequence) * NUM_SEQ_PLAYERS);
+
+    // Relocate seq script state: convert offsets back to absolute pointers
+    for (int i = 0; i < NUM_SEQ_PLAYERS; i++) {
+        SeqScriptState* src = &info->seqScriptStateCopy[i];
+        SeqScriptState* dst = &gAudioCtx.seqPlayers[i].scriptState;
+        dst->value = src->value;
+        dst->depth = src->depth;
+        memcpy(dst->remLoopIters, src->remLoopIters, sizeof(dst->remLoopIters));
+        dst->pc = (u8*)((uintptr_t)src->pc + (uintptr_t)gAudioHeap);
+        for (int j = 0; j < 4; j++) {
+            dst->stack[j] = (u8*)((uintptr_t)src->stack[j] + (uintptr_t)gAudioHeap);
+        }
+    }
 
     // Force-close the pause menu to prevent glitchy rendering when loading
     // a state that was saved while the menu was open (the pre-rendered

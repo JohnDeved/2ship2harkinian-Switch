@@ -10,6 +10,7 @@
 #include <vector>
 #include <stack>
 #include <string>
+#include <functional>
 
 #include "fast/lus_gbi.h"
 #include "fast/types.h"
@@ -472,6 +473,9 @@ struct MaskedTextureEntry {
     uint8_t* replacementData;
 };
 
+// Callback for post-processing: receives (texId, width, height), returns new texId.
+using PostProcessFunc = std::function<uintptr_t(uintptr_t texId, uint32_t width, uint32_t height)>;
+
 class Interpreter {
   public:
     Interpreter();
@@ -511,6 +515,9 @@ class Interpreter {
     void ResetFrameStats();
     void SetProfilingEnabled(bool enabled);
     bool IsProfilingEnabled() const;
+
+    void SetPostProcessCallback(PostProcessFunc callback);
+    void ClearPostProcessCallback();
 
     // private: TODO make these private
     void Flush();
@@ -708,6 +715,8 @@ class Interpreter {
         float linearOffset;
     } mCachedTriParams{};
 #endif
+
+    PostProcessFunc mPostProcessCallback;
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

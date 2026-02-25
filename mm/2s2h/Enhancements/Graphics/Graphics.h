@@ -2,6 +2,7 @@
 #define GRAPHICS_H
 
 void MotionBlur_RenderMenuOptions();
+void PostProcess_RenderMenuOptions();
 
 #ifdef __cplusplus
 

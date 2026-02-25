@@ -1383,6 +1383,40 @@ void BenMenu::AddEnhancements() {
                             mBenMenu->disabledMap.at(DISABLE_FOR_MOTION_BLUR_OFF).active;
         });
 
+    AddWidget(path, "Post-Processing (ReShade)", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "FXAA Anti-Aliasing", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Graphics.PostProcess.FXAA")
+        .Options(CheckboxOptions().Tooltip("Fast Approximate Anti-Aliasing. Smooths jagged edges."));
+    AddWidget(path, "CAS Sharpening", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Graphics.PostProcess.CAS")
+        .Options(CheckboxOptions().Tooltip(
+            "Contrast Adaptive Sharpening (AMD FidelityFX CAS). Enhances image clarity."));
+    AddWidget(path, "CAS Strength: %d%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.Graphics.PostProcess.CAS.Strength")
+        .Options(FloatSliderOptions()
+                     .Tooltip("How strong the sharpening effect is. 0 = subtle, 1 = maximum.")
+                     .Min(0.0f)
+                     .Max(1.0f)
+                     .DefaultValue(0.5f)
+                     .Format("%.2f"))
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = CVarGetInteger("gEnhancements.Graphics.PostProcess.CAS", 0) == 0;
+        });
+    AddWidget(path, "Vignette", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Graphics.PostProcess.Vignette")
+        .Options(CheckboxOptions().Tooltip("Darkens the edges of the screen for a cinematic effect."));
+    AddWidget(path, "Vignette Strength: %d%%", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar("gEnhancements.Graphics.PostProcess.Vignette.Strength")
+        .Options(FloatSliderOptions()
+                     .Tooltip("How strong the vignette darkening is.")
+                     .Min(0.1f)
+                     .Max(1.5f)
+                     .DefaultValue(0.5f)
+                     .Format("%.2f"))
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = CVarGetInteger("gEnhancements.Graphics.PostProcess.Vignette", 0) == 0;
+        });
+
     path.column = SECTION_COLUMN_2;
     AddWidget(path, "Other", WIDGET_SEPARATOR_TEXT);
     AddWidget(path, "3D Item Drops", WIDGET_CVAR_CHECKBOX)

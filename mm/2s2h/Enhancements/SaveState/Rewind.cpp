@@ -248,9 +248,23 @@ static void RewindApply() {
     // Re-apply current back frame every frame to prevent game-state drift
     // (the game loop still runs with zeroed input between rewind steps)
     const DiffFrame& frame = sRewindBuffer.back();
+
+    // Save freshly-read controller input before heap restore — gPlayState->state.input
+    // lives on the system heap and would be overwritten with old captured input, causing
+    // OnPassPlayerInputs to think the user released the rewind buttons.
+    Input savedInput[MAXCONTROLLERS];
+    if (gPlayState) {
+        memcpy(savedInput, gPlayState->state.input, sizeof(savedInput));
+    }
+
     ApplyPageDiff(gSystemHeap, frame.sysPageIndices, frame.sysPageData, SYSTEM_HEAP_SIZE);
     ApplyPageDiff(gAudioHeap, frame.audioPageIndices, frame.audioPageData, AUDIO_HEAP_SIZE);
     RestoreSmallState(frame.smallState);
+
+    // Restore current controller input so OnPassPlayerInputs sees actual button state
+    if (gPlayState) {
+        memcpy(gPlayState->state.input, savedInput, sizeof(savedInput));
+    }
 }
 
 static void RewindClear() {

@@ -8,8 +8,6 @@
 #include <new>
 #include <vector>
 
-#include "imgui.h"
-
 #include "2s2h/BenPort.h"
 #include "2s2h/ShipInit.hpp"
 #include <libultraship/libultraship.h>
@@ -148,41 +146,6 @@ static std::vector<uint8_t> sBaselineAudio;
 static RewindSmallState sBaselineSmallState;
 static bool sHasBaseline = false;
 
-// ImGui progress bar overlay shown during rewind
-class RewindOverlay : public Ship::GuiWindow {
-  public:
-    using Ship::GuiWindow::GuiWindow;
-    void InitElement() override {
-    }
-    void DrawElement() override {
-    }
-    void UpdateElement() override {
-    }
-    void Draw() override {
-        if (!sIsRewinding || sRewindTotalFrames <= 0) {
-            return;
-        }
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        float barWidth = 300.0f;
-        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (viewport->WorkSize.x - barWidth) / 2,
-                                       viewport->WorkPos.y + viewport->WorkSize.y - 50),
-                                ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(barWidth, 0), ImGuiCond_Always);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.65f));
-        ImGui::Begin("##RewindProgress", nullptr,
-                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
-                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoDocking |
-                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize);
-        float progress = static_cast<float>(sRewindPosition) / static_cast<float>(sRewindTotalFrames);
-        char overlay[64];
-        snprintf(overlay, sizeof(overlay), "%d / %d", sRewindPosition, sRewindTotalFrames);
-        ImGui::ProgressBar(progress, ImVec2(barWidth - 16, 0), overlay);
-        ImGui::End();
-        ImGui::PopStyleColor();
-    }
-};
-static std::shared_ptr<RewindOverlay> sRewindOverlay;
-
 static void RewindCapture() {
     // Only capture during actual gameplay (not title screen, file select, etc.)
     if (!gPlayState || !gSystemHeap || !gAudioHeap || gSaveContext.gameMode != GAMEMODE_NORMAL ||
@@ -299,6 +262,10 @@ static void RewindApply() {
     sRewindMemUsage -= sRewindBuffer.back().GetBytes();
     sRewindBuffer.pop_back();
     sRewindPosition++;
+
+    // Show rewind progress as overlay text (updated each frame)
+    Ship::Context::GetInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
+        0.3f, true, "Rewind: %d / %d", sRewindPosition, sRewindTotalFrames);
 }
 
 static void RewindClear() {
@@ -322,16 +289,6 @@ void RegisterRewind() {
 
     if (!rewindEnabled) {
         RewindClear();
-    }
-
-    // Register ImGui overlay window (once)
-    if (!sRewindOverlay) {
-        auto* context = Ship::Context::GetInstance();
-        if (context && context->GetWindow() && context->GetWindow()->GetGui()) {
-            sRewindOverlay = std::make_shared<RewindOverlay>("gWindows.RewindOverlay", "Rewind Overlay");
-            context->GetWindow()->GetGui()->AddGuiWindow(sRewindOverlay);
-            sRewindOverlay->Show();
-        }
     }
 
     // Input hook: detect M1+DPad Left, suppress game input, set rewind flag

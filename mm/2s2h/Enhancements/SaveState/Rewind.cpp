@@ -272,7 +272,8 @@ static void StopWorkerThread() {
 }
 
 static void RewindCapture() {
-    if (!gPlayState) {
+    // Only capture during actual gameplay (not title screen, file select, etc.)
+    if (!gPlayState || gSaveContext.gameMode != GAMEMODE_NORMAL || GET_PLAYER(gPlayState) == NULL) {
         return;
     }
 
@@ -419,7 +420,7 @@ void RegisterRewind() {
 
     // Safe-point hook: perform actual rewind at frame boundary
     COND_HOOK(OnGameStateMainStart, rewindEnabled, []() {
-        if (sRewindRequested.exchange(false)) {
+        if (sRewindRequested.exchange(false) && gPlayState && gSaveContext.gameMode == GAMEMODE_NORMAL) {
             if (!RewindStep()) {
                 Ship::Context::GetInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
                     1.0f, true, "rewind buffer empty");

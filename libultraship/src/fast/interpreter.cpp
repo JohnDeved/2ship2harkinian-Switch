@@ -5646,9 +5646,9 @@ void Interpreter::StartFrame() {
 
     mPrvDimensions = mCurDimensions;
     mPrevNativeDimensions = mNativeDimensions;
-    if (!ViewportMatchesRendererResolution() || mMsaaLevel > 1) {
+    if (!ViewportMatchesRendererResolution() || mMsaaLevel > 1 || mPostProcessCallback) {
         mRendersToFb = true;
-        if (!ViewportMatchesRendererResolution()) {
+        if (!ViewportMatchesRendererResolution() || (mPostProcessCallback && mMsaaLevel <= 1)) {
             mRapi->UpdateFramebufferParameters(mGameFb, mCurDimensions.width, mCurDimensions.height, mMsaaLevel, true,
                                                true, true, true);
         } else {

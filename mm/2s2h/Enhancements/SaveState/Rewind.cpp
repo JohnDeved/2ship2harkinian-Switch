@@ -111,6 +111,8 @@ struct RewindSmallState {
     AudioContext audioCtxCopy;
     ActiveSequence activeSeqsCopy[NUM_SEQ_PLAYERS];
     ActorOverlay actorOverlayTableCopy[ACTOR_ID_MAX];
+    s16 actorProfileObjectIdCopy[ACTOR_ID_MAX];
+    u8 actorProfileObjectIdValidCopy[ACTOR_ID_MAX];
     EffectSsOverlay effectSsOverlayTableCopy[EFFECT_SS_TYPE_MAX];
     KaleidoMgrOverlay kaleidoMgrOverlayTableCopy[KALEIDO_OVL_MAX];
     GameStateOverlay gameStateOverlayTableCopy[GAMESTATE_ID_MAX];
@@ -214,6 +216,15 @@ static void CaptureSmallState(RewindSmallState& state) {
     memcpy(&state.audioCtxCopy, &gAudioCtx, sizeof(AudioContext));
     memcpy(state.activeSeqsCopy, gActiveSeqs, sizeof(ActiveSequence) * NUM_SEQ_PLAYERS);
     memcpy(state.actorOverlayTableCopy, gActorOverlayTable, sizeof(gActorOverlayTable));
+    for (size_t i = 0; i < ACTOR_ID_MAX; i++) {
+        if (gActorOverlayTable[i].profile != nullptr) {
+            state.actorProfileObjectIdCopy[i] = gActorOverlayTable[i].profile->objectId;
+            state.actorProfileObjectIdValidCopy[i] = 1;
+        } else {
+            state.actorProfileObjectIdCopy[i] = 0;
+            state.actorProfileObjectIdValidCopy[i] = 0;
+        }
+    }
     memcpy(state.effectSsOverlayTableCopy, gEffectSsOverlayTable, sizeof(gEffectSsOverlayTable));
     memcpy(state.kaleidoMgrOverlayTableCopy, gKaleidoMgrOverlayTable, sizeof(gKaleidoMgrOverlayTable));
     memcpy(state.gameStateOverlayTableCopy, gGameStateOverlayTable, sizeof(gGameStateOverlayTable));
@@ -270,6 +281,11 @@ static void RestoreSmallState(const RewindSmallState& state) {
     memcpy(&gAudioCtx, &state.audioCtxCopy, sizeof(AudioContext));
     memcpy(gActiveSeqs, state.activeSeqsCopy, sizeof(ActiveSequence) * NUM_SEQ_PLAYERS);
     memcpy(gActorOverlayTable, state.actorOverlayTableCopy, sizeof(gActorOverlayTable));
+    for (size_t i = 0; i < ACTOR_ID_MAX; i++) {
+        if (state.actorProfileObjectIdValidCopy[i] && gActorOverlayTable[i].profile != nullptr) {
+            gActorOverlayTable[i].profile->objectId = state.actorProfileObjectIdCopy[i];
+        }
+    }
     memcpy(gEffectSsOverlayTable, state.effectSsOverlayTableCopy, sizeof(gEffectSsOverlayTable));
     memcpy(gKaleidoMgrOverlayTable, state.kaleidoMgrOverlayTableCopy, sizeof(gKaleidoMgrOverlayTable));
     memcpy(gGameStateOverlayTable, state.gameStateOverlayTableCopy, sizeof(gGameStateOverlayTable));

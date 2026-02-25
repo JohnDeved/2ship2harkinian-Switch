@@ -1390,6 +1390,10 @@ void BenMenu::AddEnhancements() {
             "Enable post-processing effects using the ReShade FX shader system.\n"
             "Place .fx shader files in the reshade-shaders/Shaders/ directory.\n"
             "Download shaders from https://github.com/crosire/reshade-shaders"));
+    AddWidget(path, "Open ReShade Overlay", WIDGET_WINDOW_BUTTON)
+        .CVar("gWindows.ReShadeOverlay")
+        .WindowName("ReShade")
+        .Options(ButtonOptions().Tooltip("Opens the ReShade overlay window to select effects and adjust parameters."));
 
     path.column = SECTION_COLUMN_2;
     AddWidget(path, "Other", WIDGET_SEPARATOR_TEXT);

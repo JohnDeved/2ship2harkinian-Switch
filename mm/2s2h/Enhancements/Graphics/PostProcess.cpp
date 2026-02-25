@@ -590,10 +590,91 @@ void PostProcess_RenderMenuOptions() {
     }
 }
 
+// ─── Overlay API ────────────────────────────────────────────────────────────
+
+static const std::vector<std::string> sEmptyEffects;
+static const std::string sEmptyString;
+static const std::vector<reshadefx::uniform> sEmptyUniforms;
+
+const std::vector<std::string>& PostProcess_GetAvailableEffects() {
+    return sState.availableEffects;
+}
+
+int PostProcess_GetSelectedEffectIndex() {
+    return CVarGetInteger(CVAR_PP_EFFECT, 0);
+}
+
+void PostProcess_SetSelectedEffectIndex(int idx) {
+    CVarSetInteger(CVAR_PP_EFFECT, idx);
+    Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
+}
+
+bool PostProcess_IsEnabled() {
+    return CVarGetInteger(CVAR_PP_ENABLED, 0) != 0;
+}
+
+void PostProcess_SetEnabled(bool enabled) {
+    CVarSetInteger(CVAR_PP_ENABLED, enabled ? 1 : 0);
+    Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
+}
+
+const std::string& PostProcess_GetLoadedEffectName() {
+    return sState.loadedEffectName;
+}
+
+const std::vector<reshadefx::uniform>& PostProcess_GetUniforms() {
+    return sState.currentEffect.uniforms;
+}
+
+uint8_t* PostProcess_GetUniformData() {
+    return sState.currentEffect.uniformData.empty() ? nullptr : sState.currentEffect.uniformData.data();
+}
+
+size_t PostProcess_GetUniformDataSize() {
+    return sState.currentEffect.uniformData.size();
+}
+
+void PostProcess_ForceReload() {
+    sState.loadedEffectName.clear();
+}
+
+void PostProcess_RescanEffects() {
+    ScanAvailableEffects();
+}
+
 #else // !ENABLE_OPENGL
 
 #include "PostProcess.h"
 void PostProcess_RenderMenuOptions() {
+}
+
+const std::vector<std::string>& PostProcess_GetAvailableEffects() {
+    static const std::vector<std::string> empty;
+    return empty;
+}
+int PostProcess_GetSelectedEffectIndex() {
+    return 0;
+}
+void PostProcess_SetSelectedEffectIndex(int) {
+}
+bool PostProcess_IsEnabled() {
+    return false;
+}
+void PostProcess_SetEnabled(bool) {
+}
+const std::string& PostProcess_GetLoadedEffectName() {
+    static const std::string empty;
+    return empty;
+}
+uint8_t* PostProcess_GetUniformData() {
+    return nullptr;
+}
+size_t PostProcess_GetUniformDataSize() {
+    return 0;
+}
+void PostProcess_ForceReload() {
+}
+void PostProcess_RescanEffects() {
 }
 
 #endif // ENABLE_OPENGL

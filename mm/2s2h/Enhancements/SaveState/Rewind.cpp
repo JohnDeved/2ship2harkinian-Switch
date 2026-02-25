@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -118,14 +119,14 @@ static void CaptureSmallState(RewindSmallState& state) {
         dst->depth = src->depth;
         memcpy(dst->remLoopIters, src->remLoopIters, sizeof(dst->remLoopIters));
         // Unrelocate pointers: store as offsets from gAudioHeap
-        // Validate pointer is within audio heap range to avoid bogus offsets
+        // Use UINTPTR_MAX as sentinel for invalid/out-of-range pointers
         uintptr_t heapBase = (uintptr_t)gAudioHeap;
         uintptr_t heapEnd = heapBase + AUDIO_HEAP_SIZE;
         uintptr_t pc = (uintptr_t)src->pc;
-        dst->pc = (pc >= heapBase && pc < heapEnd) ? (u8*)(pc - heapBase) : (u8*)0;
+        dst->pc = (pc >= heapBase && pc < heapEnd) ? (u8*)(pc - heapBase) : (u8*)UINTPTR_MAX;
         for (int j = 0; j < 4; j++) {
             uintptr_t sp = (uintptr_t)src->stack[j];
-            dst->stack[j] = (sp >= heapBase && sp < heapEnd) ? (u8*)(sp - heapBase) : (u8*)0;
+            dst->stack[j] = (sp >= heapBase && sp < heapEnd) ? (u8*)(sp - heapBase) : (u8*)UINTPTR_MAX;
         }
     }
 }
@@ -145,12 +146,21 @@ static void RestoreSmallState(const RewindSmallState& state) {
         dst->depth = src->depth;
         memcpy(dst->remLoopIters, src->remLoopIters, sizeof(dst->remLoopIters));
         // Relocate offsets back to absolute pointers
+        // UINTPTR_MAX sentinel means the pointer was invalid/null → restore as nullptr
         uintptr_t heapBase = (uintptr_t)gAudioHeap;
         uintptr_t pcOff = (uintptr_t)src->pc;
-        dst->pc = (pcOff < AUDIO_HEAP_SIZE) ? (u8*)(heapBase + pcOff) : (u8*)heapBase;
+        if (pcOff == UINTPTR_MAX || pcOff >= AUDIO_HEAP_SIZE) {
+            dst->pc = nullptr;
+        } else {
+            dst->pc = (u8*)(heapBase + pcOff);
+        }
         for (int j = 0; j < 4; j++) {
             uintptr_t spOff = (uintptr_t)src->stack[j];
-            dst->stack[j] = (spOff < AUDIO_HEAP_SIZE) ? (u8*)(heapBase + spOff) : (u8*)heapBase;
+            if (spOff == UINTPTR_MAX || spOff >= AUDIO_HEAP_SIZE) {
+                dst->stack[j] = nullptr;
+            } else {
+                dst->stack[j] = (u8*)(heapBase + spOff);
+            }
         }
     }
 
@@ -195,7 +205,7 @@ static bool sJobPending = false;
 static std::vector<uint8_t> sWorkerPrevSys;
 static std::vector<uint8_t> sWorkerPrevAudio;
 static RewindSmallState sWorkerPrevSmallState; // Previous frame's small state for diff
-static bool sWorkerHasPrev = false;
+static std::atomic<bool> sWorkerHasPrev{ false };
 // Worker's own copy buffers (allocated once, reused)
 static std::vector<uint8_t> sWorkerSysCopy;
 static std::vector<uint8_t> sWorkerAudioCopy;
@@ -255,11 +265,11 @@ static void WorkerThreadFunc() {
         }
 
         // First frame: just store as the baseline, no diff to compute
-        if (!sWorkerHasPrev) {
+        if (!sWorkerHasPrev.load()) {
             sWorkerPrevSys.swap(sWorkerSysCopy);
             sWorkerPrevAudio.swap(sWorkerAudioCopy);
             sWorkerPrevSmallState = capturedSmallState;
-            sWorkerHasPrev = true;
+            sWorkerHasPrev.store(true);
             continue;
         }
 
@@ -305,7 +315,7 @@ static void StartWorkerThread() {
     sWorkerRunning.store(true);
     sWorkerPaused.store(false);
     sWorkerAckPause.store(false);
-    sWorkerHasPrev = false;
+    sWorkerHasPrev.store(false);
     sWorkerThread = std::thread(WorkerThreadFunc);
 }
 
@@ -439,7 +449,7 @@ static void RewindClear() {
     sWorkerSysCopy.shrink_to_fit();
     sWorkerAudioCopy.clear();
     sWorkerAudioCopy.shrink_to_fit();
-    sWorkerHasPrev = false;
+    sWorkerHasPrev.store(false);
     sRewindInitialized = false;
     sIsRewinding = false;
     sRewindRequested.store(false);
@@ -456,8 +466,12 @@ void RegisterRewind() {
     // Input hook: detect M1+DPad Left and suppress input, set rewind flag
     COND_HOOK(OnPassPlayerInputs, rewindEnabled, [](Input* input) {
         if (!gPlayState) {
+            // Ensure rewind system and worker are in a clean, non-paused state
             sIsRewinding = false;
             sRewindRequested.store(false);
+            sRewindInitialized = false;
+            sWorkerHasPrev.store(false);
+            ResumeWorker();
             return;
         }
 
@@ -473,7 +487,7 @@ void RegisterRewind() {
                 sIsRewinding = false;
                 // Restart worker with fresh baseline after rewind ends
                 sRewindInitialized = false;
-                sWorkerHasPrev = false;
+                sWorkerHasPrev.store(false);
                 ResumeWorker();
             }
         }

@@ -1,5 +1,6 @@
 #include "SaveState.h"
 
+#include <cstring>
 #include <spdlog/spdlog.h>
 
 #include "2s2h/BenPort.h"
@@ -20,9 +21,111 @@ extern "C" LightsBuffer sLightsBuffer;
 
 #define MATRIX_STACK_SIZE 20
 
+// Sparse page-based heap storage: only stores non-zero 4KB pages
+// to minimize memory usage. Typical game heaps are 50-80% zero.
+static constexpr size_t PAGE_SIZE = 4096;
+
+struct SparseHeap {
+    size_t heapSize;
+    size_t pageCount;
+    size_t storedPages; // number of non-zero pages
+    uint8_t* bitmap;    // 1 bit per page: 1 = stored, 0 = zero
+    uint8_t* data;      // packed non-zero page data
+
+    SparseHeap() : heapSize(0), pageCount(0), storedPages(0), bitmap(nullptr), data(nullptr) {
+    }
+
+    ~SparseHeap() {
+        Free();
+    }
+
+    void Free() {
+        delete[] bitmap;
+        delete[] data;
+        bitmap = nullptr;
+        data = nullptr;
+        storedPages = 0;
+    }
+
+    static bool IsPageZero(const uint8_t* page, size_t len) {
+        // Check in 8-byte chunks for speed
+        const uint64_t* p64 = reinterpret_cast<const uint64_t*>(page);
+        size_t count64 = len / sizeof(uint64_t);
+        for (size_t i = 0; i < count64; i++) {
+            if (p64[i] != 0) {
+                return false;
+            }
+        }
+        // Check remaining bytes
+        for (size_t i = count64 * sizeof(uint64_t); i < len; i++) {
+            if (page[i] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void Save(const uint8_t* heap, size_t size) {
+        Free();
+        heapSize = size;
+        pageCount = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+        size_t bitmapBytes = (pageCount + 7) / 8;
+        bitmap = new uint8_t[bitmapBytes];
+        memset(bitmap, 0, bitmapBytes);
+
+        // First pass: count non-zero pages and build bitmap
+        storedPages = 0;
+        for (size_t i = 0; i < pageCount; i++) {
+            size_t offset = i * PAGE_SIZE;
+            size_t len = std::min(PAGE_SIZE, size - offset);
+            if (!IsPageZero(heap + offset, len)) {
+                bitmap[i / 8] |= (1 << (i % 8));
+                storedPages++;
+            }
+        }
+
+        // Second pass: copy non-zero pages into compact buffer
+        if (storedPages > 0) {
+            data = new uint8_t[storedPages * PAGE_SIZE];
+            size_t dst = 0;
+            for (size_t i = 0; i < pageCount; i++) {
+                if (bitmap[i / 8] & (1 << (i % 8))) {
+                    size_t offset = i * PAGE_SIZE;
+                    size_t len = std::min(PAGE_SIZE, size - offset);
+                    memcpy(data + dst * PAGE_SIZE, heap + offset, len);
+                    if (len < PAGE_SIZE) {
+                        memset(data + dst * PAGE_SIZE + len, 0, PAGE_SIZE - len);
+                    }
+                    dst++;
+                }
+            }
+        }
+    }
+
+    void Load(uint8_t* heap) const {
+        // Zero entire heap first
+        memset(heap, 0, heapSize);
+        // Restore non-zero pages
+        size_t src = 0;
+        for (size_t i = 0; i < pageCount; i++) {
+            if (bitmap[i / 8] & (1 << (i % 8))) {
+                size_t offset = i * PAGE_SIZE;
+                size_t len = std::min(PAGE_SIZE, heapSize - offset);
+                memcpy(heap + offset, data + src * PAGE_SIZE, len);
+                src++;
+            }
+        }
+    }
+
+    size_t GetStoredBytes() const {
+        size_t bitmapBytes = (pageCount + 7) / 8;
+        return bitmapBytes + storedPages * PAGE_SIZE;
+    }
+};
+
 struct SaveStateInfo {
-    unsigned char* sysHeapCopy;
-    unsigned char* audioHeapCopy;
+    SparseHeap sysHeapCopy;
+    SparseHeap audioHeapCopy;
 
     SaveContext saveContextCopy;
     LightsBuffer lightBufferCopy;
@@ -36,19 +139,14 @@ struct SaveStateInfo {
 // SaveState
 
 SaveState::SaveState(unsigned int slot) : slot(slot), info(std::make_unique<SaveStateInfo>()) {
-    info->sysHeapCopy = new unsigned char[SYSTEM_HEAP_SIZE];
-    info->audioHeapCopy = new unsigned char[AUDIO_HEAP_SIZE];
     info->occupied = false;
 }
 
-SaveState::~SaveState() {
-    delete[] info->sysHeapCopy;
-    delete[] info->audioHeapCopy;
-}
+SaveState::~SaveState() = default;
 
 void SaveState::Save() {
-    memcpy(info->sysHeapCopy, gSystemHeap, SYSTEM_HEAP_SIZE);
-    memcpy(info->audioHeapCopy, gAudioHeap, AUDIO_HEAP_SIZE);
+    info->sysHeapCopy.Save(gSystemHeap, SYSTEM_HEAP_SIZE);
+    info->audioHeapCopy.Save(gAudioHeap, AUDIO_HEAP_SIZE);
 
     memcpy(&info->saveContextCopy, &gSaveContext, sizeof(SaveContext));
     memcpy(&info->lightBufferCopy, &sLightsBuffer, sizeof(LightsBuffer));
@@ -57,6 +155,13 @@ void SaveState::Save() {
     memcpy(&info->audioCtxCopy, &gAudioCtx, sizeof(AudioContext));
 
     info->occupied = true;
+
+    size_t totalBytes = info->sysHeapCopy.GetStoredBytes() + info->audioHeapCopy.GetStoredBytes() +
+                        sizeof(SaveContext) + sizeof(LightsBuffer) + sizeof(MtxF) * (MATRIX_STACK_SIZE + 1) +
+                        sizeof(AudioContext);
+    SPDLOG_INFO("[2S2H] Save state slot {}: {:.1f} MB (sys {}/{} pages, audio {}/{} pages)", slot,
+                totalBytes / (1024.0 * 1024.0), info->sysHeapCopy.storedPages, info->sysHeapCopy.pageCount,
+                info->audioHeapCopy.storedPages, info->audioHeapCopy.pageCount);
 }
 
 void SaveState::Load() {
@@ -64,8 +169,8 @@ void SaveState::Load() {
         return;
     }
 
-    memcpy(gSystemHeap, info->sysHeapCopy, SYSTEM_HEAP_SIZE);
-    memcpy(gAudioHeap, info->audioHeapCopy, AUDIO_HEAP_SIZE);
+    info->sysHeapCopy.Load(gSystemHeap);
+    info->audioHeapCopy.Load(gAudioHeap);
 
     memcpy(&gSaveContext, &info->saveContextCopy, sizeof(SaveContext));
     memcpy(&sLightsBuffer, &info->lightBufferCopy, sizeof(LightsBuffer));

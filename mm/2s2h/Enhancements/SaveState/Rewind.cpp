@@ -302,7 +302,9 @@ static void RestoreSmallState(const RewindSmallState& state) {
     memcpy(&sInteractWallCheckResult, &state.interactWallCheckResultCopy, sizeof(Vec3f));
     D_80862B3C = state.playerInteractWallDistCopy;
     sPlayerFloorEffect = state.playerFloorEffectCopy;
-    sPlayerControlInput = state.playerControlInputCopy;
+    // Keep this pointer bound to the current PlayState input array. Restoring
+    // stale historical pointers can leave player code dereferencing invalid input.
+    sPlayerControlInput = (gPlayState != nullptr) ? gPlayState->state.input : state.playerControlInputCopy;
     sPlayerUseHeldItem = state.playerUseHeldItemCopy;
     sPlayerHeldItemButtonIsHeldDown = state.playerHeldItemButtonIsHeldDownCopy;
     memcpy(&D_80862B50, &state.playerAdjLightSettingsCopy, sizeof(AdjLightSettings));
@@ -429,7 +431,10 @@ static bool IsPlayerInFormTransition() {
         return false;
     }
 
-    return (player->actor.update == func_8012301C) || (player->actor.shape.rot.x != 0) || (player->actor.shape.rot.z != 0);
+    // Only treat the dedicated replacement update as an active form transition.
+    // shape.rot.{x,z} are used during normal movement/animation and are not
+    // reliable transition markers.
+    return player->actor.update == func_8012301C;
 }
 
 static void RewindCapture() {
@@ -544,26 +549,33 @@ static void RewindApply() {
         memcpy(savedInput, gPlayState->state.input, sizeof(savedInput));
     }
 
-    if (sHasBranchBoundary && sBranchBoundarySplit > 0 && sRewindBuffer.size() == sBranchBoundarySplit) {
-        RestoreBranchBoundary();
-        ResetBranchBoundary();
-    }
+    // If a rewind step lands in the brief form-replacement path, consume a
+    // few extra steps immediately so gameplay resumes on a stable update path.
+    constexpr int kMaxTransitionSkip = 8;
+    int stepsApplied = 0;
+    do {
+        if (sHasBranchBoundary && sBranchBoundarySplit > 0 && sRewindBuffer.size() == sBranchBoundarySplit) {
+            RestoreBranchBoundary();
+            ResetBranchBoundary();
+        }
 
-    // Apply the back frame (most recent diff) to step back one capture
-    const DiffFrame& frame = sRewindBuffer.back();
-    ApplyPageDiff(gSystemHeap, frame.sysPageIndices, frame.sysPageData, SYSTEM_HEAP_SIZE);
-    ApplyPageDiff(gAudioHeap, frame.audioPageIndices, frame.audioPageData, AUDIO_HEAP_SIZE);
-    RestoreSmallState(frame.smallState);
+        // Apply the back frame (most recent diff) to step back one capture
+        const DiffFrame& frame = sRewindBuffer.back();
+        ApplyPageDiff(gSystemHeap, frame.sysPageIndices, frame.sysPageData, SYSTEM_HEAP_SIZE);
+        ApplyPageDiff(gAudioHeap, frame.audioPageIndices, frame.audioPageData, AUDIO_HEAP_SIZE);
+        RestoreSmallState(frame.smallState);
 
-    // Restore current controller input so OnPassPlayerInputs sees actual button state
-    if (gPlayState) {
-        memcpy(gPlayState->state.input, savedInput, sizeof(savedInput));
-    }
+        // Restore current controller input so OnPassPlayerInputs sees actual button state
+        if (gPlayState) {
+            memcpy(gPlayState->state.input, savedInput, sizeof(savedInput));
+        }
 
-    // Pop the applied frame and update tracking
-    sRewindMemUsage -= sRewindBuffer.back().GetBytes();
-    sRewindBuffer.pop_back();
-    sRewindPosition++;
+        // Pop the applied frame and update tracking
+        sRewindMemUsage -= sRewindBuffer.back().GetBytes();
+        sRewindBuffer.pop_back();
+        sRewindPosition++;
+        stepsApplied++;
+    } while (!sRewindBuffer.empty() && IsPlayerInFormTransition() && stepsApplied < kMaxTransitionSkip);
 }
 
 static void RewindClear() {

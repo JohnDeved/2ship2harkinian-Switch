@@ -26,6 +26,31 @@ extern "C" {
 #include "z64effect_ss.h"
 #include "z64pause_menu.h"
 #include "z64game.h"
+
+typedef struct {
+    Vec3f unk_00;
+    Vec3f unk_0C;
+    s16 unk_18;
+    s16 unk_1A;
+} struct_801F58B0;
+
+typedef struct BunnyEarKinematics {
+    Vec3s rot;
+    Vec3s angVel;
+} BunnyEarKinematics;
+
+extern struct_801F58B0 D_801F58B0[3][3];
+extern Vec3f D_801F59B0[2];
+extern s32 D_801F59C8[2];
+extern BunnyEarKinematics sBunnyEarKinematics;
+extern Vec3f* sPlayerCurBodyPartPos;
+extern s32 D_801F59E0;
+extern s32 sPlayerLod;
+extern Vec3f sPlayerGetItemRefPos;
+extern PlayerModelType sPlayerLeftHandType;
+extern PlayerModelType sPlayerRightHandType;
+extern s32 D_801C0958;
+
 extern Arena sZeldaArena;
 }
 
@@ -64,6 +89,17 @@ struct RewindSmallState {
     EffectSsOverlay effectSsOverlayTableCopy[EFFECT_SS_TYPE_MAX];
     KaleidoMgrOverlay kaleidoMgrOverlayTableCopy[KALEIDO_OVL_MAX];
     GameStateOverlay gameStateOverlayTableCopy[GAMESTATE_ID_MAX];
+    struct_801F58B0 playerMaskTrailCopy[3][3];
+    Vec3f playerBubblePosCopy[2];
+    s32 playerBubbleTimerCopy[2];
+    BunnyEarKinematics bunnyEarKinematicsCopy;
+    Vec3f* playerCurBodyPartPosCopy;
+    s32 playerModelDListBaseIndexCopy;
+    s32 playerLodCopy;
+    Vec3f playerGetItemRefPosCopy;
+    PlayerModelType playerLeftHandTypeCopy;
+    PlayerModelType playerRightHandTypeCopy;
+    s32 playerModelResetFlagCopy;
 };
 
 struct DiffFrame {
@@ -131,6 +167,17 @@ static void CaptureSmallState(RewindSmallState& state) {
     memcpy(state.effectSsOverlayTableCopy, gEffectSsOverlayTable, sizeof(gEffectSsOverlayTable));
     memcpy(state.kaleidoMgrOverlayTableCopy, gKaleidoMgrOverlayTable, sizeof(gKaleidoMgrOverlayTable));
     memcpy(state.gameStateOverlayTableCopy, gGameStateOverlayTable, sizeof(gGameStateOverlayTable));
+    memcpy(state.playerMaskTrailCopy, D_801F58B0, sizeof(D_801F58B0));
+    memcpy(state.playerBubblePosCopy, D_801F59B0, sizeof(D_801F59B0));
+    memcpy(state.playerBubbleTimerCopy, D_801F59C8, sizeof(D_801F59C8));
+    memcpy(&state.bunnyEarKinematicsCopy, &sBunnyEarKinematics, sizeof(BunnyEarKinematics));
+    state.playerCurBodyPartPosCopy = sPlayerCurBodyPartPos;
+    state.playerModelDListBaseIndexCopy = D_801F59E0;
+    state.playerLodCopy = sPlayerLod;
+    memcpy(&state.playerGetItemRefPosCopy, &sPlayerGetItemRefPos, sizeof(Vec3f));
+    state.playerLeftHandTypeCopy = sPlayerLeftHandType;
+    state.playerRightHandTypeCopy = sPlayerRightHandType;
+    state.playerModelResetFlagCopy = D_801C0958;
 }
 
 static void RestoreSmallState(const RewindSmallState& state) {
@@ -151,6 +198,17 @@ static void RestoreSmallState(const RewindSmallState& state) {
     memcpy(gEffectSsOverlayTable, state.effectSsOverlayTableCopy, sizeof(gEffectSsOverlayTable));
     memcpy(gKaleidoMgrOverlayTable, state.kaleidoMgrOverlayTableCopy, sizeof(gKaleidoMgrOverlayTable));
     memcpy(gGameStateOverlayTable, state.gameStateOverlayTableCopy, sizeof(gGameStateOverlayTable));
+    memcpy(D_801F58B0, state.playerMaskTrailCopy, sizeof(D_801F58B0));
+    memcpy(D_801F59B0, state.playerBubblePosCopy, sizeof(D_801F59B0));
+    memcpy(D_801F59C8, state.playerBubbleTimerCopy, sizeof(D_801F59C8));
+    memcpy(&sBunnyEarKinematics, &state.bunnyEarKinematicsCopy, sizeof(BunnyEarKinematics));
+    sPlayerCurBodyPartPos = state.playerCurBodyPartPosCopy;
+    D_801F59E0 = state.playerModelDListBaseIndexCopy;
+    sPlayerLod = state.playerLodCopy;
+    memcpy(&sPlayerGetItemRefPos, &state.playerGetItemRefPosCopy, sizeof(Vec3f));
+    sPlayerLeftHandType = state.playerLeftHandTypeCopy;
+    sPlayerRightHandType = state.playerRightHandTypeCopy;
+    D_801C0958 = state.playerModelResetFlagCopy;
 
     if (gPlayState != nullptr) {
         gPlayState->pauseCtx.state = 0;

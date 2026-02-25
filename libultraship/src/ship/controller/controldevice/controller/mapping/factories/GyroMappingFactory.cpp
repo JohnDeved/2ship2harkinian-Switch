@@ -105,6 +105,39 @@ std::shared_ptr<ControllerGyroMapping> GyroMappingFactory::CreateGyroMappingFrom
             mapping->Recalibrate();
             break;
         }
+
+        if (mapping != nullptr) {
+            break;
+        }
+
+        // Fallback: check raw joystick buttons not covered by SDL GameController mapping
+        auto joystick = SDL_GameControllerGetJoystick(gamepad);
+        if (joystick != nullptr) {
+            int numButtons = SDL_JoystickNumButtons(joystick);
+            for (int32_t jBtn = 0; jBtn < numButtons; jBtn++) {
+                if (!SDL_JoystickGetButton(joystick, jBtn)) {
+                    continue;
+                }
+                bool isMapped = false;
+                for (int32_t gcBtn = SDL_CONTROLLER_BUTTON_A; gcBtn < SDL_CONTROLLER_BUTTON_MAX; gcBtn++) {
+                    SDL_GameControllerButtonBind bind = SDL_GameControllerGetBindForButton(
+                        gamepad, static_cast<SDL_GameControllerButton>(gcBtn));
+                    if (bind.bindType == SDL_CONTROLLER_BINDTYPE_BUTTON && bind.value.button == jBtn) {
+                        isMapped = true;
+                        break;
+                    }
+                }
+                if (!isMapped) {
+#ifdef __SWITCH__
+                    mapping = std::make_shared<SwitchGyroMapping>(portIndex, 1.0f, 0.0f, 0.0f, 0.0f);
+#else
+                    mapping = std::make_shared<SDLGyroMapping>(portIndex, 1.0f, 0.0f, 0.0f, 0.0f);
+#endif
+                    mapping->Recalibrate();
+                    break;
+                }
+            }
+        }
     }
 
     return mapping;

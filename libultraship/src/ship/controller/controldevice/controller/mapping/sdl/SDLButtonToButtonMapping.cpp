@@ -21,9 +21,18 @@ void SDLButtonToButtonMapping::UpdatePad(CONTROLLERBUTTONS_T& padButtons) {
     for (const auto& [instanceId, gamepad] :
          Context::GetInstance()->GetControlDeck()->GetConnectedPhysicalDeviceManager()->GetConnectedSDLGamepadsForPort(
              mPortIndex)) {
-        if (SDL_GameControllerGetButton(gamepad, mControllerButton)) {
-            padButtons |= mBitmask;
-            return;
+        if (IS_RAW_JOYSTICK_BUTTON(mControllerButton)) {
+            auto joystick = SDL_GameControllerGetJoystick(gamepad);
+            if (joystick != nullptr &&
+                SDL_JoystickGetButton(joystick, RAW_JOYSTICK_BUTTON_INDEX(mControllerButton))) {
+                padButtons |= mBitmask;
+                return;
+            }
+        } else {
+            if (SDL_GameControllerGetButton(gamepad, static_cast<SDL_GameControllerButton>(mControllerButton))) {
+                padButtons |= mBitmask;
+                return;
+            }
         }
     }
 }

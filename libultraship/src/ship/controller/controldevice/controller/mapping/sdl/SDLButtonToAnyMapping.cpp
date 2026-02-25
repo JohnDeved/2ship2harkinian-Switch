@@ -6,13 +6,17 @@
 namespace Ship {
 SDLButtonToAnyMapping::SDLButtonToAnyMapping(int32_t sdlControllerButton)
     : ControllerInputMapping(PhysicalDeviceType::SDLGamepad) {
-    mControllerButton = static_cast<SDL_GameControllerButton>(sdlControllerButton);
+    mControllerButton = sdlControllerButton;
 }
 
 SDLButtonToAnyMapping::~SDLButtonToAnyMapping() {
 }
 
 std::string SDLButtonToAnyMapping::GetPhysicalInputName() {
+    if (IS_RAW_JOYSTICK_BUTTON(mControllerButton)) {
+        return StringHelper::Sprintf("JB%d", RAW_JOYSTICK_BUTTON_INDEX(mControllerButton));
+    }
+
     switch (mControllerButton) {
         case SDL_CONTROLLER_BUTTON_A:
             return "A";

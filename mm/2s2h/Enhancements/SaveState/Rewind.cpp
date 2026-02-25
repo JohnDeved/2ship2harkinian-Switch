@@ -388,7 +388,3 @@ void RegisterRewind() {
 
 static RegisterShipInitFunc initRewind(RegisterRewind, { "gCheats.RewindEnabled", "gCheats.RewindCaptureInterval",
                                                          "gCheats.RewindMaxMemoryMB" });
-
-extern "C" void ProcessRewind() {
-    // Rewind processing is handled entirely via hooks
-}

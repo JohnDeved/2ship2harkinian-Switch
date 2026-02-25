@@ -5,8 +5,6 @@
 extern "C" {
 #endif
 
-void ProcessRewind(void);
-
 #ifdef __cplusplus
 }
 #endif

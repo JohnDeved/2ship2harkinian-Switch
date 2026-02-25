@@ -164,6 +164,18 @@ source_group("src\\overlays\\gamestates" REGULAR_EXPRESSION  "src/overlays/games
 source_group("src\\overlays\\misc" REGULAR_EXPRESSION  "src/overlays/misc/*")
 # }}}
 
+# ReShade FX compiler sources (standalone shader compiler from crosire/reshade)
+# Only include cross-platform files: GLSL codegen (+ HLSL for parsing support), parser, preprocessor
+set(RESHADE_FX_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/../reshade/source/effect_codegen_glsl.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../reshade/source/effect_expression.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../reshade/source/effect_lexer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../reshade/source/effect_parser_exp.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../reshade/source/effect_parser_stmt.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../reshade/source/effect_preprocessor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../reshade/source/effect_symbol_table.cpp
+)
+
 set(ALL_FILES
     ${Header_Files}
     ${Header_Files__include}
@@ -171,6 +183,7 @@ set(ALL_FILES
 	${libultra_headers}
     ${ship__Extractor}
     ${src__}
+    ${RESHADE_FX_SOURCES}
 )
 
 ################################################################################
@@ -240,6 +253,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE assets
     ${SDL2-NET-INCLUDE}
 	${CMAKE_CURRENT_SOURCE_DIR}/assets/
 	${dr_libs_SOURCE_DIR}
+	${CMAKE_CURRENT_SOURCE_DIR}/../reshade/source
 	.
 )
 

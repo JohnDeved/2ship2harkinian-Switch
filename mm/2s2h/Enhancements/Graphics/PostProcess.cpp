@@ -23,203 +23,338 @@
 #include <SDL2/SDL_opengl.h>
 #endif
 
+// ReShade FX compiler (standalone integration from crosire/reshade)
+#include "effect_parser.hpp"
+#include "effect_codegen.hpp"
+#include "effect_preprocessor.hpp"
+
 #include <spdlog/spdlog.h>
 #include <string>
 #include <vector>
-
-// GLSL version/precision header per platform
-#if defined(__APPLE__)
-#define PP_GLSL_VERSION "#version 410 core\n"
-#define PP_GLSL_TEXFUNC "texture"
-#elif defined(USE_OPENGLES) || defined(__SWITCH__)
-#define PP_GLSL_VERSION "#version 300 es\nprecision mediump float;\n"
-#define PP_GLSL_TEXFUNC "texture"
-#else
-#define PP_GLSL_VERSION "#version 130\n"
-#define PP_GLSL_TEXFUNC "texture2D"
-#endif
-
-// Use "in"/"out" for GLSL 130+ and 300 es; "attribute"/"varying" for 110
-#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
-#define PP_ATTR_IN "in"
-#define PP_ATTR_OUT "out"
-#define PP_FRAG_OUT "out vec4 fragColor;\n"
-#define PP_FRAG_COLOR "fragColor"
-#else
-#define PP_ATTR_IN "varying"
-#define PP_ATTR_OUT "varying"
-#define PP_FRAG_OUT ""
-#define PP_FRAG_COLOR "gl_FragColor"
-#endif
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+#include <algorithm>
+#include <cstring>
 
 // CVar names
-#define CVAR_PP_FXAA "gEnhancements.Graphics.PostProcess.FXAA"
-#define CVAR_PP_CAS "gEnhancements.Graphics.PostProcess.CAS"
-#define CVAR_PP_CAS_STRENGTH "gEnhancements.Graphics.PostProcess.CAS.Strength"
-#define CVAR_PP_VIGNETTE "gEnhancements.Graphics.PostProcess.Vignette"
-#define CVAR_PP_VIGNETTE_STRENGTH "gEnhancements.Graphics.PostProcess.Vignette.Strength"
+#define CVAR_PP_ENABLED "gEnhancements.Graphics.PostProcess.Enabled"
+#define CVAR_PP_EFFECT "gEnhancements.Graphics.PostProcess.Effect"
 
-// ─── Shader sources ──────────────────────────────────────────────────────────
+// ─── Platform GLSL version patching ─────────────────────────────────────────
+// ReShade FX GLSL codegen emits #version 430. We adapt for each platform.
 
-// Simple full-screen triangle vertex shader (shared by all effects)
-static const char* sVertexShaderSrc =
-    PP_GLSL_VERSION PP_ATTR_OUT " vec2 vTexCoord;\n"
-                                "void main() {\n"
-                                "    float x = float(gl_VertexID & 1) * 4.0 - 1.0;\n"
-                                "    float y = float((gl_VertexID >> 1) & 1) * 4.0 - 1.0;\n"
-                                "    vTexCoord = vec2(x * 0.5 + 0.5, y * 0.5 + 0.5);\n"
-                                "    gl_Position = vec4(x, y, 0.0, 1.0);\n"
-                                "}\n";
+#if defined(__APPLE__)
+#define PP_TARGET_GLSL_VERSION "#version 410 core"
+#elif defined(USE_OPENGLES) || defined(__SWITCH__)
+#define PP_TARGET_GLSL_VERSION "#version 300 es\nprecision mediump float;"
+#else
+#define PP_TARGET_GLSL_VERSION "#version 130"
+#endif
 
-// FXAA fragment shader (FXAA 3.11 quality preset, adapted for portability)
-static const char* sFxaaFragSrc = PP_GLSL_VERSION PP_ATTR_IN
-    " vec2 vTexCoord;\n" PP_FRAG_OUT "uniform sampler2D uTexture;\n"
-    "uniform vec2 uTexelSize;\n"
-    "void main() {\n"
-    "    vec3 rgbNW = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + vec2(-1.0, -1.0) * uTexelSize).rgb;\n"
-    "    vec3 rgbNE = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + vec2( 1.0, -1.0) * uTexelSize).rgb;\n"
-    "    vec3 rgbSW = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + vec2(-1.0,  1.0) * uTexelSize).rgb;\n"
-    "    vec3 rgbSE = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + vec2( 1.0,  1.0) * uTexelSize).rgb;\n"
-    "    vec3 rgbM  = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord).rgb;\n"
-    "    vec3 luma = vec3(0.299, 0.587, 0.114);\n"
-    "    float lumaNW = dot(rgbNW, luma);\n"
-    "    float lumaNE = dot(rgbNE, luma);\n"
-    "    float lumaSW = dot(rgbSW, luma);\n"
-    "    float lumaSE = dot(rgbSE, luma);\n"
-    "    float lumaM  = dot(rgbM,  luma);\n"
-    "    float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));\n"
-    "    float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));\n"
-    "    float lumaRange = lumaMax - lumaMin;\n"
-    "    if (lumaRange < max(0.0312, lumaMax * 0.125)) {\n"
-    "        " PP_FRAG_COLOR " = vec4(rgbM, 1.0);\n"
-    "        return;\n"
-    "    }\n"
-    "    vec2 dir;\n"
-    "    dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));\n"
-    "    dir.y =  ((lumaNW + lumaSW) - (lumaNE + lumaSE));\n"
-    "    float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.03125, 0.0078125);\n"
-    "    float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);\n"
-    "    dir = min(vec2(8.0), max(vec2(-8.0), dir * rcpDirMin)) * uTexelSize;\n"
-    "    vec3 rgbA = 0.5 * (\n"
-    "        " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + dir * (1.0 / 3.0 - 0.5)).rgb +\n"
-    "        " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
-    "    vec3 rgbB = rgbA * 0.5 + 0.25 * (\n"
-    "        " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + dir * -0.5).rgb +\n"
-    "        " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + dir *  0.5).rgb);\n"
-    "    float lumaB = dot(rgbB, luma);\n"
-    "    if (lumaB < lumaMin || lumaB > lumaMax) {\n"
-    "        " PP_FRAG_COLOR " = vec4(rgbA, 1.0);\n"
-    "    } else {\n"
-    "        " PP_FRAG_COLOR " = vec4(rgbB, 1.0);\n"
-    "    }\n"
-    "}\n";
+static std::string PatchGLSLForPlatform(const std::string& glsl) {
+    std::string patched = glsl;
 
-// CAS (Contrast Adaptive Sharpening) fragment shader - based on AMD FidelityFX CAS
-static const char* sCasFragSrc = PP_GLSL_VERSION PP_ATTR_IN
-    " vec2 vTexCoord;\n" PP_FRAG_OUT "uniform sampler2D uTexture;\n"
-    "uniform vec2 uTexelSize;\n"
-    "uniform float uSharpness;\n"
-    "void main() {\n"
-    "    vec3 a = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + vec2(-1.0,  0.0) * uTexelSize).rgb;\n"
-    "    vec3 b = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + vec2( 0.0, -1.0) * uTexelSize).rgb;\n"
-    "    vec3 c = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord).rgb;\n"
-    "    vec3 d = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + vec2( 0.0,  1.0) * uTexelSize).rgb;\n"
-    "    vec3 e = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + vec2( 1.0,  0.0) * uTexelSize).rgb;\n"
-    "    vec3 mnRGB = min(c, min(min(a, b), min(d, e)));\n"
-    "    vec3 mxRGB = max(c, max(max(a, b), max(d, e)));\n"
-    "    vec3 ampRGB = clamp(min(mnRGB, 1.0 - mxRGB) / mxRGB, 0.0, 1.0);\n"
-    "    ampRGB = sqrt(ampRGB);\n"
-    "    float peak = -3.0 * uSharpness + 8.0;\n"
-    "    vec3 w = ampRGB / peak;\n"
-    "    vec3 rcpW = 1.0 / (1.0 + 4.0 * w);\n"
-    "    vec3 output0 = ((b + d + a + e) * w + c) * rcpW;\n"
-    "    " PP_FRAG_COLOR " = vec4(clamp(output0, 0.0, 1.0), 1.0);\n"
-    "}\n";
+    // Replace the #version 430 directive with our target
+    const std::string versionTag = "#version 430";
+    size_t pos = patched.find(versionTag);
+    if (pos != std::string::npos) {
+        patched.replace(pos, versionTag.size(), PP_TARGET_GLSL_VERSION);
+    }
 
-// Vignette fragment shader
-static const char* sVignetteFragSrc =
-    PP_GLSL_VERSION PP_ATTR_IN " vec2 vTexCoord;\n" PP_FRAG_OUT "uniform sampler2D uTexture;\n"
-                               "uniform float uStrength;\n"
-                               "void main() {\n"
-                               "    vec4 color = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord);\n"
-                               "    vec2 uv = vTexCoord * 2.0 - 1.0;\n"
-                               "    float vignette = 1.0 - dot(uv, uv) * uStrength;\n"
-                               "    color.rgb *= clamp(vignette, 0.0, 1.0);\n"
-                               "    " PP_FRAG_COLOR " = color;\n"
-                               "}\n";
+#if defined(USE_OPENGLES) || defined(__SWITCH__)
+    // GLES 300 es does not support layout(binding = X) — strip binding qualifiers.
+    // "layout(binding = N) uniform" -> "uniform"
+    // "layout(std140, column_major, binding = 0) uniform" -> "layout(std140) uniform"
+    std::string result;
+    result.reserve(patched.size());
+    size_t i = 0;
+    while (i < patched.size()) {
+        if (patched.compare(i, 7, "layout(") == 0) {
+            size_t close = patched.find(')', i);
+            if (close != std::string::npos) {
+                std::string layoutContent = patched.substr(i + 7, close - i - 7);
+                size_t nextNonSpace = patched.find_first_not_of(" \t", close + 1);
+                bool isUniform =
+                    (nextNonSpace != std::string::npos && patched.compare(nextNonSpace, 7, "uniform") == 0);
 
-// ─── GL resource management ─────────────────────────────────────────────────
+                if (isUniform) {
+                    // Simple binding-only layout: remove entirely
+                    if (layoutContent.find("binding") != std::string::npos &&
+                        layoutContent.find("std140") == std::string::npos) {
+                        i = close + 1;
+                        while (i < patched.size() && (patched[i] == ' ' || patched[i] == '\t'))
+                            i++;
+                        continue;
+                    }
+                    // UBO layout: keep std140, drop binding qualifier
+                    if (layoutContent.find("std140") != std::string::npos) {
+                        result += "layout(std140) ";
+                        i = close + 1;
+                        while (i < patched.size() && (patched[i] == ' ' || patched[i] == '\t'))
+                            i++;
+                        continue;
+                    }
+                }
+            }
+        }
+        result += patched[i];
+        i++;
+    }
+    patched = result;
+#endif
 
-struct PostProcessPass {
+    return patched;
+}
+
+// ─── Effect data structures ─────────────────────────────────────────────────
+
+struct CompiledPass {
     GLuint program = 0;
-    GLint texLoc = -1;
-    GLint texelSizeLoc = -1;
-    GLint sharpnessLoc = -1;
-    GLint strengthLoc = -1;
 };
+
+struct CompiledEffect {
+    std::string name;
+    std::vector<CompiledPass> passes;
+    std::vector<reshadefx::uniform> uniforms;
+    std::vector<uint8_t> uniformData;
+    GLuint uniformBuffer = 0;
+};
+
+// ─── GL state ───────────────────────────────────────────────────────────────
 
 static struct {
     bool initialized = false;
     GLuint vao = 0;
     GLuint fbo = 0;
-    GLuint textures[2] = { 0, 0 }; // ping-pong textures
+    GLuint textures[2] = { 0, 0 };
     uint32_t texWidth = 0;
     uint32_t texHeight = 0;
-    PostProcessPass fxaa;
-    PostProcessPass cas;
-    PostProcessPass vignette;
+    CompiledEffect currentEffect;
+    std::vector<std::string> availableEffects;
+    std::string loadedEffectName;
 } sState;
 
-static GLuint CompileShader(GLenum type, const char* src) {
+// ─── Shader compilation helpers ─────────────────────────────────────────────
+
+static GLuint CompileGLShader(GLenum type, const char* src) {
     GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &src, nullptr);
     glCompileShader(shader);
     GLint status;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
     if (!status) {
-        char log[512];
+        char log[1024];
         glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
-        SPDLOG_ERROR("PostProcess shader compile error: {}", log);
+        SPDLOG_ERROR("ReShade PostProcess shader compile error: {}", log);
         glDeleteShader(shader);
         return 0;
     }
     return shader;
 }
 
-static bool LinkProgram(PostProcessPass& pass, const char* fragSrc) {
-    GLuint vs = CompileShader(GL_VERTEX_SHADER, sVertexShaderSrc);
-    if (!vs)
-        return false;
-    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, fragSrc);
-    if (!fs) {
-        glDeleteShader(vs);
-        return false;
-    }
-
-    pass.program = glCreateProgram();
-    glAttachShader(pass.program, vs);
-    glAttachShader(pass.program, fs);
-    glLinkProgram(pass.program);
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-
+static GLuint LinkGLProgram(GLuint vs, GLuint fs) {
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
     GLint status;
-    glGetProgramiv(pass.program, GL_LINK_STATUS, &status);
+    glGetProgramiv(program, GL_LINK_STATUS, &status);
     if (!status) {
-        char log[512];
-        glGetProgramInfoLog(pass.program, sizeof(log), nullptr, log);
-        SPDLOG_ERROR("PostProcess program link error: {}", log);
-        glDeleteProgram(pass.program);
-        pass.program = 0;
+        char log[1024];
+        glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+        SPDLOG_ERROR("ReShade PostProcess program link error: {}", log);
+        glDeleteProgram(program);
+        return 0;
+    }
+    return program;
+}
+
+// ─── ReShade FX compiler integration ────────────────────────────────────────
+
+static std::string GetEffectsPath() {
+    std::string basePath = Ship::Context::GetInstance()->GetAppBundlePath();
+    if (basePath.empty() || basePath == ".") {
+        basePath = ".";
+    }
+    return basePath + "/reshade-shaders/Shaders";
+}
+
+static void ScanAvailableEffects() {
+    sState.availableEffects.clear();
+    std::string path = GetEffectsPath();
+
+    if (!std::filesystem::exists(path)) {
+        SPDLOG_INFO("ReShade effects directory not found: {}", path);
+        return;
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator(path)) {
+        if (entry.is_regular_file()) {
+            auto ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".fx") {
+                sState.availableEffects.push_back(entry.path().stem().string());
+            }
+        }
+    }
+
+    std::sort(sState.availableEffects.begin(), sState.availableEffects.end());
+    SPDLOG_INFO("ReShade: Found {} .fx effects", sState.availableEffects.size());
+}
+
+static void FreeEffect(CompiledEffect& effect) {
+    for (auto& pass : effect.passes) {
+        if (pass.program) {
+            glDeleteProgram(pass.program);
+            pass.program = 0;
+        }
+    }
+    if (effect.uniformBuffer) {
+        glDeleteBuffers(1, &effect.uniformBuffer);
+        effect.uniformBuffer = 0;
+    }
+    effect.passes.clear();
+    effect.uniforms.clear();
+    effect.uniformData.clear();
+    effect.name.clear();
+}
+
+static bool CompileEffect(const std::string& effectName, CompiledEffect& effect) {
+    FreeEffect(effect);
+
+    std::string fxPath = GetEffectsPath() + "/" + effectName + ".fx";
+    if (!std::filesystem::exists(fxPath)) {
+        SPDLOG_ERROR("ReShade: Effect file not found: {}", fxPath);
         return false;
     }
 
-    pass.texLoc = glGetUniformLocation(pass.program, "uTexture");
-    pass.texelSizeLoc = glGetUniformLocation(pass.program, "uTexelSize");
-    pass.sharpnessLoc = glGetUniformLocation(pass.program, "uSharpness");
-    pass.strengthLoc = glGetUniformLocation(pass.program, "uStrength");
+    SPDLOG_INFO("ReShade: Compiling effect '{}'...", effectName);
+
+    // Set up preprocessor with standard ReShade macros
+    reshadefx::preprocessor pp;
+    pp.add_macro_definition("__RESHADE__", "60000");
+    pp.add_macro_definition("__RESHADE_PERFORMANCE_MODE__", "1");
+    pp.add_macro_definition("BUFFER_WIDTH", std::to_string(sState.texWidth > 0 ? sState.texWidth : 1280));
+    pp.add_macro_definition("BUFFER_HEIGHT", std::to_string(sState.texHeight > 0 ? sState.texHeight : 720));
+    pp.add_macro_definition("BUFFER_RCP_WIDTH", "(1.0 / BUFFER_WIDTH)");
+    pp.add_macro_definition("BUFFER_RCP_HEIGHT", "(1.0 / BUFFER_HEIGHT)");
+
+    // Add include paths for ReShade shader headers
+    std::string shadersPath = GetEffectsPath();
+    pp.add_include_path(shadersPath);
+    // Standard ReShade shader repo layout: reshade-shaders/Shaders/ and reshade-shaders/Textures/
+    std::string parentDir = shadersPath + "/..";
+    if (std::filesystem::exists(parentDir)) {
+        pp.add_include_path(parentDir);
+    }
+
+    if (!pp.append_file(fxPath)) {
+        SPDLOG_ERROR("ReShade: Preprocessor failed for '{}': {}", effectName, pp.errors());
+        return false;
+    }
+
+    // Create GLSL codegen (OpenGL semantics, no debug info, no spec constants)
+    std::unique_ptr<reshadefx::codegen> backend(reshadefx::create_codegen_glsl(false, false, false));
+
+    reshadefx::parser parser;
+    if (!parser.parse(pp.output(), backend.get())) {
+        SPDLOG_ERROR("ReShade: Parse failed for '{}': {}{}", effectName, pp.errors(), parser.errors());
+        return false;
+    }
+
+    reshadefx::effect_module& mod = backend->module();
+    effect.name = effectName;
+    effect.uniforms = mod.uniforms;
+
+    // Initialize uniform data buffer with default values
+    effect.uniformData.resize(mod.total_uniform_size, 0);
+    for (const auto& u : mod.uniforms) {
+        if (u.has_initializer_value && u.offset + u.size <= effect.uniformData.size()) {
+            std::memcpy(effect.uniformData.data() + u.offset, &u.initializer_value, u.size);
+        }
+    }
+
+    // Compile each technique's passes
+    for (const auto& technique : mod.techniques) {
+        for (const auto& passInfo : technique.passes) {
+            CompiledPass compiledPass;
+
+            // Assemble vertex shader GLSL for this entry point
+            std::string vsSrc, vsAsm, vsErr;
+            if (!passInfo.vs_entry_point.empty()) {
+                if (!backend->assemble_code_for_entry_point(passInfo.vs_entry_point, vsSrc, vsAsm, vsErr)) {
+                    SPDLOG_ERROR("ReShade: VS assembly failed for '{}': {}", passInfo.vs_entry_point, vsErr);
+                    FreeEffect(effect);
+                    return false;
+                }
+            }
+
+            // Assemble fragment shader GLSL for this entry point
+            std::string fsSrc, fsAsm, fsErr;
+            if (!passInfo.ps_entry_point.empty()) {
+                if (!backend->assemble_code_for_entry_point(passInfo.ps_entry_point, fsSrc, fsAsm, fsErr)) {
+                    SPDLOG_ERROR("ReShade: FS assembly failed for '{}': {}", passInfo.ps_entry_point, fsErr);
+                    FreeEffect(effect);
+                    return false;
+                }
+            }
+
+            // Patch GLSL for the target platform (version, binding qualifiers)
+            vsSrc = PatchGLSLForPlatform(vsSrc);
+            fsSrc = PatchGLSLForPlatform(fsSrc);
+
+            // Compile GL shaders
+            GLuint vs = CompileGLShader(GL_VERTEX_SHADER, vsSrc.c_str());
+            GLuint fs = CompileGLShader(GL_FRAGMENT_SHADER, fsSrc.c_str());
+            if (!vs || !fs) {
+                if (vs)
+                    glDeleteShader(vs);
+                if (fs)
+                    glDeleteShader(fs);
+                SPDLOG_ERROR("ReShade: Shader compilation failed for effect '{}'", effectName);
+                FreeEffect(effect);
+                return false;
+            }
+
+            compiledPass.program = LinkGLProgram(vs, fs);
+            glDeleteShader(vs);
+            glDeleteShader(fs);
+
+            if (!compiledPass.program) {
+                FreeEffect(effect);
+                return false;
+            }
+
+            // Set up sampler uniform locations
+            glUseProgram(compiledPass.program);
+            for (size_t s = 0; s < passInfo.sampler_bindings.size(); s++) {
+                if (passInfo.sampler_bindings[s].index < mod.samplers.size()) {
+                    const auto& sampler = mod.samplers[passInfo.sampler_bindings[s].index];
+                    GLint loc = glGetUniformLocation(compiledPass.program, sampler.unique_name.c_str());
+                    if (loc >= 0) {
+                        glUniform1i(loc, static_cast<GLint>(passInfo.sampler_bindings[s].entry_point_binding));
+                    }
+                }
+            }
+
+            effect.passes.push_back(std::move(compiledPass));
+        }
+    }
+
+    // Create UBO for uniform variables
+    if (mod.total_uniform_size > 0) {
+        glGenBuffers(1, &effect.uniformBuffer);
+        glBindBuffer(GL_UNIFORM_BUFFER, effect.uniformBuffer);
+        glBufferData(GL_UNIFORM_BUFFER, mod.total_uniform_size, effect.uniformData.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
+    }
+
+    SPDLOG_INFO("ReShade: Successfully compiled effect '{}' ({} passes)", effectName, effect.passes.size());
     return true;
 }
+
+// ─── GL resource management ─────────────────────────────────────────────────
 
 static void EnsureTextures(uint32_t width, uint32_t height) {
     if (sState.texWidth == width && sState.texHeight == height && sState.textures[0]) {
@@ -248,27 +383,16 @@ static void InitGL() {
     glGenVertexArrays(1, &sState.vao);
     glGenFramebuffers(1, &sState.fbo);
 
-    LinkProgram(sState.fxaa, sFxaaFragSrc);
-    LinkProgram(sState.cas, sCasFragSrc);
-    LinkProgram(sState.vignette, sVignetteFragSrc);
-
     sState.initialized = true;
-    SPDLOG_INFO("PostProcess: GL resources initialized");
+    ScanAvailableEffects();
+    SPDLOG_INFO("ReShade PostProcess: GL resources initialized");
 }
 
 static void CleanupGL() {
     if (!sState.initialized)
         return;
 
-    auto deletePass = [](PostProcessPass& p) {
-        if (p.program) {
-            glDeleteProgram(p.program);
-            p.program = 0;
-        }
-    };
-    deletePass(sState.fxaa);
-    deletePass(sState.cas);
-    deletePass(sState.vignette);
+    FreeEffect(sState.currentEffect);
 
     for (int i = 0; i < 2; i++) {
         if (sState.textures[i]) {
@@ -287,29 +411,8 @@ static void CleanupGL() {
     sState.texWidth = 0;
     sState.texHeight = 0;
     sState.initialized = false;
-    SPDLOG_INFO("PostProcess: GL resources cleaned up");
-}
-
-// Renders a full-screen pass: binds inputTex, renders into outputTex via FBO
-static void RenderPass(const PostProcessPass& pass, GLuint inputTex, GLuint outputTex, uint32_t width,
-                       uint32_t height) {
-    glBindFramebuffer(GL_FRAMEBUFFER, sState.fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, outputTex, 0);
-    glViewport(0, 0, width, height);
-
-    glUseProgram(pass.program);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, inputTex);
-    if (pass.texLoc >= 0)
-        glUniform1i(pass.texLoc, 0);
-    if (pass.texelSizeLoc >= 0)
-        glUniform2f(pass.texelSizeLoc, 1.0f / width, 1.0f / height);
-
-    glBindVertexArray(sState.vao);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindVertexArray(0);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    sState.loadedEffectName.clear();
+    SPDLOG_INFO("ReShade PostProcess: GL resources cleaned up");
 }
 
 // ─── Post-process callback ──────────────────────────────────────────────────
@@ -318,15 +421,32 @@ static uintptr_t PostProcessCallback(uintptr_t texId, uint32_t width, uint32_t h
     InitGL();
     EnsureTextures(width, height);
 
-    bool fxaaEnabled = CVarGetInteger(CVAR_PP_FXAA, 0) != 0;
-    bool casEnabled = CVarGetInteger(CVAR_PP_CAS, 0) != 0;
-    bool vignetteEnabled = CVarGetInteger(CVAR_PP_VIGNETTE, 0) != 0;
-
-    if (!fxaaEnabled && !casEnabled && !vignetteEnabled) {
+    if (!CVarGetInteger(CVAR_PP_ENABLED, 0)) {
         return texId;
     }
 
-    // Save GL state that we modify
+    int effectIdx = CVarGetInteger(CVAR_PP_EFFECT, 0);
+    if (effectIdx < 0 || effectIdx >= static_cast<int>(sState.availableEffects.size())) {
+        return texId;
+    }
+
+    const std::string& effectName = sState.availableEffects[effectIdx];
+
+    // Compile effect lazily on render thread (requires GL context)
+    if (sState.loadedEffectName != effectName || sState.currentEffect.passes.empty()) {
+        sState.texWidth = width;
+        sState.texHeight = height;
+        if (!CompileEffect(effectName, sState.currentEffect)) {
+            return texId;
+        }
+        sState.loadedEffectName = effectName;
+    }
+
+    if (sState.currentEffect.passes.empty()) {
+        return texId;
+    }
+
+    // Save GL state
     GLint prevFbo, prevViewport[4], prevProgram, prevVao, prevTex;
     GLboolean prevDepthTest, prevBlend;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
@@ -345,32 +465,42 @@ static uintptr_t PostProcessCallback(uintptr_t texId, uint32_t width, uint32_t h
     GLuint currentTex = (GLuint)texId;
     int pingPongIdx = 0;
 
-    // Apply effects in chain
-    if (fxaaEnabled && sState.fxaa.program) {
-        GLuint outputTex = sState.textures[pingPongIdx];
-        RenderPass(sState.fxaa, currentTex, outputTex, width, height);
-        currentTex = outputTex;
-        pingPongIdx = 1 - pingPongIdx;
+    // Upload uniform data
+    if (sState.currentEffect.uniformBuffer && !sState.currentEffect.uniformData.empty()) {
+        glBindBuffer(GL_UNIFORM_BUFFER, sState.currentEffect.uniformBuffer);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, sState.currentEffect.uniformData.size(),
+                        sState.currentEffect.uniformData.data());
+        glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
 
-    if (casEnabled && sState.cas.program) {
-        float sharpness = CVarGetFloat(CVAR_PP_CAS_STRENGTH, 0.5f);
-        glUseProgram(sState.cas.program);
-        if (sState.cas.sharpnessLoc >= 0)
-            glUniform1f(sState.cas.sharpnessLoc, sharpness);
-        GLuint outputTex = sState.textures[pingPongIdx];
-        RenderPass(sState.cas, currentTex, outputTex, width, height);
-        currentTex = outputTex;
-        pingPongIdx = 1 - pingPongIdx;
-    }
+    // Execute passes
+    for (const auto& pass : sState.currentEffect.passes) {
+        if (!pass.program)
+            continue;
 
-    if (vignetteEnabled && sState.vignette.program) {
-        float strength = CVarGetFloat(CVAR_PP_VIGNETTE_STRENGTH, 0.5f);
-        glUseProgram(sState.vignette.program);
-        if (sState.vignette.strengthLoc >= 0)
-            glUniform1f(sState.vignette.strengthLoc, strength);
         GLuint outputTex = sState.textures[pingPongIdx];
-        RenderPass(sState.vignette, currentTex, outputTex, width, height);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, sState.fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, outputTex, 0);
+        glViewport(0, 0, width, height);
+
+        glUseProgram(pass.program);
+
+        // Bind input texture (backbuffer from previous pass)
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, currentTex);
+
+        // Bind uniform buffer
+        if (sState.currentEffect.uniformBuffer) {
+            glBindBufferBase(GL_UNIFORM_BUFFER, 0, sState.currentEffect.uniformBuffer);
+        }
+
+        glBindVertexArray(sState.vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
         currentTex = outputTex;
         pingPongIdx = 1 - pingPongIdx;
     }
@@ -398,11 +528,6 @@ static uintptr_t PostProcessCallback(uintptr_t texId, uint32_t width, uint32_t h
 
 // ─── Registration ───────────────────────────────────────────────────────────
 
-static bool IsAnyEffectEnabled() {
-    return CVarGetInteger(CVAR_PP_FXAA, 0) != 0 || CVarGetInteger(CVAR_PP_CAS, 0) != 0 ||
-           CVarGetInteger(CVAR_PP_VIGNETTE, 0) != 0;
-}
-
 static void RegisterPostProcess() {
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
     if (!wnd)
@@ -411,7 +536,7 @@ static void RegisterPostProcess() {
     if (!interp)
         return;
 
-    if (IsAnyEffectEnabled()) {
+    if (CVarGetInteger(CVAR_PP_ENABLED, 0)) {
         interp->SetPostProcessCallback(PostProcessCallback);
     } else {
         interp->ClearPostProcessCallback();
@@ -419,31 +544,49 @@ static void RegisterPostProcess() {
     }
 }
 
-static RegisterShipInitFunc initFunc(RegisterPostProcess, { CVAR_PP_FXAA, CVAR_PP_CAS, CVAR_PP_CAS_STRENGTH,
-                                                            CVAR_PP_VIGNETTE, CVAR_PP_VIGNETTE_STRENGTH });
+static RegisterShipInitFunc initFunc(RegisterPostProcess, { CVAR_PP_ENABLED, CVAR_PP_EFFECT });
 
 // ─── Menu UI ────────────────────────────────────────────────────────────────
 
 void PostProcess_RenderMenuOptions() {
     ImGui::SeparatorText("Post-Processing (ReShade)");
     UIWidgets::CVarCheckbox(
-        "FXAA Anti-Aliasing", CVAR_PP_FXAA,
-        UIWidgets::CheckboxOptions().Tooltip("Fast Approximate Anti-Aliasing. Smooths jagged edges."));
-    UIWidgets::CVarCheckbox("CAS Sharpening", CVAR_PP_CAS,
-                            UIWidgets::CheckboxOptions().Tooltip(
-                                "Contrast Adaptive Sharpening (AMD FidelityFX CAS). Enhances image clarity."));
-    if (CVarGetInteger(CVAR_PP_CAS, 0)) {
-        UIWidgets::CVarSliderFloat("CAS Strength: %.2f", CVAR_PP_CAS_STRENGTH,
-                                   UIWidgets::FloatSliderOptions().Min(0.0f).Max(1.0f).DefaultValue(0.5f).Tooltip(
-                                       "How strong the sharpening effect is. 0 = subtle, 1 = maximum."));
-    }
-    UIWidgets::CVarCheckbox(
-        "Vignette", CVAR_PP_VIGNETTE,
-        UIWidgets::CheckboxOptions().Tooltip("Darkens the edges of the screen for a cinematic effect."));
-    if (CVarGetInteger(CVAR_PP_VIGNETTE, 0)) {
-        UIWidgets::CVarSliderFloat("Vignette Strength: %.2f", CVAR_PP_VIGNETTE_STRENGTH,
-                                   UIWidgets::FloatSliderOptions().Min(0.1f).Max(1.5f).DefaultValue(0.5f).Tooltip(
-                                       "How strong the vignette darkening is."));
+        "Enable ReShade Effects", CVAR_PP_ENABLED,
+        UIWidgets::CheckboxOptions().Tooltip("Enable post-processing effects using the ReShade FX shader system.\n"
+                                             "Place .fx shader files in the reshade-shaders/Shaders/ directory."));
+
+    if (CVarGetInteger(CVAR_PP_ENABLED, 0)) {
+        if (sState.availableEffects.empty()) {
+            ImGui::TextWrapped("No .fx files found in reshade-shaders/Shaders/");
+            ImGui::TextWrapped("Download ReShade shaders from https://github.com/crosire/reshade-shaders");
+        } else {
+            int effectIdx = CVarGetInteger(CVAR_PP_EFFECT, 0);
+            if (effectIdx >= static_cast<int>(sState.availableEffects.size())) {
+                effectIdx = 0;
+            }
+
+            if (ImGui::BeginCombo("Effect", sState.availableEffects[effectIdx].c_str())) {
+                for (int i = 0; i < static_cast<int>(sState.availableEffects.size()); i++) {
+                    bool isSelected = (i == effectIdx);
+                    if (ImGui::Selectable(sState.availableEffects[i].c_str(), isSelected)) {
+                        CVarSetInteger(CVAR_PP_EFFECT, i);
+                        Ship::Context::GetInstance()->GetWindow()->GetGui()->SaveConsoleVariablesNextFrame();
+                    }
+                    if (isSelected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            if (ImGui::Button("Rescan Effects")) {
+                ScanAvailableEffects();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reload Effect")) {
+                sState.loadedEffectName.clear();
+            }
+        }
     }
 }
 

@@ -563,7 +563,7 @@ static void RewindApply() {
 
     // If a rewind step lands in the brief form-replacement path, consume a
     // few extra steps immediately so gameplay resumes on a stable update path.
-    constexpr int kMaxTransitionSkip = 8;
+    constexpr int kMaxTransitionSkip = 32;
     int stepsApplied = 0;
     do {
         if (sHasBranchBoundary && sBranchBoundarySplit > 0 && sRewindBuffer.size() == sBranchBoundarySplit) {
@@ -588,6 +588,13 @@ static void RewindApply() {
         sRewindPosition++;
         stepsApplied++;
     } while (!sRewindBuffer.empty() && IsPlayerInFormTransition() && stepsApplied < kMaxTransitionSkip);
+
+    // While player update is the transient form-replacement path, the normal
+    // OnPassPlayerInputs hook may not run, so keep requesting rewind from the
+    // safe-point hook until we are back on a stable gameplay update.
+    if (sIsRewinding && !sRewindBuffer.empty() && IsPlayerInFormTransition()) {
+        sRewindRequested.store(true);
+    }
 }
 
 static void RewindClear() {

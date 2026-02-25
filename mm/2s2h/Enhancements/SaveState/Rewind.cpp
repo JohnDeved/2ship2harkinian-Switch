@@ -138,7 +138,6 @@ static size_t sRewindMemUsage = 0;
 static bool sIsRewinding = false;
 static std::atomic<bool> sRewindRequested{ false };
 static int sFrameCounter = 0;
-static int sRewindStepCounter = 0;
 static PlayState* sLastPlayState = nullptr;
 
 // Baseline snapshots for diffing (one copy of each heap, ~52 MB total)
@@ -151,6 +150,13 @@ static void RewindCapture() {
     // Only capture during actual gameplay (not title screen, file select, etc.)
     if (!gPlayState || !gSystemHeap || !gAudioHeap || gSaveContext.gameMode != GAMEMODE_NORMAL ||
         GET_PLAYER(gPlayState) == NULL) {
+        return;
+    }
+
+    // Skip capturing when UI is open (pause menu, text boxes, transitions)
+    // Restoring UI state causes visual glitches and broken menu rendering.
+    if (gPlayState->pauseCtx.state != PAUSE_STATE_OFF || gPlayState->msgCtx.msgMode != MSGMODE_NONE ||
+        gPlayState->transitionMode != TRANS_MODE_OFF) {
         return;
     }
 
@@ -225,8 +231,7 @@ static void RewindCapture() {
     sRewindBuffer.push_back(std::move(frame));
 }
 
-// Apply current back frame to freeze game state, advancing to next diff every captureInterval frames.
-// This matches rewind consumption rate to capture rate so the buffer doesn't drain instantly.
+// Pop and apply the most recent diff frame for one rewind step.
 static void RewindApply() {
     if (sRewindBuffer.empty()) {
         Ship::Context::GetInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
@@ -234,19 +239,12 @@ static void RewindApply() {
         return;
     }
 
-    int captureInterval = CVarGetInteger("gCheats.RewindCaptureInterval", DEFAULT_CAPTURE_INTERVAL);
-    captureInterval = std::clamp(captureInterval, 1, 30);
-
-    // Advance to next diff every captureInterval frames (matching capture rate)
-    sRewindStepCounter++;
-    if (sRewindStepCounter >= captureInterval && sRewindBuffer.size() > 1) {
-        sRewindStepCounter = 0;
+    // Pop back frame and apply it (one diff per frame for smooth rewind)
+    if (sRewindBuffer.size() > 1) {
         sRewindMemUsage -= sRewindBuffer.back().GetBytes();
         sRewindBuffer.pop_back();
     }
 
-    // Re-apply current back frame every frame to prevent game-state drift
-    // (the game loop still runs with zeroed input between rewind steps)
     const DiffFrame& frame = sRewindBuffer.back();
 
     // Save freshly-read controller input before heap restore — gPlayState->state.input
@@ -278,7 +276,6 @@ static void RewindClear() {
     sIsRewinding = false;
     sRewindRequested.store(false);
     sFrameCounter = 0;
-    sRewindStepCounter = 0;
     sLastPlayState = nullptr;
 }
 
@@ -301,7 +298,6 @@ void RegisterRewind() {
         if (m1Held && dpadLeftHeld) {
             if (!sIsRewinding) {
                 sIsRewinding = true;
-                sRewindStepCounter = 0;
             }
             sRewindRequested.store(true);
             memset(input, 0, sizeof(Input));

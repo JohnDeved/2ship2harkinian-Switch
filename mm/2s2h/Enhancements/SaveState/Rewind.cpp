@@ -2,19 +2,11 @@
 
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <deque>
-#include <mutex>
 #include <new>
-#include <thread>
 #include <vector>
-#include <spdlog/spdlog.h>
-
-#ifdef __SWITCH__
-#include <switch.h>
-#endif
 
 #include "2s2h/BenPort.h"
 #include "2s2h/ShipInit.hpp"
@@ -71,15 +63,17 @@ struct DiffFrame {
     }
 };
 
-static bool ComputePageDiff(const uint8_t* oldData, const uint8_t* newData, size_t heapSize,
-                            std::vector<uint32_t>& indices, std::vector<uint8_t>& pageData) {
+// Compare heap against baseline, save old pages into diff, update baseline in-place.
+// Single pass: memcmp to detect changes, then memcpy to save old + update baseline.
+static bool ComputeAndUpdateDiff(uint8_t* baseline, const uint8_t* current, size_t heapSize,
+                                 std::vector<uint32_t>& indices, std::vector<uint8_t>& pageData) {
     indices.clear();
     pageData.clear();
     size_t pageCount = (heapSize + PAGE_SIZE - 1) / PAGE_SIZE;
     for (size_t i = 0; i < pageCount; i++) {
         size_t offset = i * PAGE_SIZE;
         size_t len = std::min(PAGE_SIZE, heapSize - offset);
-        if (memcmp(oldData + offset, newData + offset, len) != 0) {
+        if (memcmp(baseline + offset, current + offset, len) != 0) {
             indices.push_back(static_cast<uint32_t>(i));
             size_t pos = pageData.size();
             try {
@@ -87,7 +81,10 @@ static bool ComputePageDiff(const uint8_t* oldData, const uint8_t* newData, size
             } catch (const std::bad_alloc&) {
                 return false;
             }
-            memcpy(pageData.data() + pos, oldData + offset, len);
+            // Save old baseline page (for rewind)
+            memcpy(pageData.data() + pos, baseline + offset, len);
+            // Update baseline to current
+            memcpy(baseline + offset, current + offset, len);
         }
     }
     return true;
@@ -135,157 +132,33 @@ static void RestoreSmallState(const RewindSmallState& state) {
     Audio_Update();
 }
 
-// --- Ring buffer (shared between main thread and worker) ---
+// --- All state is main-thread-only (no worker thread) ---
 static std::deque<DiffFrame> sRewindBuffer;
-static std::mutex sBufferMutex;
 static size_t sRewindMemUsage = 0;
-
-// --- Main-thread-only state ---
 static bool sIsRewinding = false;
 static std::atomic<bool> sRewindRequested{ false };
 static int sFrameCounter = 0;
 static PlayState* sLastPlayState = nullptr;
-static std::deque<DiffFrame> sRewindLocal; // Local copy used during rewind (main thread only)
 
-// --- Worker thread (runs on Core 2) ---
-static std::thread sWorkerThread;
-static std::mutex sWorkerMutex;
-static std::condition_variable sWorkerCV;
-static std::atomic<bool> sWorkerRunning{ false };
-static std::atomic<bool> sWorkerHasPrev{ false };
-
-struct CaptureJob {
-    std::vector<uint8_t> sysHeapCopy;
-    std::vector<uint8_t> audioHeapCopy;
-    RewindSmallState smallState;
-};
-
-static CaptureJob sJobBuffer;
-static bool sJobPending = false; // Protected by sWorkerMutex
-
-// Worker-owned buffers (never accessed by main thread)
-static std::vector<uint8_t> sWorkerPrevSys;
-static std::vector<uint8_t> sWorkerPrevAudio;
-static std::vector<uint8_t> sWorkerSysCopy;
-static std::vector<uint8_t> sWorkerAudioCopy;
-static RewindSmallState sWorkerPrevSmallState;
-
-static void WorkerThreadFunc() {
-#ifdef __SWITCH__
-    Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, 2, (1U << 2));
-    if (R_FAILED(rc)) {
-        SPDLOG_WARN("[2S2H] Rewind: Failed to pin worker to Core 2 (rc=0x{:X})", rc);
-    }
-#endif
-
-    RewindSmallState capturedSmallState{};
-
-    while (sWorkerRunning.load()) {
-        {
-            std::unique_lock<std::mutex> lock(sWorkerMutex);
-            sWorkerCV.wait(lock, [] { return sJobPending || !sWorkerRunning.load(); });
-
-            if (!sWorkerRunning.load()) {
-                break;
-            }
-            if (!sJobPending) {
-                continue;
-            }
-
-            // Copy from shared job buffer into worker-owned buffers
-            try {
-                if (sWorkerSysCopy.size() != SYSTEM_HEAP_SIZE) {
-                    sWorkerSysCopy.resize(SYSTEM_HEAP_SIZE);
-                }
-                if (sWorkerAudioCopy.size() != AUDIO_HEAP_SIZE) {
-                    sWorkerAudioCopy.resize(AUDIO_HEAP_SIZE);
-                }
-            } catch (const std::bad_alloc&) {
-                sJobPending = false;
-                continue;
-            }
-            memcpy(sWorkerSysCopy.data(), sJobBuffer.sysHeapCopy.data(), SYSTEM_HEAP_SIZE);
-            memcpy(sWorkerAudioCopy.data(), sJobBuffer.audioHeapCopy.data(), AUDIO_HEAP_SIZE);
-            capturedSmallState = sJobBuffer.smallState;
-            sJobPending = false;
-        }
-
-        // First capture: store as baseline
-        if (!sWorkerHasPrev.load()) {
-            sWorkerPrevSys.swap(sWorkerSysCopy);
-            sWorkerPrevAudio.swap(sWorkerAudioCopy);
-            sWorkerPrevSmallState = capturedSmallState;
-            sWorkerHasPrev.store(true);
-            continue;
-        }
-
-        // Compute page-level diff
-        DiffFrame frame;
-        if (!ComputePageDiff(sWorkerPrevSys.data(), sWorkerSysCopy.data(), SYSTEM_HEAP_SIZE,
-                             frame.sysPageIndices, frame.sysPageData) ||
-            !ComputePageDiff(sWorkerPrevAudio.data(), sWorkerAudioCopy.data(), AUDIO_HEAP_SIZE,
-                             frame.audioPageIndices, frame.audioPageData)) {
-            continue;
-        }
-
-        frame.smallState = sWorkerPrevSmallState;
-        size_t frameBytes = frame.GetBytes();
-
-        int maxMemMB = CVarGetInteger("gCheats.RewindMaxMemoryMB", DEFAULT_MAX_MEMORY_MB);
-        maxMemMB = std::clamp(maxMemMB, MIN_MAX_MEMORY_MB, MAX_MAX_MEMORY_MB);
-        size_t maxMemBytes = static_cast<size_t>(maxMemMB) * 1024 * 1024;
-
-        if (frameBytes <= maxMemBytes) {
-            std::lock_guard<std::mutex> lock(sBufferMutex);
-            while (!sRewindBuffer.empty() && sRewindMemUsage + frameBytes > maxMemBytes) {
-                sRewindMemUsage -= sRewindBuffer.front().GetBytes();
-                sRewindBuffer.pop_front();
-            }
-            sRewindMemUsage += frameBytes;
-            sRewindBuffer.push_back(std::move(frame));
-        }
-
-        sWorkerPrevSys.swap(sWorkerSysCopy);
-        sWorkerPrevAudio.swap(sWorkerAudioCopy);
-        sWorkerPrevSmallState = capturedSmallState;
-    }
-}
-
-static void StartWorkerThread() {
-    if (sWorkerRunning.load()) {
-        return;
-    }
-    sWorkerRunning.store(true);
-    sWorkerHasPrev.store(false);
-    sWorkerThread = std::thread(WorkerThreadFunc);
-}
-
-static void StopWorkerThread() {
-    if (!sWorkerRunning.load()) {
-        return;
-    }
-    sWorkerRunning.store(false);
-    sWorkerCV.notify_one();
-    if (sWorkerThread.joinable()) {
-        sWorkerThread.join();
-    }
-}
+// Baseline snapshots for diffing (one copy of each heap, ~52 MB total)
+static std::vector<uint8_t> sBaselineSys;
+static std::vector<uint8_t> sBaselineAudio;
+static RewindSmallState sBaselineSmallState;
+static bool sHasBaseline = false;
 
 static void RewindCapture() {
     // Only capture during actual gameplay (not title screen, file select, etc.)
-    if (!gPlayState || gSaveContext.gameMode != GAMEMODE_NORMAL || GET_PLAYER(gPlayState) == NULL) {
+    if (!gPlayState || !gSystemHeap || !gAudioHeap || gSaveContext.gameMode != GAMEMODE_NORMAL ||
+        GET_PLAYER(gPlayState) == NULL) {
         return;
     }
 
     // Scene changed: flush old diffs (they belong to the previous scene's heaps)
     if (gPlayState != sLastPlayState) {
         sLastPlayState = gPlayState;
-        {
-            std::lock_guard<std::mutex> lock(sBufferMutex);
-            sRewindBuffer.clear();
-            sRewindMemUsage = 0;
-        }
-        sWorkerHasPrev.store(false);
+        sRewindBuffer.clear();
+        sRewindMemUsage = 0;
+        sHasBaseline = false;
         sFrameCounter = 0;
     }
 
@@ -297,80 +170,82 @@ static void RewindCapture() {
         return;
     }
 
-    if (!sWorkerRunning.load()) {
-        StartWorkerThread();
-    }
-
-    // Skip if worker still processing previous job
-    {
-        std::lock_guard<std::mutex> lock(sWorkerMutex);
-        if (sJobPending) {
-            return;
-        }
-    }
-
-    // Ensure persistent buffers are allocated
+    // Allocate baseline buffers on first capture
     try {
-        if (sJobBuffer.sysHeapCopy.size() != SYSTEM_HEAP_SIZE) {
-            sJobBuffer.sysHeapCopy.resize(SYSTEM_HEAP_SIZE);
+        if (sBaselineSys.size() != SYSTEM_HEAP_SIZE) {
+            sBaselineSys.resize(SYSTEM_HEAP_SIZE);
         }
-        if (sJobBuffer.audioHeapCopy.size() != AUDIO_HEAP_SIZE) {
-            sJobBuffer.audioHeapCopy.resize(AUDIO_HEAP_SIZE);
+        if (sBaselineAudio.size() != AUDIO_HEAP_SIZE) {
+            sBaselineAudio.resize(AUDIO_HEAP_SIZE);
         }
     } catch (const std::bad_alloc&) {
         return;
     }
 
-    memcpy(sJobBuffer.sysHeapCopy.data(), gSystemHeap, SYSTEM_HEAP_SIZE);
-    memcpy(sJobBuffer.audioHeapCopy.data(), gAudioHeap, AUDIO_HEAP_SIZE);
-    CaptureSmallState(sJobBuffer.smallState);
-
-    {
-        std::lock_guard<std::mutex> lock(sWorkerMutex);
-        sJobPending = true;
+    // First capture: just store baseline, no diff yet
+    if (!sHasBaseline) {
+        memcpy(sBaselineSys.data(), gSystemHeap, SYSTEM_HEAP_SIZE);
+        memcpy(sBaselineAudio.data(), gAudioHeap, AUDIO_HEAP_SIZE);
+        CaptureSmallState(sBaselineSmallState);
+        sHasBaseline = true;
+        return;
     }
-    sWorkerCV.notify_one();
+
+    // Compute page-level diff inline (compare current heap vs baseline)
+    // This also updates the baseline in-place for changed pages
+    DiffFrame frame;
+    if (!ComputeAndUpdateDiff(sBaselineSys.data(), gSystemHeap, SYSTEM_HEAP_SIZE, frame.sysPageIndices,
+                              frame.sysPageData) ||
+        !ComputeAndUpdateDiff(sBaselineAudio.data(), gAudioHeap, AUDIO_HEAP_SIZE, frame.audioPageIndices,
+                              frame.audioPageData)) {
+        return;
+    }
+
+    // Store the PREVIOUS small state (matches the old heap pages in the diff)
+    frame.smallState = sBaselineSmallState;
+    CaptureSmallState(sBaselineSmallState);
+
+    size_t frameBytes = frame.GetBytes();
+
+    int maxMemMB = CVarGetInteger("gCheats.RewindMaxMemoryMB", DEFAULT_MAX_MEMORY_MB);
+    maxMemMB = std::clamp(maxMemMB, MIN_MAX_MEMORY_MB, MAX_MAX_MEMORY_MB);
+    size_t maxMemBytes = static_cast<size_t>(maxMemMB) * 1024 * 1024;
+
+    if (frameBytes > maxMemBytes) {
+        return;
+    }
+
+    // Evict old frames to stay under memory cap
+    while (!sRewindBuffer.empty() && sRewindMemUsage + frameBytes > maxMemBytes) {
+        sRewindMemUsage -= sRewindBuffer.front().GetBytes();
+        sRewindBuffer.pop_front();
+    }
+    sRewindMemUsage += frameBytes;
+    sRewindBuffer.push_back(std::move(frame));
 }
 
-// RewindStep pops from the local buffer (no worker interaction needed)
 static bool RewindStep() {
-    if (sRewindLocal.empty()) {
+    if (sRewindBuffer.empty()) {
         return false;
     }
 
-    const DiffFrame& frame = sRewindLocal.back();
+    const DiffFrame& frame = sRewindBuffer.back();
     ApplyPageDiff(gSystemHeap, frame.sysPageIndices, frame.sysPageData, SYSTEM_HEAP_SIZE);
     ApplyPageDiff(gAudioHeap, frame.audioPageIndices, frame.audioPageData, AUDIO_HEAP_SIZE);
     RestoreSmallState(frame.smallState);
-    sRewindLocal.pop_back();
+    sRewindMemUsage -= frame.GetBytes();
+    sRewindBuffer.pop_back();
     return true;
 }
 
 static void RewindClear() {
-    StopWorkerThread();
-    {
-        std::lock_guard<std::mutex> lock(sBufferMutex);
-        sRewindBuffer.clear();
-        sRewindMemUsage = 0;
-    }
-    {
-        std::lock_guard<std::mutex> lock(sWorkerMutex);
-        sJobPending = false;
-    }
-    sJobBuffer.sysHeapCopy.clear();
-    sJobBuffer.sysHeapCopy.shrink_to_fit();
-    sJobBuffer.audioHeapCopy.clear();
-    sJobBuffer.audioHeapCopy.shrink_to_fit();
-    sWorkerPrevSys.clear();
-    sWorkerPrevSys.shrink_to_fit();
-    sWorkerPrevAudio.clear();
-    sWorkerPrevAudio.shrink_to_fit();
-    sWorkerSysCopy.clear();
-    sWorkerSysCopy.shrink_to_fit();
-    sWorkerAudioCopy.clear();
-    sWorkerAudioCopy.shrink_to_fit();
-    sWorkerHasPrev.store(false);
-    sRewindLocal.clear();
+    sRewindBuffer.clear();
+    sRewindMemUsage = 0;
+    sBaselineSys.clear();
+    sBaselineSys.shrink_to_fit();
+    sBaselineAudio.clear();
+    sBaselineAudio.shrink_to_fit();
+    sHasBaseline = false;
     sIsRewinding = false;
     sRewindRequested.store(false);
     sFrameCounter = 0;
@@ -394,27 +269,17 @@ void RegisterRewind() {
         bool dpadLeftHeld = CHECK_BTN_ALL(input->cur.button, BTN_DLEFT);
 
         if (m1Held && dpadLeftHeld) {
-            // On first rewind frame: snapshot the shared buffer into a local copy
-            // so the worker thread can't interfere during rewind
             if (!sIsRewinding) {
                 sIsRewinding = true;
-                std::lock_guard<std::mutex> lock(sBufferMutex);
-                sRewindLocal = std::move(sRewindBuffer);
-                sRewindBuffer.clear();
-                sRewindMemUsage = 0;
             }
             sRewindRequested.store(true);
             memset(input, 0, sizeof(Input));
         } else if (sIsRewinding) {
-            // Rewind released: discard everything and start fresh
+            // Rewind released: discard history and rebuild baseline
             sIsRewinding = false;
-            sRewindLocal.clear();
-            {
-                std::lock_guard<std::mutex> lock(sBufferMutex);
-                sRewindBuffer.clear();
-                sRewindMemUsage = 0;
-            }
-            sWorkerHasPrev.store(false);
+            sRewindBuffer.clear();
+            sRewindMemUsage = 0;
+            sHasBaseline = false;
         }
     });
 

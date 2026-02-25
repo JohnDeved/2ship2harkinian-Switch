@@ -8,6 +8,7 @@ void MotionBlur_RenderMenuOptions();
 #include <vector>
 
 const std::vector<const char*>* CRTFilter_GetShaderNames();
+void CRTFilter_DrawParamSliders();
 
 extern "C" {
 #endif

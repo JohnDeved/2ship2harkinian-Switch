@@ -1444,6 +1444,11 @@ void BenMenu::AddEnhancements() {
         .PreFunc([](WidgetInfo& info) {
             info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
         });
+    AddWidget(path, "CRT Shader Parameters", WIDGET_CUSTOM)
+        .CustomFunction([](WidgetInfo& info) { CRTFilter_DrawParamSliders(); })
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
+        });
 
     path = { "Enhancements", "Items/Songs", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", "Items/Songs", 3);

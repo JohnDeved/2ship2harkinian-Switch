@@ -446,6 +446,11 @@ static void EnsureFboSize(uint32_t w, uint32_t h) {
     sCrtTexHeight = h;
 }
 
+// Build a CVar name for a shader parameter value
+static std::string ParamCVarName(const std::string& shaderName, const std::string& paramName) {
+    return "gEnhancements.Graphics.CRTFilter.Params." + shaderName + "." + paramName;
+}
+
 // ---------------------------------------------------------------------------
 // Post-process callback — called from interpreter on the render thread.
 // ---------------------------------------------------------------------------
@@ -493,10 +498,13 @@ static uintptr_t CRTPostProcess(uintptr_t inputTexId, uint32_t width, uint32_t h
     if (sActiveShader.locFrameDirection >= 0)
         glUniform1i(sActiveShader.locFrameDirection, 1);
 
-    // Set all parameters to their default values
+    // Set all parameters — use CVar values (user-adjustable) falling back to defaults
     for (const auto& p : sActiveShader.params) {
-        if (p.uniformLoc >= 0)
-            glUniform1f(p.uniformLoc, p.defaultValue);
+        if (p.uniformLoc >= 0) {
+            std::string cvar = ParamCVarName(sActiveShader.name, p.name);
+            float val = CVarGetFloat(cvar.c_str(), p.defaultValue);
+            glUniform1f(p.uniformLoc, val);
+        }
     }
 
     glBindVertexArray(sCrtVao);
@@ -580,11 +588,71 @@ const std::vector<const char*>* CRTFilter_GetShaderNames() {
     return &sShaderNamePtrs;
 }
 
+void CRTFilter_DrawParamSliders() {
+    if (!CVarGetInteger(CVAR_CRT_ENABLED, 0))
+        return;
+
+    ScanShaderFiles();
+    int idx = CVarGetInteger(CVAR_CRT_SHADER, 0);
+    if (idx < 0 || idx >= (int)sShaderPaths.size())
+        return;
+
+    // Load shader to populate params if not already loaded
+    if (sCompiledShaderIndex != idx || !sActiveShader.program) {
+        // Shader not loaded yet — params will appear after first render frame.
+        // Read params directly from file instead.
+        std::ifstream f(sShaderPaths[idx]);
+        if (!f.is_open())
+            return;
+        std::string source((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        auto params = ParsePragmaParams(source);
+        if (params.empty())
+            return;
+
+        const std::string& shaderName = sShaderNames[idx];
+        ImGui::Spacing();
+        ImGui::Text("Shader Parameters (%s):", shaderName.c_str());
+        ImGui::Separator();
+        for (const auto& p : params) {
+            std::string cvar = ParamCVarName(shaderName, p.name);
+            UIWidgets::CVarSliderFloat(p.description.c_str(), cvar.c_str(),
+                                       UIWidgets::FloatSliderOptions()
+                                           .Min(p.minValue)
+                                           .Max(p.maxValue)
+                                           .Step(p.step)
+                                           .DefaultValue(p.defaultValue)
+                                           .Format("%.3f"));
+        }
+        return;
+    }
+
+    // Use the already-loaded shader's params
+    if (sActiveShader.params.empty())
+        return;
+
+    const std::string& shaderName = sActiveShader.name;
+    ImGui::Spacing();
+    ImGui::Text("Shader Parameters (%s):", shaderName.c_str());
+    ImGui::Separator();
+    for (const auto& p : sActiveShader.params) {
+        std::string cvar = ParamCVarName(shaderName, p.name);
+        UIWidgets::CVarSliderFloat(p.description.c_str(), cvar.c_str(),
+                                   UIWidgets::FloatSliderOptions()
+                                       .Min(p.minValue)
+                                       .Max(p.maxValue)
+                                       .Step(p.step)
+                                       .DefaultValue(p.defaultValue)
+                                       .Format("%.3f"));
+    }
+}
+
 #else // !ENABLE_OPENGL
 
 const std::vector<const char*>* CRTFilter_GetShaderNames() {
     static std::vector<const char*> empty;
     return &empty;
 }
+
+void CRTFilter_DrawParamSliders() {}
 
 #endif // ENABLE_OPENGL

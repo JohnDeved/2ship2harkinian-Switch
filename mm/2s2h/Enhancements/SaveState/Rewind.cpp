@@ -17,9 +17,12 @@
 extern "C" {
 #include "z64.h"
 #include "z64save.h"
+#include "system_malloc.h"
+#include "z64malloc.h"
 #include "variables.h"
 #include "functions.h"
 #include "sequence.h"
+extern Arena sZeldaArena;
 }
 
 extern "C" PlayState* gPlayState;
@@ -48,6 +51,8 @@ struct RewindSmallState {
     LightsBuffer lightBufferCopy;
     MtxF mtxStackCopy[MATRIX_STACK_SIZE];
     MtxF currentMtxCopy;
+    Arena systemArenaCopy;
+    Arena zeldaArenaCopy;
     AudioContext audioCtxCopy;
     ActiveSequence activeSeqsCopy[NUM_SEQ_PLAYERS];
 };
@@ -108,6 +113,8 @@ static void CaptureSmallState(RewindSmallState& state) {
     if (sCurrentMatrix != nullptr) {
         memcpy(&state.currentMtxCopy, sCurrentMatrix, sizeof(MtxF));
     }
+    memcpy(&state.systemArenaCopy, &gSystemArena, sizeof(Arena));
+    memcpy(&state.zeldaArenaCopy, &sZeldaArena, sizeof(Arena));
     memcpy(&state.audioCtxCopy, &gAudioCtx, sizeof(AudioContext));
     memcpy(state.activeSeqsCopy, gActiveSeqs, sizeof(ActiveSequence) * NUM_SEQ_PLAYERS);
 }
@@ -121,6 +128,8 @@ static void RestoreSmallState(const RewindSmallState& state) {
     if (sCurrentMatrix != nullptr) {
         memcpy(sCurrentMatrix, &state.currentMtxCopy, sizeof(MtxF));
     }
+    memcpy(&gSystemArena, &state.systemArenaCopy, sizeof(Arena));
+    memcpy(&sZeldaArena, &state.zeldaArenaCopy, sizeof(Arena));
     memcpy(&gAudioCtx, &state.audioCtxCopy, sizeof(AudioContext));
     memcpy(gActiveSeqs, state.activeSeqsCopy, sizeof(ActiveSequence) * NUM_SEQ_PLAYERS);
 

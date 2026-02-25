@@ -1077,6 +1077,13 @@ void BenMenu::AddEnhancements() {
         }
         ImGui::Unindent();
     });
+    AddWidget(path, "Rewind", WIDGET_CVAR_CHECKBOX)
+        .CVar("gCheats.RewindEnabled")
+        .Options(CheckboxOptions().Tooltip(
+            "Hold M1 + DPad Left to rewind gameplay.\n\n"
+            "Captures game state every 2 frames and stores page-level diffs\n"
+            "in a ring buffer (~5 seconds of history, max 64 MB).\n"
+            "Game input is suppressed while rewinding."));
     AddWidget(path, "Stop Time in Dungeons", WIDGET_CVAR_COMBOBOX)
         .CVar("gCheats.TempleTimeStop")
         .Options(

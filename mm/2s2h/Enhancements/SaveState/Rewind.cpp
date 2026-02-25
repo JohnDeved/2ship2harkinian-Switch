@@ -50,6 +50,31 @@ extern Vec3f sPlayerGetItemRefPos;
 extern PlayerModelType sPlayerLeftHandType;
 extern PlayerModelType sPlayerRightHandType;
 extern s32 D_801C0958;
+extern f32 sControlStickMagnitude;
+extern s16 sControlStickAngle;
+extern s16 sControlStickWorldYaw;
+extern s32 sUpperBodyIsBusy;
+extern FloorType sPlayerFloorType;
+extern u32 sPlayerTouchedWallFlags;
+extern ConveyorSpeed sPlayerConveyorSpeedIndex;
+extern s16 sPlayerIsOnFloorConveyor;
+extern s16 sPlayerConveyorYaw;
+extern f32 sPlayerYDistToFloor;
+extern FloorProperty sPrevFloorProperty;
+extern s32 sShapeYawToTouchedWall;
+extern s32 sWorldYawToTouchedWall;
+extern s16 sFloorPitchShape;
+extern s32 sSavedCurrentMask;
+extern Vec3f sInteractWallCheckResult;
+extern f32 D_80862B3C;
+extern FloorEffect sPlayerFloorEffect;
+extern Input* sPlayerControlInput;
+extern s32 sPlayerUseHeldItem;
+extern s32 sPlayerHeldItemButtonIsHeldDown;
+extern AdjLightSettings D_80862B50;
+extern s32 D_80862B6C;
+extern f32 sWaterSpeedFactor;
+extern f32 sInvWaterSpeedFactor;
 
 extern Arena sZeldaArena;
 }
@@ -100,6 +125,31 @@ struct RewindSmallState {
     PlayerModelType playerLeftHandTypeCopy;
     PlayerModelType playerRightHandTypeCopy;
     s32 playerModelResetFlagCopy;
+    f32 playerControlStickMagnitudeCopy;
+    s16 playerControlStickAngleCopy;
+    s16 playerControlStickWorldYawCopy;
+    s32 playerUpperBodyIsBusyCopy;
+    FloorType playerFloorTypeCopy;
+    u32 playerTouchedWallFlagsCopy;
+    ConveyorSpeed playerConveyorSpeedIndexCopy;
+    s16 playerIsOnFloorConveyorCopy;
+    s16 playerConveyorYawCopy;
+    f32 playerYDistToFloorCopy;
+    FloorProperty prevFloorPropertyCopy;
+    s32 shapeYawToTouchedWallCopy;
+    s32 worldYawToTouchedWallCopy;
+    s16 floorPitchShapeCopy;
+    s32 savedCurrentMaskCopy;
+    Vec3f interactWallCheckResultCopy;
+    f32 playerInteractWallDistCopy;
+    FloorEffect playerFloorEffectCopy;
+    Input* playerControlInputCopy;
+    s32 playerUseHeldItemCopy;
+    s32 playerHeldItemButtonIsHeldDownCopy;
+    AdjLightSettings playerAdjLightSettingsCopy;
+    s32 playerSkelMoveFlagsCopy;
+    f32 waterSpeedFactorCopy;
+    f32 invWaterSpeedFactorCopy;
 };
 
 struct DiffFrame {
@@ -178,6 +228,31 @@ static void CaptureSmallState(RewindSmallState& state) {
     state.playerLeftHandTypeCopy = sPlayerLeftHandType;
     state.playerRightHandTypeCopy = sPlayerRightHandType;
     state.playerModelResetFlagCopy = D_801C0958;
+    state.playerControlStickMagnitudeCopy = sControlStickMagnitude;
+    state.playerControlStickAngleCopy = sControlStickAngle;
+    state.playerControlStickWorldYawCopy = sControlStickWorldYaw;
+    state.playerUpperBodyIsBusyCopy = sUpperBodyIsBusy;
+    state.playerFloorTypeCopy = sPlayerFloorType;
+    state.playerTouchedWallFlagsCopy = sPlayerTouchedWallFlags;
+    state.playerConveyorSpeedIndexCopy = sPlayerConveyorSpeedIndex;
+    state.playerIsOnFloorConveyorCopy = sPlayerIsOnFloorConveyor;
+    state.playerConveyorYawCopy = sPlayerConveyorYaw;
+    state.playerYDistToFloorCopy = sPlayerYDistToFloor;
+    state.prevFloorPropertyCopy = sPrevFloorProperty;
+    state.shapeYawToTouchedWallCopy = sShapeYawToTouchedWall;
+    state.worldYawToTouchedWallCopy = sWorldYawToTouchedWall;
+    state.floorPitchShapeCopy = sFloorPitchShape;
+    state.savedCurrentMaskCopy = sSavedCurrentMask;
+    memcpy(&state.interactWallCheckResultCopy, &sInteractWallCheckResult, sizeof(Vec3f));
+    state.playerInteractWallDistCopy = D_80862B3C;
+    state.playerFloorEffectCopy = sPlayerFloorEffect;
+    state.playerControlInputCopy = sPlayerControlInput;
+    state.playerUseHeldItemCopy = sPlayerUseHeldItem;
+    state.playerHeldItemButtonIsHeldDownCopy = sPlayerHeldItemButtonIsHeldDown;
+    memcpy(&state.playerAdjLightSettingsCopy, &D_80862B50, sizeof(AdjLightSettings));
+    state.playerSkelMoveFlagsCopy = D_80862B6C;
+    state.waterSpeedFactorCopy = sWaterSpeedFactor;
+    state.invWaterSpeedFactorCopy = sInvWaterSpeedFactor;
 }
 
 static void RestoreSmallState(const RewindSmallState& state) {
@@ -209,6 +284,31 @@ static void RestoreSmallState(const RewindSmallState& state) {
     sPlayerLeftHandType = state.playerLeftHandTypeCopy;
     sPlayerRightHandType = state.playerRightHandTypeCopy;
     D_801C0958 = state.playerModelResetFlagCopy;
+    sControlStickMagnitude = state.playerControlStickMagnitudeCopy;
+    sControlStickAngle = state.playerControlStickAngleCopy;
+    sControlStickWorldYaw = state.playerControlStickWorldYawCopy;
+    sUpperBodyIsBusy = state.playerUpperBodyIsBusyCopy;
+    sPlayerFloorType = state.playerFloorTypeCopy;
+    sPlayerTouchedWallFlags = state.playerTouchedWallFlagsCopy;
+    sPlayerConveyorSpeedIndex = state.playerConveyorSpeedIndexCopy;
+    sPlayerIsOnFloorConveyor = state.playerIsOnFloorConveyorCopy;
+    sPlayerConveyorYaw = state.playerConveyorYawCopy;
+    sPlayerYDistToFloor = state.playerYDistToFloorCopy;
+    sPrevFloorProperty = state.prevFloorPropertyCopy;
+    sShapeYawToTouchedWall = state.shapeYawToTouchedWallCopy;
+    sWorldYawToTouchedWall = state.worldYawToTouchedWallCopy;
+    sFloorPitchShape = state.floorPitchShapeCopy;
+    sSavedCurrentMask = state.savedCurrentMaskCopy;
+    memcpy(&sInteractWallCheckResult, &state.interactWallCheckResultCopy, sizeof(Vec3f));
+    D_80862B3C = state.playerInteractWallDistCopy;
+    sPlayerFloorEffect = state.playerFloorEffectCopy;
+    sPlayerControlInput = state.playerControlInputCopy;
+    sPlayerUseHeldItem = state.playerUseHeldItemCopy;
+    sPlayerHeldItemButtonIsHeldDown = state.playerHeldItemButtonIsHeldDownCopy;
+    memcpy(&D_80862B50, &state.playerAdjLightSettingsCopy, sizeof(AdjLightSettings));
+    D_80862B6C = state.playerSkelMoveFlagsCopy;
+    sWaterSpeedFactor = state.waterSpeedFactorCopy;
+    sInvWaterSpeedFactor = state.invWaterSpeedFactorCopy;
 
     if (gPlayState != nullptr) {
         gPlayState->pauseCtx.state = 0;
@@ -233,6 +333,56 @@ static std::vector<uint8_t> sBaselineSys;
 static std::vector<uint8_t> sBaselineAudio;
 static RewindSmallState sBaselineSmallState;
 static bool sHasBaseline = false;
+
+// When rewind is released mid-buffer, new captures append after old history.
+// This snapshot ensures we can restore an exact branch handoff state before
+// crossing from appended frames back into older preserved frames.
+static std::vector<uint8_t> sBranchBoundarySys;
+static std::vector<uint8_t> sBranchBoundaryAudio;
+static RewindSmallState sBranchBoundarySmallState;
+static bool sHasBranchBoundary = false;
+static size_t sBranchBoundarySplit = 0;
+
+static void ResetBranchBoundary() {
+    sHasBranchBoundary = false;
+    sBranchBoundarySplit = 0;
+}
+
+static void CaptureBranchBoundary(size_t splitIndex) {
+    if (splitIndex == 0 || !gSystemHeap || !gAudioHeap) {
+        ResetBranchBoundary();
+        return;
+    }
+
+    try {
+        if (sBranchBoundarySys.size() != SYSTEM_HEAP_SIZE) {
+            sBranchBoundarySys.resize(SYSTEM_HEAP_SIZE);
+        }
+        if (sBranchBoundaryAudio.size() != AUDIO_HEAP_SIZE) {
+            sBranchBoundaryAudio.resize(AUDIO_HEAP_SIZE);
+        }
+    } catch (const std::bad_alloc&) {
+        ResetBranchBoundary();
+        return;
+    }
+
+    memcpy(sBranchBoundarySys.data(), gSystemHeap, SYSTEM_HEAP_SIZE);
+    memcpy(sBranchBoundaryAudio.data(), gAudioHeap, AUDIO_HEAP_SIZE);
+    CaptureSmallState(sBranchBoundarySmallState);
+    sBranchBoundarySplit = splitIndex;
+    sHasBranchBoundary = true;
+}
+
+static void RestoreBranchBoundary() {
+    if (!sHasBranchBoundary || !gSystemHeap || !gAudioHeap || sBranchBoundarySys.size() != SYSTEM_HEAP_SIZE ||
+        sBranchBoundaryAudio.size() != AUDIO_HEAP_SIZE) {
+        return;
+    }
+
+    memcpy(gSystemHeap, sBranchBoundarySys.data(), SYSTEM_HEAP_SIZE);
+    memcpy(gAudioHeap, sBranchBoundaryAudio.data(), AUDIO_HEAP_SIZE);
+    RestoreSmallState(sBranchBoundarySmallState);
+}
 
 // ImGui progress bar overlay shown during rewind
 class RewindOverlay : public Ship::GuiWindow {
@@ -306,6 +456,7 @@ static void RewindCapture() {
         sRewindBuffer.clear();
         sRewindMemUsage = 0;
         sHasBaseline = false;
+        ResetBranchBoundary();
         sFrameCounter = 0;
         sRewindTotalFrames = 0;
         sRewindPosition = 0;
@@ -366,6 +517,12 @@ static void RewindCapture() {
     while (!sRewindBuffer.empty() && sRewindMemUsage + frameBytes > maxMemBytes) {
         sRewindMemUsage -= sRewindBuffer.front().GetBytes();
         sRewindBuffer.pop_front();
+        if (sHasBranchBoundary && sBranchBoundarySplit > 0) {
+            sBranchBoundarySplit--;
+            if (sBranchBoundarySplit == 0) {
+                ResetBranchBoundary();
+            }
+        }
     }
     sRewindMemUsage += frameBytes;
     sRewindBuffer.push_back(std::move(frame));
@@ -385,6 +542,11 @@ static void RewindApply() {
     Input savedInput[MAXCONTROLLERS];
     if (gPlayState) {
         memcpy(savedInput, gPlayState->state.input, sizeof(savedInput));
+    }
+
+    if (sHasBranchBoundary && sBranchBoundarySplit > 0 && sRewindBuffer.size() == sBranchBoundarySplit) {
+        RestoreBranchBoundary();
+        ResetBranchBoundary();
     }
 
     // Apply the back frame (most recent diff) to step back one capture
@@ -412,6 +574,11 @@ static void RewindClear() {
     sBaselineAudio.clear();
     sBaselineAudio.shrink_to_fit();
     sHasBaseline = false;
+    ResetBranchBoundary();
+    sBranchBoundarySys.clear();
+    sBranchBoundarySys.shrink_to_fit();
+    sBranchBoundaryAudio.clear();
+    sBranchBoundaryAudio.shrink_to_fit();
     sIsRewinding = false;
     sRewindRequested.store(false);
     sFrameCounter = 0;
@@ -463,6 +630,9 @@ void RegisterRewind() {
                 memcpy(sBaselineSys.data(), gSystemHeap, SYSTEM_HEAP_SIZE);
                 memcpy(sBaselineAudio.data(), gAudioHeap, AUDIO_HEAP_SIZE);
                 CaptureSmallState(sBaselineSmallState);
+                CaptureBranchBoundary(sRewindBuffer.size());
+            } else {
+                ResetBranchBoundary();
             }
         }
     });

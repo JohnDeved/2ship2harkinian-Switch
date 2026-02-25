@@ -1034,6 +1034,9 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Climb Anywhere", WIDGET_CVAR_CHECKBOX)
         .CVar("gCheats.ClimbAnywhere")
         .Options(CheckboxOptions().Tooltip("Allows climbing on most walls regardless of vines."));
+    AddWidget(path, "Save States", WIDGET_CVAR_CHECKBOX)
+        .CVar("gSaveStatesEnabled")
+        .Options(CheckboxOptions().Tooltip("Enable save states. F5 to save, F6 to cycle slot, F7 to load."));
     AddWidget(path, "Stop Time in Dungeons", WIDGET_CVAR_COMBOBOX)
         .CVar("gCheats.TempleTimeStop")
         .Options(

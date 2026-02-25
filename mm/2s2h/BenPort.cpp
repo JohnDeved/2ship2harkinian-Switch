@@ -27,6 +27,8 @@
 #include <nlohmann/json.hpp>
 #include "build.h"
 
+#include "2s2h/Enhancements/SaveState/SaveState.h"
+
 #include <fast/interpreter.h>
 #include <fast/backends/gfx_rendering_api.h>
 
@@ -313,7 +315,7 @@ OTRGlobals::OTRGlobals() {
     loader->RegisterResourceFactory(std::make_shared<SOH::ResourceFactoryBinaryKeyFrameSkel>(), RESOURCE_FORMAT_BINARY,
                                     "KeyFrameSkel", static_cast<uint32_t>(SOH::ResourceType::TSH_CKeyFrameSkel), 0);
 
-    // gSaveStateMgr = std::make_shared<SaveStateMgr>();
+    gSaveStateMgr = std::make_shared<SaveStateMgr>();
     // gRandomizer = std::make_shared<Randomizer>();
 
     auto versions = context->GetResourceManager()->GetArchiveManager()->GetGameVersions();
@@ -864,7 +866,6 @@ extern "C" void Graph_StartFrame() {
     OTRGlobals::Instance->context->GetWindow()->SetLastScancode(-1);
 
     switch (dwScancode) {
-#if 0
         case KbScancode::LUS_KB_F5: {
             if (CVarGetInteger("gSaveStatesEnabled", 0) == 0) {
                 Ship::Context::GetInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
@@ -877,10 +878,10 @@ extern "C" void Graph_StartFrame() {
 
             switch (stateReturn) {
                 case SaveStateReturn::SUCCESS:
-                    SPDLOG_INFO("[SOH] Saved state to slot {}", slot);
+                    SPDLOG_INFO("[2S2H] Saved state to slot {}", slot);
                     break;
                 case SaveStateReturn::FAIL_WRONG_GAMESTATE:
-                    SPDLOG_ERROR("[SOH] Can not save a state outside of \"GamePlay\"");
+                    SPDLOG_ERROR("[2S2H] Can not save a state outside of \"GamePlay\"");
                     break;
                     [[unlikely]] default : break;
             }
@@ -898,6 +899,8 @@ extern "C" void Graph_StartFrame() {
                 slot = 0;
             }
             OTRGlobals::Instance->gSaveStateMgr->SetCurrentSlot(slot);
+            Ship::Context::GetInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
+                1.0f, true, "state slot set to %u", slot);
             SPDLOG_INFO("Set SaveState slot to {}.", slot);
             break;
         }
@@ -913,23 +916,22 @@ extern "C" void Graph_StartFrame() {
 
             switch (stateReturn) {
                 case SaveStateReturn::SUCCESS:
-                    SPDLOG_INFO("[SOH] Loaded state from slot {}", slot);
+                    SPDLOG_INFO("[2S2H] Loaded state from slot {}", slot);
                     break;
                 case SaveStateReturn::FAIL_INVALID_SLOT:
-                    SPDLOG_ERROR("[SOH] Invalid State Slot Number {}", slot);
+                    SPDLOG_ERROR("[2S2H] Invalid State Slot Number {}", slot);
                     break;
                 case SaveStateReturn::FAIL_STATE_EMPTY:
-                    SPDLOG_ERROR("[SOH] State Slot {} is empty", slot);
+                    SPDLOG_ERROR("[2S2H] State Slot {} is empty", slot);
                     break;
                 case SaveStateReturn::FAIL_WRONG_GAMESTATE:
-                    SPDLOG_ERROR("[SOH] Can not load a state outside of \"GamePlay\"");
+                    SPDLOG_ERROR("[2S2H] Can not load a state outside of \"GamePlay\"");
                     break;
                     [[unlikely]] default : break;
             }
 
             break;
         }
-#endif
 #if defined(_WIN32) || defined(__APPLE__)
         case KbScancode::LUS_KB_F9: {
             // Toggle TTS

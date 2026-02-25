@@ -63,21 +63,17 @@
 
 // Simple full-screen triangle vertex shader (shared by all effects)
 static const char* sVertexShaderSrc =
-    PP_GLSL_VERSION
-    PP_ATTR_OUT " vec2 vTexCoord;\n"
-    "void main() {\n"
-    "    float x = float(gl_VertexID & 1) * 4.0 - 1.0;\n"
-    "    float y = float((gl_VertexID >> 1) & 1) * 4.0 - 1.0;\n"
-    "    vTexCoord = vec2(x * 0.5 + 0.5, y * 0.5 + 0.5);\n"
-    "    gl_Position = vec4(x, y, 0.0, 1.0);\n"
-    "}\n";
+    PP_GLSL_VERSION PP_ATTR_OUT " vec2 vTexCoord;\n"
+                                "void main() {\n"
+                                "    float x = float(gl_VertexID & 1) * 4.0 - 1.0;\n"
+                                "    float y = float((gl_VertexID >> 1) & 1) * 4.0 - 1.0;\n"
+                                "    vTexCoord = vec2(x * 0.5 + 0.5, y * 0.5 + 0.5);\n"
+                                "    gl_Position = vec4(x, y, 0.0, 1.0);\n"
+                                "}\n";
 
 // FXAA fragment shader (FXAA 3.11 quality preset, adapted for portability)
-static const char* sFxaaFragSrc =
-    PP_GLSL_VERSION
-    PP_ATTR_IN " vec2 vTexCoord;\n"
-    PP_FRAG_OUT
-    "uniform sampler2D uTexture;\n"
+static const char* sFxaaFragSrc = PP_GLSL_VERSION PP_ATTR_IN
+    " vec2 vTexCoord;\n" PP_FRAG_OUT "uniform sampler2D uTexture;\n"
     "uniform vec2 uTexelSize;\n"
     "void main() {\n"
     "    vec3 rgbNW = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord + vec2(-1.0, -1.0) * uTexelSize).rgb;\n"
@@ -119,11 +115,8 @@ static const char* sFxaaFragSrc =
     "}\n";
 
 // CAS (Contrast Adaptive Sharpening) fragment shader - based on AMD FidelityFX CAS
-static const char* sCasFragSrc =
-    PP_GLSL_VERSION
-    PP_ATTR_IN " vec2 vTexCoord;\n"
-    PP_FRAG_OUT
-    "uniform sampler2D uTexture;\n"
+static const char* sCasFragSrc = PP_GLSL_VERSION PP_ATTR_IN
+    " vec2 vTexCoord;\n" PP_FRAG_OUT "uniform sampler2D uTexture;\n"
     "uniform vec2 uTexelSize;\n"
     "uniform float uSharpness;\n"
     "void main() {\n"
@@ -145,18 +138,15 @@ static const char* sCasFragSrc =
 
 // Vignette fragment shader
 static const char* sVignetteFragSrc =
-    PP_GLSL_VERSION
-    PP_ATTR_IN " vec2 vTexCoord;\n"
-    PP_FRAG_OUT
-    "uniform sampler2D uTexture;\n"
-    "uniform float uStrength;\n"
-    "void main() {\n"
-    "    vec4 color = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord);\n"
-    "    vec2 uv = vTexCoord * 2.0 - 1.0;\n"
-    "    float vignette = 1.0 - dot(uv, uv) * uStrength;\n"
-    "    color.rgb *= clamp(vignette, 0.0, 1.0);\n"
-    "    " PP_FRAG_COLOR " = color;\n"
-    "}\n";
+    PP_GLSL_VERSION PP_ATTR_IN " vec2 vTexCoord;\n" PP_FRAG_OUT "uniform sampler2D uTexture;\n"
+                               "uniform float uStrength;\n"
+                               "void main() {\n"
+                               "    vec4 color = " PP_GLSL_TEXFUNC "(uTexture, vTexCoord);\n"
+                               "    vec2 uv = vTexCoord * 2.0 - 1.0;\n"
+                               "    float vignette = 1.0 - dot(uv, uv) * uStrength;\n"
+                               "    color.rgb *= clamp(vignette, 0.0, 1.0);\n"
+                               "    " PP_FRAG_COLOR " = color;\n"
+                               "}\n";
 
 // ─── GL resource management ─────────────────────────────────────────────────
 
@@ -198,9 +188,13 @@ static GLuint CompileShader(GLenum type, const char* src) {
 
 static bool LinkProgram(PostProcessPass& pass, const char* fragSrc) {
     GLuint vs = CompileShader(GL_VERTEX_SHADER, sVertexShaderSrc);
-    if (!vs) return false;
+    if (!vs)
+        return false;
     GLuint fs = CompileShader(GL_FRAGMENT_SHADER, fragSrc);
-    if (!fs) { glDeleteShader(vs); return false; }
+    if (!fs) {
+        glDeleteShader(vs);
+        return false;
+    }
 
     pass.program = glCreateProgram();
     glAttachShader(pass.program, vs);
@@ -248,7 +242,8 @@ static void EnsureTextures(uint32_t width, uint32_t height) {
 }
 
 static void InitGL() {
-    if (sState.initialized) return;
+    if (sState.initialized)
+        return;
 
     glGenVertexArrays(1, &sState.vao);
     glGenFramebuffers(1, &sState.fbo);
@@ -262,20 +257,33 @@ static void InitGL() {
 }
 
 static void CleanupGL() {
-    if (!sState.initialized) return;
+    if (!sState.initialized)
+        return;
 
     auto deletePass = [](PostProcessPass& p) {
-        if (p.program) { glDeleteProgram(p.program); p.program = 0; }
+        if (p.program) {
+            glDeleteProgram(p.program);
+            p.program = 0;
+        }
     };
     deletePass(sState.fxaa);
     deletePass(sState.cas);
     deletePass(sState.vignette);
 
     for (int i = 0; i < 2; i++) {
-        if (sState.textures[i]) { glDeleteTextures(1, &sState.textures[i]); sState.textures[i] = 0; }
+        if (sState.textures[i]) {
+            glDeleteTextures(1, &sState.textures[i]);
+            sState.textures[i] = 0;
+        }
     }
-    if (sState.fbo) { glDeleteFramebuffers(1, &sState.fbo); sState.fbo = 0; }
-    if (sState.vao) { glDeleteVertexArrays(1, &sState.vao); sState.vao = 0; }
+    if (sState.fbo) {
+        glDeleteFramebuffers(1, &sState.fbo);
+        sState.fbo = 0;
+    }
+    if (sState.vao) {
+        glDeleteVertexArrays(1, &sState.vao);
+        sState.vao = 0;
+    }
     sState.texWidth = 0;
     sState.texHeight = 0;
     sState.initialized = false;
@@ -283,8 +291,8 @@ static void CleanupGL() {
 }
 
 // Renders a full-screen pass: binds inputTex, renders into outputTex via FBO
-static void RenderPass(const PostProcessPass& pass, GLuint inputTex, GLuint outputTex,
-                        uint32_t width, uint32_t height) {
+static void RenderPass(const PostProcessPass& pass, GLuint inputTex, GLuint outputTex, uint32_t width,
+                       uint32_t height) {
     glBindFramebuffer(GL_FRAMEBUFFER, sState.fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, outputTex, 0);
     glViewport(0, 0, width, height);
@@ -292,8 +300,10 @@ static void RenderPass(const PostProcessPass& pass, GLuint inputTex, GLuint outp
     glUseProgram(pass.program);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, inputTex);
-    if (pass.texLoc >= 0) glUniform1i(pass.texLoc, 0);
-    if (pass.texelSizeLoc >= 0) glUniform2f(pass.texelSizeLoc, 1.0f / width, 1.0f / height);
+    if (pass.texLoc >= 0)
+        glUniform1i(pass.texLoc, 0);
+    if (pass.texelSizeLoc >= 0)
+        glUniform2f(pass.texelSizeLoc, 1.0f / width, 1.0f / height);
 
     glBindVertexArray(sState.vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -346,7 +356,8 @@ static uintptr_t PostProcessCallback(uintptr_t texId, uint32_t width, uint32_t h
     if (casEnabled && sState.cas.program) {
         float sharpness = CVarGetFloat(CVAR_PP_CAS_STRENGTH, 0.5f);
         glUseProgram(sState.cas.program);
-        if (sState.cas.sharpnessLoc >= 0) glUniform1f(sState.cas.sharpnessLoc, sharpness);
+        if (sState.cas.sharpnessLoc >= 0)
+            glUniform1f(sState.cas.sharpnessLoc, sharpness);
         GLuint outputTex = sState.textures[pingPongIdx];
         RenderPass(sState.cas, currentTex, outputTex, width, height);
         currentTex = outputTex;
@@ -356,7 +367,8 @@ static uintptr_t PostProcessCallback(uintptr_t texId, uint32_t width, uint32_t h
     if (vignetteEnabled && sState.vignette.program) {
         float strength = CVarGetFloat(CVAR_PP_VIGNETTE_STRENGTH, 0.5f);
         glUseProgram(sState.vignette.program);
-        if (sState.vignette.strengthLoc >= 0) glUniform1f(sState.vignette.strengthLoc, strength);
+        if (sState.vignette.strengthLoc >= 0)
+            glUniform1f(sState.vignette.strengthLoc, strength);
         GLuint outputTex = sState.textures[pingPongIdx];
         RenderPass(sState.vignette, currentTex, outputTex, width, height);
         currentTex = outputTex;
@@ -372,8 +384,14 @@ static uintptr_t PostProcessCallback(uintptr_t texId, uint32_t width, uint32_t h
 #endif
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, prevTex);
-    if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
-    if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    if (prevDepthTest)
+        glEnable(GL_DEPTH_TEST);
+    else
+        glDisable(GL_DEPTH_TEST);
+    if (prevBlend)
+        glEnable(GL_BLEND);
+    else
+        glDisable(GL_BLEND);
 
     return (uintptr_t)currentTex;
 }
@@ -381,16 +399,17 @@ static uintptr_t PostProcessCallback(uintptr_t texId, uint32_t width, uint32_t h
 // ─── Registration ───────────────────────────────────────────────────────────
 
 static bool IsAnyEffectEnabled() {
-    return CVarGetInteger(CVAR_PP_FXAA, 0) != 0 ||
-           CVarGetInteger(CVAR_PP_CAS, 0) != 0 ||
+    return CVarGetInteger(CVAR_PP_FXAA, 0) != 0 || CVarGetInteger(CVAR_PP_CAS, 0) != 0 ||
            CVarGetInteger(CVAR_PP_VIGNETTE, 0) != 0;
 }
 
 static void RegisterPostProcess() {
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
-    if (!wnd) return;
+    if (!wnd)
+        return;
     auto interp = wnd->GetInterpreterWeak().lock();
-    if (!interp) return;
+    if (!interp)
+        return;
 
     if (IsAnyEffectEnabled()) {
         interp->SetPostProcessCallback(PostProcessCallback);
@@ -400,35 +419,38 @@ static void RegisterPostProcess() {
     }
 }
 
-static RegisterShipInitFunc initFunc(RegisterPostProcess,
-    { CVAR_PP_FXAA, CVAR_PP_CAS, CVAR_PP_CAS_STRENGTH, CVAR_PP_VIGNETTE, CVAR_PP_VIGNETTE_STRENGTH });
+static RegisterShipInitFunc initFunc(RegisterPostProcess, { CVAR_PP_FXAA, CVAR_PP_CAS, CVAR_PP_CAS_STRENGTH,
+                                                            CVAR_PP_VIGNETTE, CVAR_PP_VIGNETTE_STRENGTH });
 
 // ─── Menu UI ────────────────────────────────────────────────────────────────
 
 void PostProcess_RenderMenuOptions() {
     ImGui::SeparatorText("Post-Processing (ReShade)");
-    UIWidgets::CVarCheckbox("FXAA Anti-Aliasing", CVAR_PP_FXAA,
+    UIWidgets::CVarCheckbox(
+        "FXAA Anti-Aliasing", CVAR_PP_FXAA,
         UIWidgets::CheckboxOptions().Tooltip("Fast Approximate Anti-Aliasing. Smooths jagged edges."));
     UIWidgets::CVarCheckbox("CAS Sharpening", CVAR_PP_CAS,
-        UIWidgets::CheckboxOptions().Tooltip(
-            "Contrast Adaptive Sharpening (AMD FidelityFX CAS). Enhances image clarity."));
+                            UIWidgets::CheckboxOptions().Tooltip(
+                                "Contrast Adaptive Sharpening (AMD FidelityFX CAS). Enhances image clarity."));
     if (CVarGetInteger(CVAR_PP_CAS, 0)) {
         UIWidgets::CVarSliderFloat("CAS Strength: %.2f", CVAR_PP_CAS_STRENGTH,
-            UIWidgets::FloatSliderOptions().Min(0.0f).Max(1.0f).DefaultValue(0.5f)
-                .Tooltip("How strong the sharpening effect is. 0 = subtle, 1 = maximum."));
+                                   UIWidgets::FloatSliderOptions().Min(0.0f).Max(1.0f).DefaultValue(0.5f).Tooltip(
+                                       "How strong the sharpening effect is. 0 = subtle, 1 = maximum."));
     }
-    UIWidgets::CVarCheckbox("Vignette", CVAR_PP_VIGNETTE,
+    UIWidgets::CVarCheckbox(
+        "Vignette", CVAR_PP_VIGNETTE,
         UIWidgets::CheckboxOptions().Tooltip("Darkens the edges of the screen for a cinematic effect."));
     if (CVarGetInteger(CVAR_PP_VIGNETTE, 0)) {
         UIWidgets::CVarSliderFloat("Vignette Strength: %.2f", CVAR_PP_VIGNETTE_STRENGTH,
-            UIWidgets::FloatSliderOptions().Min(0.1f).Max(1.5f).DefaultValue(0.5f)
-                .Tooltip("How strong the vignette darkening is."));
+                                   UIWidgets::FloatSliderOptions().Min(0.1f).Max(1.5f).DefaultValue(0.5f).Tooltip(
+                                       "How strong the vignette darkening is."));
     }
 }
 
 #else // !ENABLE_OPENGL
 
 #include "PostProcess.h"
-void PostProcess_RenderMenuOptions() {}
+void PostProcess_RenderMenuOptions() {
+}
 
 #endif // ENABLE_OPENGL

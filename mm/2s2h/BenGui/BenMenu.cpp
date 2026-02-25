@@ -1432,11 +1432,13 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Graphics.CRTFilter.Enabled")
         .Options(CheckboxOptions().Tooltip(
             "Applies a CRT display effect using RetroArch GLSL shaders.\n"
-            "Shaders are loaded from the glsl-shaders/crt/shaders/ directory."));
+            "Shaders are loaded from the glsl-shaders/crt/shaders/ directory.\n"
+            "Press L + ZL during gameplay to quickly cycle shaders."));
     AddWidget(path, "CRT Shader", WIDGET_CVAR_COMBOBOX)
         .CVar("gEnhancements.Graphics.CRTFilter.Shader")
         .Options(ComboboxOptions()
-                     .Tooltip("Select which CRT shader to use. Change takes effect immediately.")
+                     .Tooltip("Select which CRT shader to use. Change takes effect immediately.\n"
+                              "Press L + ZL during gameplay to quickly cycle through shaders.")
                      .ComboVec(CRTFilter_GetShaderNames())
                      .DefaultIndex(0))
         .PreFunc([](WidgetInfo& info) {

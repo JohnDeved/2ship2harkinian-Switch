@@ -22,11 +22,17 @@
 #include <vector>
 
 #include <libultraship/bridge/consolevariablebridge.h>
+#include "2s2h/BenGui/Notification.h"
 #include "2s2h/BenGui/UIWidgets.hpp"
+#include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
 #include "fast/backends/gfx_opengl.h"
 #include "fast/Fast3dWindow.h"
 #include "ship/Context.h"
+
+extern "C" {
+#include "variables.h"
+}
 
 // ---------------------------------------------------------------------------
 // CVars
@@ -506,6 +512,31 @@ static uintptr_t CRTPostProcess(uintptr_t inputTexId, uint32_t width, uint32_t h
 }
 
 // ---------------------------------------------------------------------------
+// L+ZL quick shader cycling
+// ---------------------------------------------------------------------------
+static void CycleShaderNext() {
+    ScanShaderFiles();
+    if (sShaderPaths.empty())
+        return;
+
+    int current = CVarGetInteger(CVAR_CRT_SHADER, 0);
+    int next = (current + 1) % (int)sShaderPaths.size();
+    CVarSetInteger(CVAR_CRT_SHADER, next);
+    Ship::Context::GetInstance()->GetConsoleVariables()->Save();
+
+    // Show notification with shader name
+    Notification::Options notif = {};
+    notif.prefix = "CRT Shader:";
+    notif.prefixColor = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);
+    notif.message = (next < (int)sShaderNames.size()) ? sShaderNames[next] : "Unknown";
+    notif.messageColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+    notif.suffix = "(" + std::to_string(next + 1) + "/" + std::to_string(sShaderPaths.size()) + ")";
+    notif.suffixColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+    notif.remainingTime = 3.0f;
+    Notification::Emit(notif);
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 static RegisterShipInitFunc initFunc(
@@ -516,11 +547,30 @@ static RegisterShipInitFunc initFunc(
         if (wnd) {
             auto interp = wnd->GetInterpreterWeak().lock();
             if (interp) {
-                interp->SetPostProcessCallback(CRTPostProcess);
+                // Set or clear the callback based on CVar state.
+                // When disabled, clearing the callback also avoids forcing
+                // mRendersToFb in the interpreter (no unnecessary FBO pass).
+                if (CVarGetInteger(CVAR_CRT_ENABLED, 0)) {
+                    interp->SetPostProcessCallback(CRTPostProcess);
+                } else {
+                    interp->SetPostProcessCallback(nullptr);
+                }
             }
         }
+
+        // L+ZL quick shader cycle (OnGameStateUpdate runs every frame)
+        COND_HOOK(OnGameStateUpdate, CVarGetInteger(CVAR_CRT_ENABLED, 0), []() {
+            if (!gPlayState)
+                return;
+            static bool sPrevComboHeld = false;
+            bool comboHeld = CHECK_BTN_ALL(gPlayState->state.input[0].cur.button, BTN_L | BTN_Z);
+            if (comboHeld && !sPrevComboHeld) {
+                CycleShaderNext();
+            }
+            sPrevComboHeld = comboHeld;
+        });
     },
-    {});
+    { CVAR_CRT_ENABLED });
 
 // ---------------------------------------------------------------------------
 // Public API for BenMenu

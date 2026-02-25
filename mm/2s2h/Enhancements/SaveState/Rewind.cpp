@@ -315,10 +315,6 @@ static void RewindCapture() {
 
 // Apply the most recent diff frame for one rewind step, then pop it.
 static void RewindApply() {
-    if (IsPlayerInFormTransition()) {
-        return;
-    }
-
     if (sRewindBuffer.empty()) {
         Ship::Context::GetInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
             1.0f, true, "rewind buffer empty");

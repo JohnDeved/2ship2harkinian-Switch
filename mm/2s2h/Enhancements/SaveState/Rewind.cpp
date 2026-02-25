@@ -138,6 +138,7 @@ static size_t sRewindMemUsage = 0;
 static bool sIsRewinding = false;
 static std::atomic<bool> sRewindRequested{ false };
 static int sFrameCounter = 0;
+static int sRewindStepCounter = 0;
 static PlayState* sLastPlayState = nullptr;
 
 // Baseline snapshots for diffing (one copy of each heap, ~52 MB total)
@@ -224,18 +225,32 @@ static void RewindCapture() {
     sRewindBuffer.push_back(std::move(frame));
 }
 
-static bool RewindStep() {
+// Apply current back frame to freeze game state, advancing to next diff every captureInterval frames.
+// This matches rewind consumption rate to capture rate so the buffer doesn't drain instantly.
+static void RewindApply() {
     if (sRewindBuffer.empty()) {
-        return false;
+        Ship::Context::GetInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
+            1.0f, true, "rewind buffer empty");
+        return;
     }
 
+    int captureInterval = CVarGetInteger("gCheats.RewindCaptureInterval", DEFAULT_CAPTURE_INTERVAL);
+    captureInterval = std::clamp(captureInterval, 1, 30);
+
+    // Advance to next diff every captureInterval frames (matching capture rate)
+    sRewindStepCounter++;
+    if (sRewindStepCounter >= captureInterval && sRewindBuffer.size() > 1) {
+        sRewindStepCounter = 0;
+        sRewindMemUsage -= sRewindBuffer.back().GetBytes();
+        sRewindBuffer.pop_back();
+    }
+
+    // Re-apply current back frame every frame to prevent game-state drift
+    // (the game loop still runs with zeroed input between rewind steps)
     const DiffFrame& frame = sRewindBuffer.back();
     ApplyPageDiff(gSystemHeap, frame.sysPageIndices, frame.sysPageData, SYSTEM_HEAP_SIZE);
     ApplyPageDiff(gAudioHeap, frame.audioPageIndices, frame.audioPageData, AUDIO_HEAP_SIZE);
     RestoreSmallState(frame.smallState);
-    sRewindMemUsage -= frame.GetBytes();
-    sRewindBuffer.pop_back();
-    return true;
 }
 
 static void RewindClear() {
@@ -249,6 +264,7 @@ static void RewindClear() {
     sIsRewinding = false;
     sRewindRequested.store(false);
     sFrameCounter = 0;
+    sRewindStepCounter = 0;
     sLastPlayState = nullptr;
 }
 
@@ -271,6 +287,7 @@ void RegisterRewind() {
         if (m1Held && dpadLeftHeld) {
             if (!sIsRewinding) {
                 sIsRewinding = true;
+                sRewindStepCounter = 0;
             }
             sRewindRequested.store(true);
             memset(input, 0, sizeof(Input));
@@ -286,10 +303,7 @@ void RegisterRewind() {
     // Safe-point hook: perform actual rewind at frame boundary
     COND_HOOK(OnGameStateMainStart, rewindEnabled, []() {
         if (sRewindRequested.exchange(false) && gPlayState && gSaveContext.gameMode == GAMEMODE_NORMAL) {
-            if (!RewindStep()) {
-                Ship::Context::GetInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
-                    1.0f, true, "rewind buffer empty");
-            }
+            RewindApply();
         }
     });
 

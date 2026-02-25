@@ -99,18 +99,6 @@ static const std::vector<const char*> motionBlurOptions = {
     "Always On",         // MOTION_BLUR_ALWAYS_ON
 };
 
-static const std::vector<const char*> crtPresetOptions = {
-    "Lite (no bloom)", // CRT_PRESET_LITE
-    "Full (bloom)",    // CRT_PRESET_FULL
-};
-
-static const std::vector<const char*> crtMaskOptions = {
-    "None",            // 0
-    "Compressed TV",   // 1
-    "Aperture Grille", // 2
-    "Stretched VGA",   // 3
-    "VGA",             // 4
-};
 static const std::vector<const char*> debugSaveOptions = {
     "Empty save",         // DEBUG_SAVE_INFO_NONE
     "Vanilla debug save", // DEBUG_SAVE_INFO_VANILLA_DEBUG
@@ -1442,90 +1430,16 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Enable CRT Filter", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Graphics.CRTFilter.Enabled")
         .Options(CheckboxOptions().Tooltip(
-            "Applies a CRT display effect using the RetroArch crt-lottes shader by Timothy Lottes.\n"
-            "Simulates scanlines, shadow mask, screen curvature, and bloom."));
-    AddWidget(path, "Preset", WIDGET_CVAR_COMBOBOX)
-        .CVar("gEnhancements.Graphics.CRTFilter.Preset")
-        .Options(ComboboxOptions()
-                     .Tooltip("Lite: No bloom, best performance.\nFull: Bloom enabled, higher quality.")
-                     .ComboVec(&crtPresetOptions)
-                     .LabelPosition(LabelPosition::None))
-        .PreFunc([](WidgetInfo& info) {
-            info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
-        });
-    AddWidget(path, "Scanline Hardness", WIDGET_CVAR_SLIDER_FLOAT)
-        .CVar("gEnhancements.Graphics.CRTFilter.ScanlineHardness")
-        .Options(FloatSliderOptions()
-                     .Tooltip("Controls how hard/sharp the scanlines are. Lower = harder lines.")
-                     .Min(-20.0f)
-                     .Max(0.0f)
-                     .DefaultValue(-8.0f)
-                     .Format("%.1f"))
-        .PreFunc([](WidgetInfo& info) {
-            info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
-        });
-    AddWidget(path, "Warp X", WIDGET_CVAR_SLIDER_FLOAT)
-        .CVar("gEnhancements.Graphics.CRTFilter.WarpX")
-        .Options(FloatSliderOptions()
-                     .Tooltip("Horizontal screen curvature.")
-                     .Min(0.0f)
-                     .Max(0.125f)
-                     .DefaultValue(0.031f)
-                     .Format("%.3f"))
-        .PreFunc([](WidgetInfo& info) {
-            info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
-        });
-    AddWidget(path, "Warp Y", WIDGET_CVAR_SLIDER_FLOAT)
-        .CVar("gEnhancements.Graphics.CRTFilter.WarpY")
-        .Options(FloatSliderOptions()
-                     .Tooltip("Vertical screen curvature.")
-                     .Min(0.0f)
-                     .Max(0.125f)
-                     .DefaultValue(0.041f)
-                     .Format("%.3f"))
-        .PreFunc([](WidgetInfo& info) {
-            info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
-        });
-    AddWidget(path, "Mask Type", WIDGET_CVAR_COMBOBOX)
-        .CVar("gEnhancements.Graphics.CRTFilter.MaskType")
-        .Options(ComboboxOptions()
-                     .Tooltip("Shadow mask type.\n0 = None\n1 = Compressed TV\n2 = Aperture Grille\n"
-                              "3 = Stretched VGA (default)\n4 = VGA")
-                     .ComboVec(&crtMaskOptions)
-                     .LabelPosition(LabelPosition::None))
-        .PreFunc([](WidgetInfo& info) {
-            info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
-        });
-    AddWidget(path, "Mask Dark", WIDGET_CVAR_SLIDER_FLOAT)
-        .CVar("gEnhancements.Graphics.CRTFilter.MaskDark")
-        .Options(FloatSliderOptions()
-                     .Tooltip("Dark level of the shadow mask.")
-                     .Min(0.0f)
-                     .Max(2.0f)
-                     .DefaultValue(0.5f)
-                     .Format("%.2f"))
-        .PreFunc([](WidgetInfo& info) {
-            info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
-        });
-    AddWidget(path, "Mask Light", WIDGET_CVAR_SLIDER_FLOAT)
-        .CVar("gEnhancements.Graphics.CRTFilter.MaskLight")
-        .Options(FloatSliderOptions()
-                     .Tooltip("Light level of the shadow mask.")
-                     .Min(0.0f)
-                     .Max(2.0f)
-                     .DefaultValue(1.5f)
-                     .Format("%.2f"))
-        .PreFunc([](WidgetInfo& info) {
-            info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
-        });
-    AddWidget(path, "Brightness Boost", WIDGET_CVAR_SLIDER_FLOAT)
-        .CVar("gEnhancements.Graphics.CRTFilter.Brightness")
-        .Options(FloatSliderOptions()
-                     .Tooltip("Overall brightness boost.")
-                     .Min(0.0f)
-                     .Max(2.0f)
-                     .DefaultValue(1.0f)
-                     .Format("%.2f"))
+            "Applies a CRT display effect using RetroArch GLSL shaders.\n"
+            "Shaders are loaded from the glsl-shaders/crt/shaders/ directory."));
+    AddWidget(path, "CRT Shader", WIDGET_CVAR_SLIDER_INT)
+        .CVar("gEnhancements.Graphics.CRTFilter.Shader")
+        .Options(IntSliderOptions()
+                     .Tooltip("Select which CRT shader to use. Change takes effect immediately.")
+                     .Min(0)
+                     .Max(50)
+                     .DefaultValue(0)
+                     .Format("%d"))
         .PreFunc([](WidgetInfo& info) {
             info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
         });

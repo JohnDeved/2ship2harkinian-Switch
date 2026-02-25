@@ -1,18 +1,25 @@
-// CRT Filter — Post-processing using RetroArch CRT shaders (public domain).
-// Based on "crt-lottes" by Timothy Lottes (PUBLIC DOMAIN).
-// https://github.com/libretro/glsl-shaders/blob/master/crt/shaders/crt-lottes.glsl
+// CRT Filter — Dynamic post-processing using RetroArch GLSL CRT shaders.
+// Loads shaders at runtime from the glsl-shaders submodule, allowing the user
+// to pick any .glsl CRT shader from the menu.
 //
-// Adapted for the 2Ship2Harkinian rendering pipeline with a focus on maximum
-// GPU performance on the Nintendo Switch (Tegra X1 / Maxwell 256-core).
+// Shader format: RetroArch combined VERTEX/FRAGMENT with #pragma parameter.
+// https://github.com/libretro/glsl-shaders/tree/master/crt
 //
 // Performance notes:
 //   - Single fullscreen triangle (1 draw call, 3 verts, no index buffer).
 //   - No glGet* state queries — known call-site state is restored directly.
-//   - VAO configured once; bound/unbound per frame with zero reconfiguration.
-//   - Shader compiled once on first enable; FBO resized only on dimension change.
-//   - "Lite" preset disables bloom (saves ~31 texture fetches/pixel).
+//   - Shader compiled once per selection; recompiled only on shader change.
+//   - FBO resized only on dimension change.
 
 #ifdef ENABLE_OPENGL
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <numeric>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "2s2h/BenGui/UIWidgets.hpp"
@@ -25,20 +32,7 @@
 // CVars
 // ---------------------------------------------------------------------------
 #define CVAR_CRT_ENABLED "gEnhancements.Graphics.CRTFilter.Enabled"
-#define CVAR_CRT_PRESET "gEnhancements.Graphics.CRTFilter.Preset"
-#define CVAR_CRT_SCANLINE "gEnhancements.Graphics.CRTFilter.ScanlineHardness"
-#define CVAR_CRT_WARP_X "gEnhancements.Graphics.CRTFilter.WarpX"
-#define CVAR_CRT_WARP_Y "gEnhancements.Graphics.CRTFilter.WarpY"
-#define CVAR_CRT_MASK_DARK "gEnhancements.Graphics.CRTFilter.MaskDark"
-#define CVAR_CRT_MASK_LIGHT "gEnhancements.Graphics.CRTFilter.MaskLight"
-#define CVAR_CRT_MASK_TYPE "gEnhancements.Graphics.CRTFilter.MaskType"
-#define CVAR_CRT_BRIGHTNESS "gEnhancements.Graphics.CRTFilter.Brightness"
-
-// Preset indices
-enum CRTPreset {
-    CRT_PRESET_LITE = 0, // No bloom — fast path for Switch
-    CRT_PRESET_FULL = 1, // Full crt-lottes with bloom
-};
+#define CVAR_CRT_SHADER "gEnhancements.Graphics.CRTFilter.Shader"
 
 // ---------------------------------------------------------------------------
 // GLSL version header — selected at compile time per platform
@@ -51,16 +45,39 @@ static const char* sGlslHeader =
     "#else\n"
     "precision mediump float;\n"
     "#endif\n";
+// Fragment compat header: maps old GLSL keywords to GLES 300 es equivalents.
+// This allows RetroArch shaders using varying/texture2D/gl_FragColor to compile.
+static const char* sFragCompatHeader =
+    "#version 300 es\n"
+    "#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+    "precision highp float;\n"
+    "#else\n"
+    "precision mediump float;\n"
+    "#endif\n"
+    "#define varying in\n"
+    "#define texture2D texture\n"
+    "out vec4 _fragColor_;\n"
+    "#define gl_FragColor _fragColor_\n";
 #elif defined(__APPLE__)
 static const char* sGlslHeader = "#version 410 core\n";
+static const char* sFragCompatHeader =
+    "#version 410 core\n"
+    "#define varying in\n"
+    "#define texture2D texture\n"
+    "out vec4 _fragColor_;\n"
+    "#define gl_FragColor _fragColor_\n";
 #else
 static const char* sGlslHeader = "#version 130\n";
+// GLSL 130 supports both old and new style — no compat needed.
+static const char* sFragCompatHeader = "#version 130\n";
 #endif
 
 // ---------------------------------------------------------------------------
-// Vertex shader — minimal fullscreen triangle
+// Our own vertex shader — fullscreen triangle, provides TEX0 like RetroArch.
+// We override the RetroArch vertex section with this for performance
+// (avoids MVPMatrix uniform and uses a 3-vert fullscreen triangle).
 // ---------------------------------------------------------------------------
-static const char* sVertBody = R"(
+static const char* sVertSource = R"(
 #if __VERSION__ >= 300
 #define COMPAT_ATTRIBUTE in
 #define COMPAT_VARYING   out
@@ -79,255 +96,188 @@ void main() {
 )";
 
 // ---------------------------------------------------------------------------
-// Fragment shader — crt-lottes (Timothy Lottes, PUBLIC DOMAIN)
-// Adapted: split from combined file, PARAMETER_UNIFORM always active,
-// bloom gated by DO_BLOOM define, sRGB gamma path used.
+// Parsed parameter from #pragma parameter lines
 // ---------------------------------------------------------------------------
-static const char* sFragBody = R"(
-#if __VERSION__ >= 300
-#define COMPAT_VARYING in
-#define COMPAT_TEXTURE texture
-out vec4 FragColor;
-#else
-#define COMPAT_VARYING varying
-#define FragColor      gl_FragColor
-#define COMPAT_TEXTURE texture2D
-#endif
-
-COMPAT_VARYING vec4 TEX0;
-
-uniform vec2      OutputSize;
-uniform vec2      TextureSize;
-uniform vec2      InputSize;
-uniform sampler2D Texture;
-
-// Tunable uniforms
-uniform float hardScan;
-uniform float hardPix;
-uniform float warpX;
-uniform float warpY;
-uniform float maskDark;
-uniform float maskLight;
-uniform float shadowMask;
-uniform float brightBoost;
-uniform float hardBloomPix;
-uniform float hardBloomScan;
-uniform float bloomAmount;
-uniform float shape;
-
-#define vTexCoord  TEX0.xy
-#define Source     Texture
-#define SourceSize vec4(TextureSize, 1.0 / TextureSize)
-
-// sRGB ↔ linear
-float ToLinear1(float c) { return (c <= 0.04045) ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
-vec3  ToLinear(vec3 c)   { return vec3(ToLinear1(c.r), ToLinear1(c.g), ToLinear1(c.b)); }
-float ToSrgb1(float c)   { return (c < 0.0031308) ? c * 12.92 : 1.055 * pow(c, 0.41666) - 0.055; }
-vec3  ToSrgb(vec3 c)     { return vec3(ToSrgb1(c.r), ToSrgb1(c.g), ToSrgb1(c.b)); }
-
-// Nearest emulated sample given float position and texel offset.
-vec3 Fetch(vec2 pos, vec2 off) {
-    pos = (floor(pos * SourceSize.xy + off) + vec2(0.5)) / SourceSize.xy;
-    return ToLinear(brightBoost * COMPAT_TEXTURE(Source, pos.xy).rgb);
-}
-
-// Distance in emulated pixels to nearest texel.
-vec2 Dist(vec2 pos) { pos = pos * SourceSize.xy; return -((pos - floor(pos)) - vec2(0.5)); }
-
-// 1-D Gaussian.
-float Gaus(float pos, float scale) { return exp2(scale * pow(abs(pos), shape)); }
-
-// 3-tap horizontal filter.
-vec3 Horz3(vec2 pos, float off) {
-    vec3 b = Fetch(pos, vec2(-1.0, off));
-    vec3 c = Fetch(pos, vec2( 0.0, off));
-    vec3 d = Fetch(pos, vec2( 1.0, off));
-    float dst = Dist(pos).x;
-    float wb = Gaus(dst - 1.0, hardPix);
-    float wc = Gaus(dst + 0.0, hardPix);
-    float wd = Gaus(dst + 1.0, hardPix);
-    return (b * wb + c * wc + d * wd) / (wb + wc + wd);
-}
-
-// 5-tap horizontal filter.
-vec3 Horz5(vec2 pos, float off) {
-    vec3 a = Fetch(pos, vec2(-2.0, off));
-    vec3 b = Fetch(pos, vec2(-1.0, off));
-    vec3 c = Fetch(pos, vec2( 0.0, off));
-    vec3 d = Fetch(pos, vec2( 1.0, off));
-    vec3 e = Fetch(pos, vec2( 2.0, off));
-    float dst = Dist(pos).x;
-    float scale = hardPix;
-    float wa = Gaus(dst - 2.0, scale);
-    float wb = Gaus(dst - 1.0, scale);
-    float wc = Gaus(dst + 0.0, scale);
-    float wd = Gaus(dst + 1.0, scale);
-    float we = Gaus(dst + 2.0, scale);
-    return (a*wa + b*wb + c*wc + d*wd + e*we) / (wa + wb + wc + wd + we);
-}
-
-#ifdef DO_BLOOM
-// 7-tap horizontal filter (bloom only).
-vec3 Horz7(vec2 pos, float off) {
-    vec3 a = Fetch(pos, vec2(-3.0, off));
-    vec3 b = Fetch(pos, vec2(-2.0, off));
-    vec3 c = Fetch(pos, vec2(-1.0, off));
-    vec3 d = Fetch(pos, vec2( 0.0, off));
-    vec3 e = Fetch(pos, vec2( 1.0, off));
-    vec3 f = Fetch(pos, vec2( 2.0, off));
-    vec3 g = Fetch(pos, vec2( 3.0, off));
-    float dst = Dist(pos).x;
-    float scale = hardBloomPix;
-    float wa = Gaus(dst - 3.0, scale);
-    float wb = Gaus(dst - 2.0, scale);
-    float wc = Gaus(dst - 1.0, scale);
-    float wd = Gaus(dst + 0.0, scale);
-    float we = Gaus(dst + 1.0, scale);
-    float wf = Gaus(dst + 2.0, scale);
-    float wg = Gaus(dst + 3.0, scale);
-    return (a*wa+b*wb+c*wc+d*wd+e*we+f*wf+g*wg)/(wa+wb+wc+wd+we+wf+wg);
-}
-#endif
-
-// Scanline weight.
-float Scan(vec2 pos, float off)      { return Gaus(Dist(pos).y + off, hardScan); }
-#ifdef DO_BLOOM
-float BloomScan(vec2 pos, float off) { return Gaus(Dist(pos).y + off, hardBloomScan); }
-#endif
-
-// Allow nearest three scanlines to affect pixel.
-vec3 Tri(vec2 pos) {
-    vec3 a = Horz3(pos, -1.0);
-    vec3 b = Horz5(pos,  0.0);
-    vec3 c = Horz3(pos,  1.0);
-    float wa = Scan(pos, -1.0);
-    float wb = Scan(pos,  0.0);
-    float wc = Scan(pos,  1.0);
-    return a * wa + b * wb + c * wc;
-}
-
-#ifdef DO_BLOOM
-vec3 Bloom(vec2 pos) {
-    vec3 a = Horz5(pos, -2.0);
-    vec3 b = Horz7(pos, -1.0);
-    vec3 c = Horz7(pos,  0.0);
-    vec3 d = Horz7(pos,  1.0);
-    vec3 e = Horz5(pos,  2.0);
-    float wa = BloomScan(pos, -2.0);
-    float wb = BloomScan(pos, -1.0);
-    float wc = BloomScan(pos,  0.0);
-    float wd = BloomScan(pos,  1.0);
-    float we = BloomScan(pos,  2.0);
-    return a*wa + b*wb + c*wc + d*wd + e*we;
-}
-#endif
-
-// Screen warp (barrel distortion).
-vec2 Warp(vec2 pos) {
-    pos = pos * 2.0 - 1.0;
-    pos *= vec2(1.0 + (pos.y*pos.y) * warpX, 1.0 + (pos.x*pos.x) * warpY);
-    return pos * 0.5 + 0.5;
-}
-
-// Shadow mask.
-vec3 Mask(vec2 pos) {
-    vec3 mask = vec3(maskDark);
-
-    // Very compressed TV style shadow mask.
-    if (shadowMask == 1.0) {
-        float line = maskLight;
-        float odd  = 0.0;
-        if (fract(pos.x * 0.166666666) < 0.5) odd = 1.0;
-        if (fract((pos.y + odd) * 0.5) < 0.5) line = maskDark;
-        pos.x = fract(pos.x * 0.333333333);
-        if      (pos.x < 0.333) mask.r = maskLight;
-        else if (pos.x < 0.666) mask.g = maskLight;
-        else                    mask.b = maskLight;
-        mask *= line;
-    }
-    // Aperture grille.
-    else if (shadowMask == 2.0) {
-        pos.x = fract(pos.x * 0.333333333);
-        if      (pos.x < 0.333) mask.r = maskLight;
-        else if (pos.x < 0.666) mask.g = maskLight;
-        else                    mask.b = maskLight;
-    }
-    // Stretched VGA style shadow mask.
-    else if (shadowMask == 3.0) {
-        pos.x += pos.y * 3.0;
-        pos.x  = fract(pos.x * 0.166666666);
-        if      (pos.x < 0.333) mask.r = maskLight;
-        else if (pos.x < 0.666) mask.g = maskLight;
-        else                    mask.b = maskLight;
-    }
-    // VGA style shadow mask.
-    else if (shadowMask == 4.0) {
-        pos.xy = floor(pos.xy * vec2(1.0, 0.5));
-        pos.x += pos.y * 3.0;
-        pos.x  = fract(pos.x * 0.166666666);
-        if      (pos.x < 0.333) mask.r = maskLight;
-        else if (pos.x < 0.666) mask.g = maskLight;
-        else                    mask.b = maskLight;
-    }
-
-    return mask;
-}
-
-void main() {
-    vec2 pos = Warp(vTexCoord * (TextureSize.xy / InputSize.xy)) * (InputSize.xy / TextureSize.xy);
-    vec3 outColor = Tri(pos);
-
-#ifdef DO_BLOOM
-    outColor.rgb += Bloom(pos) * bloomAmount;
-#endif
-
-    if (shadowMask > 0.0)
-        outColor.rgb *= Mask(gl_FragCoord.xy * 1.000001);
-
-#ifdef GL_ES
-    // Black out pixels outside the valid area (GLES border clamp workaround).
-    if (pos.x < 0.0001 || pos.x > 0.9999 || pos.y < 0.0001 || pos.y > 0.9999)
-        outColor.rgb = vec3(0.0);
-#endif
-
-    FragColor = vec4(ToSrgb(outColor.rgb), 1.0);
-}
-)";
+struct ShaderParam {
+    std::string name;
+    std::string description;
+    float defaultValue;
+    float minValue;
+    float maxValue;
+    float step;
+    GLint uniformLoc = -1;
+};
 
 // ---------------------------------------------------------------------------
-// GL resources (static, process-lifetime)
+// State for the currently loaded shader
 // ---------------------------------------------------------------------------
-static GLuint sCrtProgram[2] = {}; // [CRT_PRESET_LITE], [CRT_PRESET_FULL]
+struct LoadedShader {
+    GLuint program = 0;
+    GLint locOutputSize = -1;
+    GLint locTextureSize = -1;
+    GLint locInputSize = -1;
+    GLint locTexture = -1;
+    GLint locFrameCount = -1;
+    GLint locFrameDirection = -1;
+    std::vector<ShaderParam> params;
+    std::string name;
+};
+
+static LoadedShader sActiveShader;
 static GLuint sCrtVao = 0;
 static GLuint sCrtVbo = 0;
 static GLuint sCrtFbo = 0;
 static GLuint sCrtTexture = 0;
 static uint32_t sCrtTexWidth = 0;
 static uint32_t sCrtTexHeight = 0;
+static int sFrameCount = 0;
 
-// Uniform locations per preset (avoid glGetUniformLocation per frame)
-struct CRTUniforms {
-    GLint outputSize, textureSize, inputSize, texture;
-    GLint hardScan, hardPix, warpX, warpY;
-    GLint maskDark, maskLight, shadowMask, brightBoost;
-    GLint hardBloomPix, hardBloomScan, bloomAmount, shape;
-};
-static CRTUniforms sUniforms[2] = {};
-static bool sInitialized[2] = {};
+// Shader file list — populated once at init
+static std::vector<std::string> sShaderNames; // display names
+static std::vector<std::string> sShaderPaths; // full paths
+static bool sShaderListInitialized = false;
+
+// Track which shader is currently compiled to avoid recompilation
+static int32_t sCompiledShaderIndex = -1;
 
 // ---------------------------------------------------------------------------
-// Shader compilation helpers
+// Find the shader directory
 // ---------------------------------------------------------------------------
-static GLuint CompileShader(GLenum type, const char* header, const char* defines, const char* body) {
+static std::string GetShaderDir() {
+    std::string bundlePath = Ship::Context::GetAppBundlePath();
+    return bundlePath + "/glsl-shaders/crt/shaders";
+}
+
+// ---------------------------------------------------------------------------
+// Scan for available .glsl shader files (single-pass shaders only)
+// ---------------------------------------------------------------------------
+static void ScanShaderFiles() {
+    if (sShaderListInitialized)
+        return;
+    sShaderListInitialized = true;
+
+    std::string dir = GetShaderDir();
+    if (!std::filesystem::exists(dir))
+        return;
+
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (!entry.is_regular_file())
+            continue;
+        std::string ext = entry.path().extension().string();
+        if (ext != ".glsl")
+            continue;
+
+        // Only include single-file shaders (must contain both VERTEX and FRAGMENT sections)
+        std::ifstream f(entry.path());
+        if (!f.is_open())
+            continue;
+        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        if (content.find("defined(VERTEX)") == std::string::npos ||
+            content.find("defined(FRAGMENT)") == std::string::npos)
+            continue;
+
+        sShaderPaths.push_back(entry.path().string());
+        sShaderNames.push_back(entry.path().stem().string());
+    }
+
+    // Sort alphabetically
+    std::vector<size_t> indices(sShaderNames.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    std::sort(indices.begin(), indices.end(),
+              [](size_t a, size_t b) { return sShaderNames[a] < sShaderNames[b]; });
+
+    std::vector<std::string> sortedNames, sortedPaths;
+    sortedNames.reserve(indices.size());
+    sortedPaths.reserve(indices.size());
+    for (size_t i : indices) {
+        sortedNames.push_back(std::move(sShaderNames[i]));
+        sortedPaths.push_back(std::move(sShaderPaths[i]));
+    }
+    sShaderNames = std::move(sortedNames);
+    sShaderPaths = std::move(sortedPaths);
+}
+
+// ---------------------------------------------------------------------------
+// Parse #pragma parameter lines from shader source
+// Format: #pragma parameter NAME "DESCRIPTION" DEFAULT MIN MAX STEP
+// ---------------------------------------------------------------------------
+static std::vector<ShaderParam> ParsePragmaParams(const std::string& source) {
+    std::vector<ShaderParam> params;
+    std::istringstream stream(source);
+    std::string line;
+
+    while (std::getline(stream, line)) {
+        if (line.find("#pragma parameter") == std::string::npos)
+            continue;
+
+        // Find the parameter name (first token after "#pragma parameter")
+        size_t pos = line.find("parameter") + 9;
+        while (pos < line.size() && line[pos] == ' ')
+            pos++;
+
+        std::istringstream ls(line.substr(pos));
+        ShaderParam p;
+        ls >> p.name;
+
+        // Parse description in quotes
+        size_t q1 = line.find('"', pos);
+        if (q1 == std::string::npos)
+            continue;
+        size_t q2 = line.find('"', q1 + 1);
+        if (q2 == std::string::npos)
+            continue;
+        p.description = line.substr(q1 + 1, q2 - q1 - 1);
+
+        // Parse numeric values after the closing quote
+        std::istringstream nums(line.substr(q2 + 1));
+        if (!(nums >> p.defaultValue >> p.minValue >> p.maxValue >> p.step))
+            continue;
+
+        params.push_back(std::move(p));
+    }
+
+    return params;
+}
+
+// ---------------------------------------------------------------------------
+// Extract the FRAGMENT section from a RetroArch combined shader
+// ---------------------------------------------------------------------------
+static std::string ExtractFragmentSection(const std::string& source) {
+    // Find "#elif defined(FRAGMENT)" or "#if defined(FRAGMENT)"
+    size_t fragStart = source.find("#elif defined(FRAGMENT)");
+    if (fragStart == std::string::npos)
+        fragStart = source.find("#if defined(FRAGMENT)");
+    if (fragStart == std::string::npos)
+        return "";
+
+    // Skip the #elif/#if line itself
+    size_t lineEnd = source.find('\n', fragStart);
+    if (lineEnd == std::string::npos)
+        return "";
+    std::string fragBody = source.substr(lineEnd + 1);
+
+    // Remove trailing #endif if present
+    size_t lastEndif = fragBody.rfind("#endif");
+    if (lastEndif != std::string::npos) {
+        fragBody = fragBody.substr(0, lastEndif);
+    }
+
+    return fragBody;
+}
+
+// ---------------------------------------------------------------------------
+// GL helpers
+// ---------------------------------------------------------------------------
+static GLuint CompileShader(GLenum type, const char* header, const std::string& body) {
     GLuint shader = glCreateShader(type);
-    const char* sources[3] = { header, defines, body };
-    glShaderSource(shader, 3, sources, nullptr);
+    const char* sources[2] = { header, body.c_str() };
+    glShaderSource(shader, 2, sources, nullptr);
     glCompileShader(shader);
 
     GLint ok;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
     if (!ok) {
-        char log[1024];
+        char log[2048];
         glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
         fprintf(stderr, "CRT %s compile error:\n%s\n", type == GL_VERTEX_SHADER ? "VS" : "FS", log);
         glDeleteShader(shader);
@@ -336,16 +286,62 @@ static GLuint CompileShader(GLenum type, const char* header, const char* defines
     return shader;
 }
 
-static bool InitPreset(int preset) {
-    if (sInitialized[preset])
-        return sCrtProgram[preset] != 0;
+static void DestroyActiveShader() {
+    if (sActiveShader.program) {
+        glDeleteProgram(sActiveShader.program);
+    }
+    sActiveShader = {};
+    sCompiledShaderIndex = -1;
+}
 
-    const char* fragDefines = (preset == CRT_PRESET_FULL) ? "#define DO_BLOOM\n" : "\n";
+// ---------------------------------------------------------------------------
+// Load and compile a RetroArch CRT shader by index
+// ---------------------------------------------------------------------------
+static bool LoadShader(int index) {
+    if (index < 0 || index >= (int)sShaderPaths.size())
+        return false;
+    if (sCompiledShaderIndex == index && sActiveShader.program)
+        return true;
 
-    GLuint vs = CompileShader(GL_VERTEX_SHADER, sGlslHeader, "\n", sVertBody);
+    // Read file
+    std::ifstream f(sShaderPaths[index]);
+    if (!f.is_open()) {
+        fprintf(stderr, "CRT: Failed to open shader file: %s\n", sShaderPaths[index].c_str());
+        return false;
+    }
+    std::string source((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+
+    // Parse parameters and extract fragment section
+    auto params = ParsePragmaParams(source);
+    std::string fragBody = ExtractFragmentSection(source);
+    if (fragBody.empty()) {
+        fprintf(stderr, "CRT: No FRAGMENT section found in: %s\n", sShaderPaths[index].c_str());
+        return false;
+    }
+
+    // Build fragment source: PARAMETER_UNIFORM define + shader body.
+    // The shader's own fragment section already contains its compat defines,
+    // uniform declarations, and varying declarations.
+    std::string fragSource;
+    fragSource += "#define PARAMETER_UNIFORM\n";
+    fragSource += fragBody;
+
+    // Determine which header to use: if the shader has its own compat system
+    // (uses COMPAT_VARYING or #if __VERSION__), use the plain header.
+    // Otherwise use the compat header that maps old-style keywords.
+    bool hasOwnCompat =
+        (fragBody.find("COMPAT_VARYING") != std::string::npos || fragBody.find("__VERSION__") != std::string::npos);
+    const char* fragHeader = hasOwnCompat ? sGlslHeader : sFragCompatHeader;
+
+    // Destroy old shader
+    DestroyActiveShader();
+
+    // Compile
+    GLuint vs = CompileShader(GL_VERTEX_SHADER, sGlslHeader, sVertSource);
     if (!vs)
         return false;
-    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, sGlslHeader, fragDefines, sFragBody);
+
+    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, fragHeader, fragSource);
     if (!fs) {
         glDeleteShader(vs);
         return false;
@@ -361,44 +357,40 @@ static bool InitPreset(int preset) {
     GLint ok;
     glGetProgramiv(prog, GL_LINK_STATUS, &ok);
     if (!ok) {
-        char log[1024];
+        char log[2048];
         glGetProgramInfoLog(prog, sizeof(log), nullptr, log);
-        fprintf(stderr, "CRT link error (preset %d):\n%s\n", preset, log);
+        fprintf(stderr, "CRT link error (%s):\n%s\n", sShaderNames[index].c_str(), log);
         glDeleteProgram(prog);
-        sInitialized[preset] = true;
         return false;
     }
 
-    sCrtProgram[preset] = prog;
+    // Cache uniform locations
+    sActiveShader.program = prog;
+    sActiveShader.name = sShaderNames[index];
+    sActiveShader.locOutputSize = glGetUniformLocation(prog, "OutputSize");
+    sActiveShader.locTextureSize = glGetUniformLocation(prog, "TextureSize");
+    sActiveShader.locInputSize = glGetUniformLocation(prog, "InputSize");
+    sActiveShader.locTexture = glGetUniformLocation(prog, "Texture");
+    sActiveShader.locFrameCount = glGetUniformLocation(prog, "FrameCount");
+    sActiveShader.locFrameDirection = glGetUniformLocation(prog, "FrameDirection");
 
-    // Cache all uniform locations once
-    CRTUniforms& u = sUniforms[preset];
-    u.outputSize = glGetUniformLocation(prog, "OutputSize");
-    u.textureSize = glGetUniformLocation(prog, "TextureSize");
-    u.inputSize = glGetUniformLocation(prog, "InputSize");
-    u.texture = glGetUniformLocation(prog, "Texture");
-    u.hardScan = glGetUniformLocation(prog, "hardScan");
-    u.hardPix = glGetUniformLocation(prog, "hardPix");
-    u.warpX = glGetUniformLocation(prog, "warpX");
-    u.warpY = glGetUniformLocation(prog, "warpY");
-    u.maskDark = glGetUniformLocation(prog, "maskDark");
-    u.maskLight = glGetUniformLocation(prog, "maskLight");
-    u.shadowMask = glGetUniformLocation(prog, "shadowMask");
-    u.brightBoost = glGetUniformLocation(prog, "brightBoost");
-    u.hardBloomPix = glGetUniformLocation(prog, "hardBloomPix");
-    u.hardBloomScan = glGetUniformLocation(prog, "hardBloomScan");
-    u.bloomAmount = glGetUniformLocation(prog, "bloomAmount");
-    u.shape = glGetUniformLocation(prog, "shape");
+    // Cache parameter uniform locations
+    sActiveShader.params = std::move(params);
+    for (auto& p : sActiveShader.params) {
+        p.uniformLoc = glGetUniformLocation(prog, p.name.c_str());
+    }
 
-    sInitialized[preset] = true;
+    sCompiledShaderIndex = index;
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Geometry init (once)
+// ---------------------------------------------------------------------------
 static bool InitGeometry() {
     if (sCrtVao)
         return true;
 
-    // Single fullscreen triangle — 3 verts, no index buffer, covers full NDC.
     static const float kTriVerts[] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
 
     glGenVertexArrays(1, &sCrtVao);
@@ -407,7 +399,7 @@ static bool InitGeometry() {
     glBindVertexArray(sCrtVao);
     glBindBuffer(GL_ARRAY_BUFFER, sCrtVbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(kTriVerts), kTriVerts, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0); // aPosition always at location 0
+    glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -440,28 +432,30 @@ static void EnsureFboSize(uint32_t w, uint32_t h) {
 
 // ---------------------------------------------------------------------------
 // Post-process callback — called from interpreter on the render thread.
-// No GL state queries; the call-site state is known:
-//   - FB 0 bound, depth test off, blend off, no program bound.
 // ---------------------------------------------------------------------------
 static uintptr_t CRTPostProcess(uintptr_t inputTexId, uint32_t width, uint32_t height) {
     if (!CVarGetInteger(CVAR_CRT_ENABLED, 0))
         return inputTexId;
 
-    int preset = CVarGetInteger(CVAR_CRT_PRESET, CRT_PRESET_LITE);
-    if (preset < 0 || preset > CRT_PRESET_FULL)
-        preset = CRT_PRESET_LITE;
+    ScanShaderFiles();
+    if (sShaderPaths.empty())
+        return inputTexId;
+
+    int shaderIdx = CVarGetInteger(CVAR_CRT_SHADER, 0);
+    if (shaderIdx < 0 || shaderIdx >= (int)sShaderPaths.size())
+        shaderIdx = 0;
 
     if (!InitGeometry())
         return inputTexId;
-    if (!InitPreset(preset))
+    if (!LoadShader(shaderIdx))
         return inputTexId;
 
     EnsureFboSize(width, height);
+    sFrameCount++;
 
-    GLuint prog = sCrtProgram[preset];
-    const CRTUniforms& u = sUniforms[preset];
+    GLuint prog = sActiveShader.program;
 
-    // --- Render CRT pass (no state save — known entry state) ---
+    // --- Render CRT pass ---
     glBindFramebuffer(GL_FRAMEBUFFER, sCrtFbo);
     glViewport(0, 0, width, height);
     glDisable(GL_DEPTH_TEST);
@@ -471,36 +465,29 @@ static uintptr_t CRTPostProcess(uintptr_t inputTexId, uint32_t width, uint32_t h
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, (GLuint)inputTexId);
-    glUniform1i(u.texture, 0);
+    glUniform1i(sActiveShader.locTexture, 0);
 
-    // RetroArch uniforms
     float w_f = (float)width;
     float h_f = (float)height;
-    glUniform2f(u.outputSize, w_f, h_f);
-    glUniform2f(u.textureSize, w_f, h_f);
-    glUniform2f(u.inputSize, w_f, h_f);
+    glUniform2f(sActiveShader.locOutputSize, w_f, h_f);
+    glUniform2f(sActiveShader.locTextureSize, w_f, h_f);
+    glUniform2f(sActiveShader.locInputSize, w_f, h_f);
+    if (sActiveShader.locFrameCount >= 0)
+        glUniform1i(sActiveShader.locFrameCount, sFrameCount);
+    if (sActiveShader.locFrameDirection >= 0)
+        glUniform1i(sActiveShader.locFrameDirection, 1);
 
-    // crt-lottes parameters from CVars (with RetroArch defaults)
-    glUniform1f(u.hardScan, CVarGetFloat(CVAR_CRT_SCANLINE, -8.0f));
-    glUniform1f(u.hardPix, -3.0f);
-    glUniform1f(u.warpX, CVarGetFloat(CVAR_CRT_WARP_X, 0.031f));
-    glUniform1f(u.warpY, CVarGetFloat(CVAR_CRT_WARP_Y, 0.041f));
-    glUniform1f(u.maskDark, CVarGetFloat(CVAR_CRT_MASK_DARK, 0.5f));
-    glUniform1f(u.maskLight, CVarGetFloat(CVAR_CRT_MASK_LIGHT, 1.5f));
-    glUniform1f(u.shadowMask, (float)CVarGetInteger(CVAR_CRT_MASK_TYPE, 3));
-    glUniform1f(u.brightBoost, CVarGetFloat(CVAR_CRT_BRIGHTNESS, 1.0f));
-    glUniform1f(u.shape, 2.0f);
-
-    // Bloom uniforms (only matter for FULL preset but harmless to set)
-    glUniform1f(u.hardBloomPix, -1.5f);
-    glUniform1f(u.hardBloomScan, -2.0f);
-    glUniform1f(u.bloomAmount, 0.15f);
+    // Set all parameters to their default values
+    for (const auto& p : sActiveShader.params) {
+        if (p.uniformLoc >= 0)
+            glUniform1f(p.uniformLoc, p.defaultValue);
+    }
 
     glBindVertexArray(sCrtVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(0);
 
-    // --- Restore known state for ImGui that follows ---
+    // --- Restore state ---
     glBindTexture(GL_TEXTURE_2D, 0);
     glUseProgram(0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -509,7 +496,7 @@ static uintptr_t CRTPostProcess(uintptr_t inputTexId, uint32_t width, uint32_t h
 }
 
 // ---------------------------------------------------------------------------
-// Registration — callback set once at init; CVar checked inside callback.
+// Registration
 // ---------------------------------------------------------------------------
 static RegisterShipInitFunc initFunc(
     []() {

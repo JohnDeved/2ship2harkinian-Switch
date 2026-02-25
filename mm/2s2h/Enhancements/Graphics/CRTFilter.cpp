@@ -137,6 +137,9 @@ static std::vector<std::string> sShaderNames; // display names
 static std::vector<std::string> sShaderPaths; // full paths
 static bool sShaderListInitialized = false;
 
+// Persistent const char* list for BenMenu combobox (pointers into sShaderNames)
+static std::vector<const char*> sShaderNamePtrs;
+
 // Track which shader is currently compiled to avoid recompilation
 static int32_t sCompiledShaderIndex = -1;
 
@@ -195,6 +198,13 @@ static void ScanShaderFiles() {
     }
     sShaderNames = std::move(sortedNames);
     sShaderPaths = std::move(sortedPaths);
+
+    // Build persistent const char* list for BenMenu combobox
+    sShaderNamePtrs.clear();
+    sShaderNamePtrs.reserve(sShaderNames.size());
+    for (const auto& name : sShaderNames) {
+        sShaderNamePtrs.push_back(name.c_str());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +510,8 @@ static uintptr_t CRTPostProcess(uintptr_t inputTexId, uint32_t width, uint32_t h
 // ---------------------------------------------------------------------------
 static RegisterShipInitFunc initFunc(
     []() {
+        // Scan shaders early so the menu can show the dropdown
+        ScanShaderFiles();
         auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
         if (wnd) {
             auto interp = wnd->GetInterpreterWeak().lock();
@@ -509,5 +521,20 @@ static RegisterShipInitFunc initFunc(
         }
     },
     {});
+
+// ---------------------------------------------------------------------------
+// Public API for BenMenu
+// ---------------------------------------------------------------------------
+const std::vector<const char*>* CRTFilter_GetShaderNames() {
+    ScanShaderFiles();
+    return &sShaderNamePtrs;
+}
+
+#else // !ENABLE_OPENGL
+
+const std::vector<const char*>* CRTFilter_GetShaderNames() {
+    static std::vector<const char*> empty;
+    return &empty;
+}
 
 #endif // ENABLE_OPENGL

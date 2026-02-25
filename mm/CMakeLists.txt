@@ -662,6 +662,10 @@ nx_create_nro(2ship
 
 INSTALL(FILES ${CMAKE_CURRENT_BINARY_DIR}/2s2h.nro DESTINATION . COMPONENT 2s2h)
 
+# Install CRT shader files from glsl-shaders submodule
+file(GLOB CRT_SHADER_FILES "${CMAKE_SOURCE_DIR}/glsl-shaders/crt/shaders/*.glsl")
+INSTALL(FILES ${CRT_SHADER_FILES} DESTINATION glsl-shaders/crt/shaders COMPONENT 2s2h)
+
 elseif(CMAKE_SYSTEM_NAME MATCHES "CafeOS")
 
 wut_create_rpx(${PROJECT_NAME})

@@ -5,6 +5,7 @@
 #include "DeveloperTools/SaveEditor.h"
 #include "DeveloperTools/CollisionViewer.h"
 #include "2s2h/Enhancements/GfxPatcher/AuthenticGfxPatches.h"
+#include "2s2h/Enhancements/Graphics/Graphics.h"
 #include "2s2h/PresetManager/PresetManager.h"
 #include "HudEditor.h"
 #include "Notification.h"
@@ -1432,14 +1433,12 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "Applies a CRT display effect using RetroArch GLSL shaders.\n"
             "Shaders are loaded from the glsl-shaders/crt/shaders/ directory."));
-    AddWidget(path, "CRT Shader", WIDGET_CVAR_SLIDER_INT)
+    AddWidget(path, "CRT Shader", WIDGET_CVAR_COMBOBOX)
         .CVar("gEnhancements.Graphics.CRTFilter.Shader")
-        .Options(IntSliderOptions()
+        .Options(ComboboxOptions()
                      .Tooltip("Select which CRT shader to use. Change takes effect immediately.")
-                     .Min(0)
-                     .Max(50)
-                     .DefaultValue(0)
-                     .Format("%d"))
+                     .ComboVec(CRTFilter_GetShaderNames())
+                     .DefaultIndex(0))
         .PreFunc([](WidgetInfo& info) {
             info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
         });

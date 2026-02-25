@@ -8,6 +8,8 @@
 #include <new>
 #include <vector>
 
+#include "imgui.h"
+
 #include "2s2h/BenPort.h"
 #include "2s2h/ShipInit.hpp"
 #include <libultraship/libultraship.h>
@@ -78,9 +80,7 @@ static bool ComputeAndUpdateDiff(uint8_t* baseline, const uint8_t* current, size
             size_t pos = pageData.size();
             try {
                 pageData.resize(pos + PAGE_SIZE, 0);
-            } catch (const std::bad_alloc&) {
-                return false;
-            }
+            } catch (const std::bad_alloc&) { return false; }
             // Save old baseline page (for rewind)
             memcpy(pageData.data() + pos, baseline + offset, len);
             // Update baseline to current
@@ -139,12 +139,49 @@ static bool sIsRewinding = false;
 static std::atomic<bool> sRewindRequested{ false };
 static int sFrameCounter = 0;
 static PlayState* sLastPlayState = nullptr;
+static int sRewindTotalFrames = 0;
+static int sRewindPosition = 0;
 
 // Baseline snapshots for diffing (one copy of each heap, ~52 MB total)
 static std::vector<uint8_t> sBaselineSys;
 static std::vector<uint8_t> sBaselineAudio;
 static RewindSmallState sBaselineSmallState;
 static bool sHasBaseline = false;
+
+// ImGui progress bar overlay shown during rewind
+class RewindOverlay : public Ship::GuiWindow {
+  public:
+    using Ship::GuiWindow::GuiWindow;
+    void InitElement() override {
+    }
+    void DrawElement() override {
+    }
+    void UpdateElement() override {
+    }
+    void Draw() override {
+        if (!sIsRewinding || sRewindTotalFrames <= 0) {
+            return;
+        }
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        float barWidth = 300.0f;
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + (viewport->WorkSize.x - barWidth) / 2,
+                                       viewport->WorkPos.y + viewport->WorkSize.y - 50),
+                                ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(barWidth, 0), ImGuiCond_Always);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.65f));
+        ImGui::Begin("##RewindProgress", nullptr,
+                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
+                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoDocking |
+                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize);
+        float progress = static_cast<float>(sRewindPosition) / static_cast<float>(sRewindTotalFrames);
+        char overlay[64];
+        snprintf(overlay, sizeof(overlay), "%d / %d", sRewindPosition, sRewindTotalFrames);
+        ImGui::ProgressBar(progress, ImVec2(barWidth - 16, 0), overlay);
+        ImGui::End();
+        ImGui::PopStyleColor();
+    }
+};
+static std::shared_ptr<RewindOverlay> sRewindOverlay;
 
 static void RewindCapture() {
     // Only capture during actual gameplay (not title screen, file select, etc.)
@@ -167,6 +204,8 @@ static void RewindCapture() {
         sRewindMemUsage = 0;
         sHasBaseline = false;
         sFrameCounter = 0;
+        sRewindTotalFrames = 0;
+        sRewindPosition = 0;
     }
 
     int captureInterval = CVarGetInteger("gCheats.RewindCaptureInterval", DEFAULT_CAPTURE_INTERVAL);
@@ -185,9 +224,7 @@ static void RewindCapture() {
         if (sBaselineAudio.size() != AUDIO_HEAP_SIZE) {
             sBaselineAudio.resize(AUDIO_HEAP_SIZE);
         }
-    } catch (const std::bad_alloc&) {
-        return;
-    }
+    } catch (const std::bad_alloc&) { return; }
 
     // First capture: just store baseline, no diff yet
     if (!sHasBaseline) {
@@ -231,21 +268,13 @@ static void RewindCapture() {
     sRewindBuffer.push_back(std::move(frame));
 }
 
-// Pop and apply the most recent diff frame for one rewind step.
+// Apply the most recent diff frame for one rewind step, then pop it.
 static void RewindApply() {
     if (sRewindBuffer.empty()) {
         Ship::Context::GetInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
             1.0f, true, "rewind buffer empty");
         return;
     }
-
-    // Pop back frame and apply it (one diff per frame for smooth rewind)
-    if (sRewindBuffer.size() > 1) {
-        sRewindMemUsage -= sRewindBuffer.back().GetBytes();
-        sRewindBuffer.pop_back();
-    }
-
-    const DiffFrame& frame = sRewindBuffer.back();
 
     // Save freshly-read controller input before heap restore — gPlayState->state.input
     // lives on the system heap and would be overwritten with old captured input, causing
@@ -255,6 +284,8 @@ static void RewindApply() {
         memcpy(savedInput, gPlayState->state.input, sizeof(savedInput));
     }
 
+    // Apply the back frame (most recent diff) to step back one capture
+    const DiffFrame& frame = sRewindBuffer.back();
     ApplyPageDiff(gSystemHeap, frame.sysPageIndices, frame.sysPageData, SYSTEM_HEAP_SIZE);
     ApplyPageDiff(gAudioHeap, frame.audioPageIndices, frame.audioPageData, AUDIO_HEAP_SIZE);
     RestoreSmallState(frame.smallState);
@@ -263,6 +294,11 @@ static void RewindApply() {
     if (gPlayState) {
         memcpy(gPlayState->state.input, savedInput, sizeof(savedInput));
     }
+
+    // Pop the applied frame and update tracking
+    sRewindMemUsage -= sRewindBuffer.back().GetBytes();
+    sRewindBuffer.pop_back();
+    sRewindPosition++;
 }
 
 static void RewindClear() {
@@ -277,6 +313,8 @@ static void RewindClear() {
     sRewindRequested.store(false);
     sFrameCounter = 0;
     sLastPlayState = nullptr;
+    sRewindTotalFrames = 0;
+    sRewindPosition = 0;
 }
 
 void RegisterRewind() {
@@ -284,6 +322,16 @@ void RegisterRewind() {
 
     if (!rewindEnabled) {
         RewindClear();
+    }
+
+    // Register ImGui overlay window (once)
+    if (!sRewindOverlay) {
+        auto* context = Ship::Context::GetInstance();
+        if (context && context->GetWindow() && context->GetWindow()->GetGui()) {
+            sRewindOverlay = std::make_shared<RewindOverlay>("gWindows.RewindOverlay", "Rewind Overlay");
+            context->GetWindow()->GetGui()->AddGuiWindow(sRewindOverlay);
+            sRewindOverlay->Show();
+        }
     }
 
     // Input hook: detect M1+DPad Left, suppress game input, set rewind flag
@@ -298,15 +346,21 @@ void RegisterRewind() {
         if (m1Held && dpadLeftHeld) {
             if (!sIsRewinding) {
                 sIsRewinding = true;
+                sRewindTotalFrames = static_cast<int>(sRewindBuffer.size());
+                sRewindPosition = 0;
             }
             sRewindRequested.store(true);
             memset(input, 0, sizeof(Input));
         } else if (sIsRewinding) {
-            // Rewind released: discard history and rebuild baseline
+            // Rewind released: keep remaining buffer, refresh baseline to current state
             sIsRewinding = false;
-            sRewindBuffer.clear();
-            sRewindMemUsage = 0;
-            sHasBaseline = false;
+            sRewindPosition = 0;
+            if (gSystemHeap && gAudioHeap && sBaselineSys.size() == SYSTEM_HEAP_SIZE &&
+                sBaselineAudio.size() == AUDIO_HEAP_SIZE) {
+                memcpy(sBaselineSys.data(), gSystemHeap, SYSTEM_HEAP_SIZE);
+                memcpy(sBaselineAudio.data(), gAudioHeap, AUDIO_HEAP_SIZE);
+                CaptureSmallState(sBaselineSmallState);
+            }
         }
     });
 
@@ -326,9 +380,8 @@ void RegisterRewind() {
     });
 }
 
-static RegisterShipInitFunc initRewind(RegisterRewind,
-                                       { "gCheats.RewindEnabled", "gCheats.RewindCaptureInterval",
-                                         "gCheats.RewindMaxMemoryMB" });
+static RegisterShipInitFunc initRewind(RegisterRewind, { "gCheats.RewindEnabled", "gCheats.RewindCaptureInterval",
+                                                         "gCheats.RewindMaxMemoryMB" });
 
 extern "C" void ProcessRewind() {
     // Rewind processing is handled entirely via hooks

@@ -1081,9 +1081,21 @@ void BenMenu::AddEnhancements() {
         .CVar("gCheats.RewindEnabled")
         .Options(CheckboxOptions().Tooltip(
             "Hold M1 + DPad Left to rewind gameplay.\n\n"
-            "Captures game state every 2 frames and stores page-level diffs\n"
-            "in a ring buffer (~5 seconds of history, max 64 MB).\n"
+            "Captures game state diffs and stores them in a ring buffer.\n"
+            "Diff computation runs on Core 2 to avoid impacting game performance.\n"
             "Game input is suppressed while rewinding."));
+    AddWidget(path, "Rewind Capture Interval: %d frames", WIDGET_CVAR_SLIDER_INT)
+        .CVar("gCheats.RewindCaptureInterval")
+        .Options(IntSliderOptions().Min(1).Max(30).DefaultValue(10).Tooltip(
+            "How often to capture a rewind frame (in game frames).\n"
+            "Lower = smoother rewind but more memory usage.\n"
+            "Default: 10 (6 captures/sec at 60fps)."));
+    AddWidget(path, "Rewind Max Memory: %d MB", WIDGET_CVAR_SLIDER_INT)
+        .CVar("gCheats.RewindMaxMemoryMB")
+        .Options(IntSliderOptions().Min(16).Max(256).DefaultValue(64).Tooltip(
+            "Maximum memory for the rewind buffer (in MB).\n"
+            "Old frames are evicted when this limit is reached.\n"
+            "Default: 64 MB."));
     AddWidget(path, "Stop Time in Dungeons", WIDGET_CVAR_COMBOBOX)
         .CVar("gCheats.TempleTimeStop")
         .Options(

@@ -1,11 +1,19 @@
 #include "Rewind.h"
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <mutex>
 #include <new>
+#include <thread>
 #include <vector>
 #include <spdlog/spdlog.h>
+
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 
 #include "2s2h/BenPort.h"
 #include "2s2h/ShipInit.hpp"
@@ -173,18 +181,113 @@ static bool sIsRewinding = false;
 static int sFrameCounter = 0;
 static size_t sRewindMemUsage = 0;
 
-// Configuration
-static constexpr int CAPTURE_INTERVAL = 2;                   // Capture every 2 frames
-static constexpr size_t MAX_BUFFER_FRAMES = 150;             // ~5 seconds at 60fps / 2 = 150 diffs
-static constexpr size_t MAX_MEMORY_BYTES = 64 * 1024 * 1024; // 64 MB max
+// Configuration defaults
+static constexpr int DEFAULT_CAPTURE_INTERVAL = 10;
+static constexpr int DEFAULT_MAX_MEMORY_MB = 64;
+
+// Worker thread for diff computation on Core 2
+struct CaptureJob {
+    std::vector<uint8_t> sysHeapCopy;
+    std::vector<uint8_t> audioHeapCopy;
+    RewindSmallState smallState;
+};
+
+static std::thread sWorkerThread;
+static std::mutex sWorkerMutex;
+static std::condition_variable sWorkerCV;
+static std::atomic<bool> sWorkerRunning{ false };
+static std::unique_ptr<CaptureJob> sPendingJob;
+static std::mutex sBufferMutex; // Protects sRewindBuffer and sRewindMemUsage
+
+static void WorkerThreadFunc() {
+#ifdef __SWITCH__
+    // Pin worker thread to Core 2 (barely used by game/render)
+    Result rc = svcSetThreadCoreMask(CUR_THREAD_HANDLE, 2, (1U << 2));
+    if (R_FAILED(rc)) {
+        SPDLOG_WARN("[2S2H] Rewind: Failed to pin worker to Core 2 (rc=0x{:X})", rc);
+    }
+#endif
+
+    while (sWorkerRunning.load()) {
+        std::unique_ptr<CaptureJob> job;
+        {
+            std::unique_lock<std::mutex> lock(sWorkerMutex);
+            sWorkerCV.wait(lock, [] { return sPendingJob != nullptr || !sWorkerRunning.load(); });
+            if (!sWorkerRunning.load()) {
+                break;
+            }
+            job = std::move(sPendingJob);
+        }
+
+        if (!job) {
+            continue;
+        }
+
+        // Compute diff between previous snapshot and captured heap
+        DiffFrame frame;
+        if (!sPrevSysSnapshot.ComputeDiff(job->sysHeapCopy.data(), SYSTEM_HEAP_SIZE, frame.sysPageIndices,
+                                          frame.sysPageData) ||
+            !sPrevAudioSnapshot.ComputeDiff(job->audioHeapCopy.data(), AUDIO_HEAP_SIZE, frame.audioPageIndices,
+                                            frame.audioPageData)) {
+            continue;
+        }
+
+        frame.smallState = job->smallState;
+        size_t frameBytes = frame.GetBytes();
+
+        int maxMemMB = CVarGetInteger("gCheats.RewindMaxMemoryMB", DEFAULT_MAX_MEMORY_MB);
+        size_t maxMemBytes = static_cast<size_t>(maxMemMB) * 1024 * 1024;
+
+        {
+            std::lock_guard<std::mutex> lock(sBufferMutex);
+
+            // Evict old frames if over memory budget
+            while (!sRewindBuffer.empty() && sRewindMemUsage + frameBytes > maxMemBytes) {
+                sRewindMemUsage -= sRewindBuffer.front().GetBytes();
+                sRewindBuffer.pop_front();
+            }
+
+            sRewindMemUsage += frameBytes;
+            sRewindBuffer.push_back(std::move(frame));
+        }
+
+        // Update previous snapshots from the captured data
+        memcpy(sPrevSysSnapshot.data.data(), job->sysHeapCopy.data(), SYSTEM_HEAP_SIZE);
+        memcpy(sPrevAudioSnapshot.data.data(), job->audioHeapCopy.data(), AUDIO_HEAP_SIZE);
+    }
+}
+
+static void StartWorkerThread() {
+    if (sWorkerRunning.load()) {
+        return;
+    }
+    sWorkerRunning.store(true);
+    sWorkerThread = std::thread(WorkerThreadFunc);
+}
+
+static void StopWorkerThread() {
+    if (!sWorkerRunning.load()) {
+        return;
+    }
+    sWorkerRunning.store(false);
+    sWorkerCV.notify_one();
+    if (sWorkerThread.joinable()) {
+        sWorkerThread.join();
+    }
+}
 
 static void RewindCapture() {
     if (!gPlayState) {
         return;
     }
 
+    int captureInterval = CVarGetInteger("gCheats.RewindCaptureInterval", DEFAULT_CAPTURE_INTERVAL);
+    if (captureInterval < 1) {
+        captureInterval = 1;
+    }
+
     sFrameCounter++;
-    if (sFrameCounter % CAPTURE_INTERVAL != 0) {
+    if (sFrameCounter % captureInterval != 0) {
         return;
     }
 
@@ -196,36 +299,40 @@ static void RewindCapture() {
         }
         sRewindInitialized = true;
         sRewindMemUsage = SYSTEM_HEAP_SIZE + AUDIO_HEAP_SIZE; // Base snapshots
+        StartWorkerThread();
         return;
     }
 
-    // Compute diff between previous snapshot and current live state
-    DiffFrame frame;
-    if (!sPrevSysSnapshot.ComputeDiff(gSystemHeap, SYSTEM_HEAP_SIZE, frame.sysPageIndices, frame.sysPageData) ||
-        !sPrevAudioSnapshot.ComputeDiff(gAudioHeap, AUDIO_HEAP_SIZE, frame.audioPageIndices, frame.audioPageData)) {
+    // Check if worker is still processing previous job
+    {
+        std::lock_guard<std::mutex> lock(sWorkerMutex);
+        if (sPendingJob) {
+            return; // Worker hasn't consumed the last job yet, skip this frame
+        }
+    }
+
+    // Snapshot heaps on the main thread (fast memcpy) and hand off to worker
+    auto job = std::make_unique<CaptureJob>();
+    try {
+        job->sysHeapCopy.resize(SYSTEM_HEAP_SIZE);
+        job->audioHeapCopy.resize(AUDIO_HEAP_SIZE);
+    } catch (const std::bad_alloc&) {
         return;
     }
+    memcpy(job->sysHeapCopy.data(), gSystemHeap, SYSTEM_HEAP_SIZE);
+    memcpy(job->audioHeapCopy.data(), gAudioHeap, AUDIO_HEAP_SIZE);
+    CaptureSmallState(job->smallState);
 
-    CaptureSmallState(frame.smallState);
-
-    size_t frameBytes = frame.GetBytes();
-
-    // Evict old frames if over memory or count budget
-    while (!sRewindBuffer.empty() &&
-           (sRewindBuffer.size() >= MAX_BUFFER_FRAMES || sRewindMemUsage + frameBytes > MAX_MEMORY_BYTES)) {
-        sRewindMemUsage -= sRewindBuffer.front().GetBytes();
-        sRewindBuffer.pop_front();
+    {
+        std::lock_guard<std::mutex> lock(sWorkerMutex);
+        sPendingJob = std::move(job);
     }
-
-    sRewindMemUsage += frameBytes;
-    sRewindBuffer.push_back(std::move(frame));
-
-    // Update snapshots to current state for next diff
-    sPrevSysSnapshot.Capture(gSystemHeap, SYSTEM_HEAP_SIZE);
-    sPrevAudioSnapshot.Capture(gAudioHeap, AUDIO_HEAP_SIZE);
+    sWorkerCV.notify_one();
 }
 
 static bool RewindStep() {
+    std::lock_guard<std::mutex> lock(sBufferMutex);
+
     if (sRewindBuffer.empty()) {
         return false;
     }
@@ -250,10 +357,18 @@ static bool RewindStep() {
 }
 
 static void RewindClear() {
-    sRewindBuffer.clear();
+    StopWorkerThread();
+    {
+        std::lock_guard<std::mutex> lock(sBufferMutex);
+        sRewindBuffer.clear();
+        sRewindMemUsage = 0;
+    }
+    {
+        std::lock_guard<std::mutex> lock(sWorkerMutex);
+        sPendingJob.reset();
+    }
     sRewindInitialized = false;
     sFrameCounter = 0;
-    sRewindMemUsage = 0;
 }
 
 void RegisterRewind() {
@@ -300,7 +415,9 @@ void RegisterRewind() {
     });
 }
 
-static RegisterShipInitFunc initRewind(RegisterRewind, { "gCheats.RewindEnabled" });
+static RegisterShipInitFunc initRewind(RegisterRewind,
+                                       { "gCheats.RewindEnabled", "gCheats.RewindCaptureInterval",
+                                         "gCheats.RewindMaxMemoryMB" });
 
 extern "C" void ProcessRewind() {
     // Rewind processing is handled entirely via hooks, this is a no-op placeholder

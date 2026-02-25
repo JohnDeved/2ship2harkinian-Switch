@@ -208,6 +208,22 @@ class RewindOverlay : public Ship::GuiWindow {
 };
 static std::shared_ptr<RewindOverlay> sRewindOverlay;
 
+// Mask/form swaps briefly run a special player update path that mutates object
+// loading state outside normal per-frame gameplay assumptions. Capturing or
+// applying rewind inside that window can deserialize inconsistent state.
+static bool IsPlayerInFormTransition() {
+    if (gPlayState == nullptr) {
+        return false;
+    }
+
+    Player* player = GET_PLAYER(gPlayState);
+    if (player == nullptr) {
+        return false;
+    }
+
+    return (player->actor.update == func_8012301C) || (player->actor.shape.rot.x != 0) || (player->actor.shape.rot.z != 0);
+}
+
 static void RewindCapture() {
     // Only capture during actual gameplay (not title screen, file select, etc.)
     if (!gPlayState || !gSystemHeap || !gAudioHeap || gSaveContext.gameMode != GAMEMODE_NORMAL ||
@@ -219,6 +235,10 @@ static void RewindCapture() {
     // Restoring UI state causes visual glitches and broken menu rendering.
     if (gPlayState->pauseCtx.state != PAUSE_STATE_OFF || gPlayState->msgCtx.msgMode != MSGMODE_NONE ||
         gPlayState->transitionMode != TRANS_MODE_OFF) {
+        return;
+    }
+
+    if (IsPlayerInFormTransition()) {
         return;
     }
 
@@ -295,6 +315,10 @@ static void RewindCapture() {
 
 // Apply the most recent diff frame for one rewind step, then pop it.
 static void RewindApply() {
+    if (IsPlayerInFormTransition()) {
+        return;
+    }
+
     if (sRewindBuffer.empty()) {
         Ship::Context::GetInstance()->GetWindow()->GetGui()->GetGameOverlay()->TextDrawNotification(
             1.0f, true, "rewind buffer empty");

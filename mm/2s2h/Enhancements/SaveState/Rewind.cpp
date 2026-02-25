@@ -65,8 +65,9 @@ struct DiffFrame {
     RewindSmallState smallState;
 
     size_t GetBytes() const {
-        return sysPageData.size() + audioPageData.size() + sizeof(RewindSmallState) +
-               sysPageIndices.size() * sizeof(uint32_t) + audioPageIndices.size() * sizeof(uint32_t);
+        // Use capacity() to track actual heap allocation (vectors may over-allocate)
+        return sysPageData.capacity() + audioPageData.capacity() + sizeof(RewindSmallState) +
+               sysPageIndices.capacity() * sizeof(uint32_t) + audioPageIndices.capacity() * sizeof(uint32_t);
     }
 };
 
@@ -107,8 +108,12 @@ static void ApplyPageDiff(uint8_t* heap, const std::vector<uint32_t>& indices, c
 static void CaptureSmallState(RewindSmallState& state) {
     memcpy(&state.saveContextCopy, &gSaveContext, sizeof(SaveContext));
     memcpy(&state.lightBufferCopy, &sLightsBuffer, sizeof(LightsBuffer));
-    memcpy(&state.mtxStackCopy, sMatrixStack, sizeof(MtxF) * MATRIX_STACK_SIZE);
-    memcpy(&state.currentMtxCopy, sCurrentMatrix, sizeof(MtxF));
+    if (sMatrixStack != nullptr) {
+        memcpy(&state.mtxStackCopy, sMatrixStack, sizeof(MtxF) * MATRIX_STACK_SIZE);
+    }
+    if (sCurrentMatrix != nullptr) {
+        memcpy(&state.currentMtxCopy, sCurrentMatrix, sizeof(MtxF));
+    }
     memcpy(&state.audioCtxCopy, &gAudioCtx, sizeof(AudioContext));
     memcpy(&state.activeSeqsCopy, gActiveSeqs, sizeof(ActiveSequence) * NUM_SEQ_PLAYERS);
 
@@ -134,8 +139,12 @@ static void CaptureSmallState(RewindSmallState& state) {
 static void RestoreSmallState(const RewindSmallState& state) {
     memcpy(&gSaveContext, &state.saveContextCopy, sizeof(SaveContext));
     memcpy(&sLightsBuffer, &state.lightBufferCopy, sizeof(LightsBuffer));
-    memcpy(sMatrixStack, &state.mtxStackCopy, sizeof(MtxF) * MATRIX_STACK_SIZE);
-    memcpy(sCurrentMatrix, &state.currentMtxCopy, sizeof(MtxF));
+    if (sMatrixStack != nullptr) {
+        memcpy(sMatrixStack, &state.mtxStackCopy, sizeof(MtxF) * MATRIX_STACK_SIZE);
+    }
+    if (sCurrentMatrix != nullptr) {
+        memcpy(sCurrentMatrix, &state.currentMtxCopy, sizeof(MtxF));
+    }
     memcpy(&gAudioCtx, &state.audioCtxCopy, sizeof(AudioContext));
     memcpy(gActiveSeqs, &state.activeSeqsCopy, sizeof(ActiveSequence) * NUM_SEQ_PLAYERS);
 
@@ -179,6 +188,7 @@ static bool sIsRewinding = false;
 static std::atomic<bool> sRewindRequested{ false }; // Set by input hook, consumed by safe-point hook
 static int sFrameCounter = 0;
 static size_t sRewindMemUsage = 0;
+static PlayState* sLastPlayState = nullptr; // Track scene transitions
 
 // Worker thread for diff computation on Core 2.
 // Uses double-buffering: main thread writes to sJobBuffer, worker reads from sWorkerBuffer.
@@ -186,6 +196,7 @@ static size_t sRewindMemUsage = 0;
 static std::thread sWorkerThread;
 static std::mutex sWorkerMutex;
 static std::condition_variable sWorkerCV;
+static std::condition_variable sPauseAckCV; // For PauseWorker to wait on
 static std::atomic<bool> sWorkerRunning{ false };
 static std::atomic<bool> sWorkerPaused{ false };  // Cooperative pause for rewind steps
 static std::atomic<bool> sWorkerAckPause{ false }; // Worker acknowledges pause
@@ -234,6 +245,7 @@ static void WorkerThreadFunc() {
             // Handle cooperative pause: acknowledge and wait until unpaused
             if (sWorkerPaused.load()) {
                 sWorkerAckPause.store(true);
+                sPauseAckCV.notify_one(); // Wake up PauseWorker
                 sWorkerCV.wait(lock, [] { return !sWorkerPaused.load() || !sWorkerRunning.load(); });
                 sWorkerAckPause.store(false);
                 if (!sWorkerRunning.load()) {
@@ -332,17 +344,16 @@ static void StopWorkerThread() {
 }
 
 // Cooperative pause: ask worker to pause and wait for acknowledgement.
-// Non-blocking if worker is idle; blocks briefly if mid-diff.
+// Uses condition variable instead of busy-wait to avoid spinning on the main thread.
 static void PauseWorker() {
     if (!sWorkerRunning.load()) {
         return;
     }
     sWorkerPaused.store(true);
     sWorkerCV.notify_one();
-    // Wait for worker to acknowledge (or if it's already idle, it will ack on next wakeup)
-    while (sWorkerRunning.load() && !sWorkerAckPause.load()) {
-        std::this_thread::yield();
-    }
+    // Wait for worker to acknowledge via condition variable
+    std::unique_lock<std::mutex> lock(sWorkerMutex);
+    sPauseAckCV.wait(lock, [] { return sWorkerAckPause.load() || !sWorkerRunning.load(); });
 }
 
 static void ResumeWorker() {
@@ -353,6 +364,21 @@ static void ResumeWorker() {
 static void RewindCapture() {
     if (!gPlayState) {
         return;
+    }
+
+    // Detect scene transitions: if gPlayState pointer changed, the scene has been
+    // torn down and re-initialized. Any existing diffs are from the old scene and
+    // would corrupt state if applied to the new scene.
+    if (gPlayState != sLastPlayState) {
+        sLastPlayState = gPlayState;
+        // Flush the ring buffer and reset the worker baseline
+        {
+            std::lock_guard<std::mutex> lock(sBufferMutex);
+            sRewindBuffer.clear();
+            sRewindMemUsage = 0;
+        }
+        sWorkerHasPrev.store(false);
+        sFrameCounter = 0;
     }
 
     int captureInterval = CVarGetInteger("gCheats.RewindCaptureInterval", DEFAULT_CAPTURE_INTERVAL);
@@ -454,6 +480,7 @@ static void RewindClear() {
     sIsRewinding = false;
     sRewindRequested.store(false);
     sFrameCounter = 0;
+    sLastPlayState = nullptr;
 }
 
 void RegisterRewind() {
@@ -466,12 +493,8 @@ void RegisterRewind() {
     // Input hook: detect M1+DPad Left and suppress input, set rewind flag
     COND_HOOK(OnPassPlayerInputs, rewindEnabled, [](Input* input) {
         if (!gPlayState) {
-            // Ensure rewind system and worker are in a clean, non-paused state
-            sIsRewinding = false;
-            sRewindRequested.store(false);
-            sRewindInitialized = false;
-            sWorkerHasPrev.store(false);
-            ResumeWorker();
+            // Play state torn down: fully reset rewind system and worker/buffers
+            RewindClear();
             return;
         }
 
@@ -485,7 +508,14 @@ void RegisterRewind() {
         } else {
             if (sIsRewinding) {
                 sIsRewinding = false;
-                // Restart worker with fresh baseline after rewind ends
+                // Clear rewind history and reset baseline after rewind ends.
+                // Old diffs from the pre-rewind timeline would be invalid since
+                // the game state has diverged.
+                {
+                    std::lock_guard<std::mutex> lock(sBufferMutex);
+                    sRewindBuffer.clear();
+                    sRewindMemUsage = 0;
+                }
                 sRewindInitialized = false;
                 sWorkerHasPrev.store(false);
                 ResumeWorker();
@@ -505,7 +535,21 @@ void RegisterRewind() {
 
     // Capture hook: record diffs when not rewinding
     COND_HOOK(OnGameStateUpdate, rewindEnabled, []() {
-        if (!gPlayState || sIsRewinding) {
+        if (!gPlayState) {
+            // Scene torn down: flush rewind buffer to prevent stale cross-scene diffs.
+            // Don't call full RewindClear() here — just reset the buffer and baseline.
+            if (sLastPlayState != nullptr) {
+                {
+                    std::lock_guard<std::mutex> lock(sBufferMutex);
+                    sRewindBuffer.clear();
+                    sRewindMemUsage = 0;
+                }
+                sWorkerHasPrev.store(false);
+                sLastPlayState = nullptr;
+            }
+            return;
+        }
+        if (sIsRewinding) {
             return;
         }
         RewindCapture();

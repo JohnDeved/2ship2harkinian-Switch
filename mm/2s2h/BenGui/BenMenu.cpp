@@ -1039,7 +1039,8 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "Hold M1 + DPad Left to rewind gameplay.\n\n"
             "Captures game state diffs and stores them in a ring buffer.\n"
-            "Diff computation runs on Core 2 to avoid impacting game performance.\n"
+            "Diff computation runs on a background thread (on Switch, pinned to Core 2) to avoid impacting game "
+            "performance.\n"
             "Game input is suppressed while rewinding."));
     AddWidget(path, "Rewind Capture Interval: %d frames", WIDGET_CVAR_SLIDER_INT)
         .CVar("gCheats.RewindCaptureInterval")

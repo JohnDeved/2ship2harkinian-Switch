@@ -5842,6 +5842,11 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
 
             assert(0 && "active framebuffer was never reset back to original");
         }
+
+        if (mPostProcessCallback && mGfxFrameBuffer) {
+            mGfxFrameBuffer =
+                mPostProcessCallback(mGfxFrameBuffer, mCurDimensions.width, mCurDimensions.height);
+        }
     }
 
     if (mProfilingEnabled) {
@@ -6062,6 +6067,14 @@ void Interpreter::SetProfilingEnabled(bool enabled) {
 
 bool Interpreter::IsProfilingEnabled() const {
     return mProfilingEnabled;
+}
+
+void Interpreter::SetPostProcessCallback(PostProcessFunc callback) {
+    mPostProcessCallback = callback;
+}
+
+Interpreter::PostProcessFunc Interpreter::GetPostProcessCallback() const {
+    return mPostProcessCallback;
 }
 
 } // namespace Fast

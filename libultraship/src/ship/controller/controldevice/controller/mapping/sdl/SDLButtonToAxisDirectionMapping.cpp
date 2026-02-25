@@ -26,9 +26,12 @@ float SDLButtonToAxisDirectionMapping::GetNormalizedAxisDirectionValue() {
              mPortIndex)) {
         if (IS_RAW_JOYSTICK_BUTTON(mControllerButton)) {
             auto joystick = SDL_GameControllerGetJoystick(gamepad);
-            if (joystick != nullptr &&
-                SDL_JoystickGetButton(joystick, RAW_JOYSTICK_BUTTON_INDEX(mControllerButton))) {
-                return MAX_AXIS_RANGE;
+            if (joystick != nullptr) {
+                const int buttonIndex = RAW_JOYSTICK_BUTTON_INDEX(mControllerButton);
+                if (buttonIndex >= 0 && buttonIndex < SDL_JoystickNumButtons(joystick) &&
+                    SDL_JoystickGetButton(joystick, buttonIndex)) {
+                    return MAX_AXIS_RANGE;
+                }
             }
         } else {
             if (SDL_GameControllerGetButton(gamepad, static_cast<SDL_GameControllerButton>(mControllerButton))) {

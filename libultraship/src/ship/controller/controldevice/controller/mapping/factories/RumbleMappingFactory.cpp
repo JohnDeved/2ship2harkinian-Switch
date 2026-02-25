@@ -1,5 +1,6 @@
 #include "ship/controller/controldevice/controller/mapping/factories/RumbleMappingFactory.h"
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLRumbleMapping.h"
+#include "ship/controller/controldevice/controller/mapping/sdl/SDLButtonToAnyMapping.h"
 #include "ship/config/ConsoleVariable.h"
 #include "ship/utils/StringHelper.h"
 #include "ship/Context.h"
@@ -91,28 +92,10 @@ std::shared_ptr<ControllerRumbleMapping> RumbleMappingFactory::CreateRumbleMappi
         }
 
         // Fallback: check raw joystick buttons not covered by SDL GameController mapping
-        auto joystick = SDL_GameControllerGetJoystick(gamepad);
-        if (joystick != nullptr) {
-            int numButtons = SDL_JoystickNumButtons(joystick);
-            for (int32_t jBtn = 0; jBtn < numButtons; jBtn++) {
-                if (!SDL_JoystickGetButton(joystick, jBtn)) {
-                    continue;
-                }
-                bool isMapped = false;
-                for (int32_t gcBtn = SDL_CONTROLLER_BUTTON_A; gcBtn < SDL_CONTROLLER_BUTTON_MAX; gcBtn++) {
-                    SDL_GameControllerButtonBind bind = SDL_GameControllerGetBindForButton(
-                        gamepad, static_cast<SDL_GameControllerButton>(gcBtn));
-                    if (bind.bindType == SDL_CONTROLLER_BINDTYPE_BUTTON && bind.value.button == jBtn) {
-                        isMapped = true;
-                        break;
-                    }
-                }
-                if (!isMapped) {
-                    mapping = std::make_shared<SDLRumbleMapping>(portIndex, DEFAULT_LOW_FREQUENCY_RUMBLE_PERCENTAGE,
-                                                                 DEFAULT_HIGH_FREQUENCY_RUMBLE_PERCENTAGE);
-                    break;
-                }
-            }
+        int32_t rawBtn = FindFirstUnmappedRawJoystickButton(gamepad);
+        if (rawBtn >= 0) {
+            mapping = std::make_shared<SDLRumbleMapping>(portIndex, DEFAULT_LOW_FREQUENCY_RUMBLE_PERCENTAGE,
+                                                         DEFAULT_HIGH_FREQUENCY_RUMBLE_PERCENTAGE);
         }
     }
 

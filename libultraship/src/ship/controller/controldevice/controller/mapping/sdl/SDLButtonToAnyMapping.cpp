@@ -73,4 +73,35 @@ std::string SDLButtonToAnyMapping::GetGenericButtonName() {
 std::string SDLButtonToAnyMapping::GetPhysicalDeviceName() {
     return "SDL Gamepad";
 }
+
+int32_t FindFirstUnmappedRawJoystickButton(SDL_GameController* gamepad) {
+    auto joystick = SDL_GameControllerGetJoystick(gamepad);
+    if (joystick == nullptr) {
+        return -1;
+    }
+
+    int numButtons = SDL_JoystickNumButtons(joystick);
+    for (int32_t jBtn = 0; jBtn < numButtons; jBtn++) {
+        if (!SDL_JoystickGetButton(joystick, jBtn)) {
+            continue;
+        }
+
+        // Skip if this joystick button is already handled by the game controller mapping
+        bool isMapped = false;
+        for (int32_t gcBtn = SDL_CONTROLLER_BUTTON_A; gcBtn < SDL_CONTROLLER_BUTTON_MAX; gcBtn++) {
+            SDL_GameControllerButtonBind bind =
+                SDL_GameControllerGetBindForButton(gamepad, static_cast<SDL_GameControllerButton>(gcBtn));
+            if (bind.bindType == SDL_CONTROLLER_BINDTYPE_BUTTON && bind.value.button == jBtn) {
+                isMapped = true;
+                break;
+            }
+        }
+
+        if (!isMapped) {
+            return jBtn;
+        }
+    }
+
+    return -1;
+}
 } // namespace Ship

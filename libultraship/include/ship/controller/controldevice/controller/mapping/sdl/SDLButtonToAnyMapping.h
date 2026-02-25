@@ -10,6 +10,11 @@
 #define MAKE_RAW_JOYSTICK_BUTTON(idx) (SDL_CONTROLLER_BUTTON_MAX + (idx))
 
 namespace Ship {
+
+// Returns the first pressed raw joystick button index that is NOT already
+// mapped by the SDL GameController layer, or -1 if none found.
+int32_t FindFirstUnmappedRawJoystickButton(SDL_GameController* gamepad);
+
 class SDLButtonToAnyMapping : virtual public ControllerInputMapping {
   public:
     SDLButtonToAnyMapping(int32_t sdlControllerButton);

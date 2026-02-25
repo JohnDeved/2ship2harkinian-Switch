@@ -285,10 +285,8 @@ void main() {
         outColor.rgb *= Mask(gl_FragCoord.xy * 1.000001);
 
 #ifdef GL_ES
-    vec2 bt = pos;
-    if (bt.x > 0.0001 && bt.x < 0.9999 && bt.y > 0.0001 && bt.y < 0.9999)
-        outColor.rgb = outColor.rgb;
-    else
+    // Black out pixels outside the valid area (GLES border clamp workaround).
+    if (pos.x < 0.0001 || pos.x > 0.9999 || pos.y < 0.0001 || pos.y > 0.9999)
         outColor.rgb = vec3(0.0);
 #endif
 

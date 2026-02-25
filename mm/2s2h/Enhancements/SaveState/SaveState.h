@@ -3,14 +3,12 @@
 
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <queue>
 #include <unordered_map>
 
 enum class SaveStateReturn {
     SUCCESS,
     FAIL_INVALID_SLOT,
-    FAIL_NO_MEMORY,
     FAIL_STATE_EMPTY,
     FAIL_WRONG_GAMESTATE,
     FAIL_BAD_REQUEST,
@@ -33,7 +31,7 @@ class SaveState {
     SaveState(unsigned int slot);
     ~SaveState();
 
-    void Save();
+    bool Save();
     void Load();
 
   private:
@@ -59,7 +57,6 @@ class SaveStateMgr {
     unsigned int currentSlot;
     std::unordered_map<unsigned int, std::shared_ptr<SaveState>> states;
     std::queue<SaveStateRequest> requests;
-    std::mutex mutex;
 };
 
 #ifdef __cplusplus

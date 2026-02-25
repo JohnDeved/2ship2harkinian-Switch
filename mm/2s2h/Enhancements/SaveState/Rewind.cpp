@@ -19,9 +19,13 @@ extern "C" {
 #include "z64save.h"
 #include "system_malloc.h"
 #include "z64malloc.h"
+#include "main.h"
 #include "variables.h"
 #include "functions.h"
 #include "sequence.h"
+#include "z64effect_ss.h"
+#include "z64pause_menu.h"
+#include "z64game.h"
 extern Arena sZeldaArena;
 }
 
@@ -51,10 +55,15 @@ struct RewindSmallState {
     LightsBuffer lightBufferCopy;
     MtxF mtxStackCopy[MATRIX_STACK_SIZE];
     MtxF currentMtxCopy;
+    uintptr_t segmentsCopy[NUM_SEGMENTS];
     Arena systemArenaCopy;
     Arena zeldaArenaCopy;
     AudioContext audioCtxCopy;
     ActiveSequence activeSeqsCopy[NUM_SEQ_PLAYERS];
+    ActorOverlay actorOverlayTableCopy[ACTOR_ID_MAX];
+    EffectSsOverlay effectSsOverlayTableCopy[EFFECT_SS_TYPE_MAX];
+    KaleidoMgrOverlay kaleidoMgrOverlayTableCopy[KALEIDO_OVL_MAX];
+    GameStateOverlay gameStateOverlayTableCopy[GAMESTATE_ID_MAX];
 };
 
 struct DiffFrame {
@@ -113,10 +122,15 @@ static void CaptureSmallState(RewindSmallState& state) {
     if (sCurrentMatrix != nullptr) {
         memcpy(&state.currentMtxCopy, sCurrentMatrix, sizeof(MtxF));
     }
+    memcpy(state.segmentsCopy, gSegments, sizeof(gSegments));
     memcpy(&state.systemArenaCopy, &gSystemArena, sizeof(Arena));
     memcpy(&state.zeldaArenaCopy, &sZeldaArena, sizeof(Arena));
     memcpy(&state.audioCtxCopy, &gAudioCtx, sizeof(AudioContext));
     memcpy(state.activeSeqsCopy, gActiveSeqs, sizeof(ActiveSequence) * NUM_SEQ_PLAYERS);
+    memcpy(state.actorOverlayTableCopy, gActorOverlayTable, sizeof(gActorOverlayTable));
+    memcpy(state.effectSsOverlayTableCopy, gEffectSsOverlayTable, sizeof(gEffectSsOverlayTable));
+    memcpy(state.kaleidoMgrOverlayTableCopy, gKaleidoMgrOverlayTable, sizeof(gKaleidoMgrOverlayTable));
+    memcpy(state.gameStateOverlayTableCopy, gGameStateOverlayTable, sizeof(gGameStateOverlayTable));
 }
 
 static void RestoreSmallState(const RewindSmallState& state) {
@@ -128,10 +142,15 @@ static void RestoreSmallState(const RewindSmallState& state) {
     if (sCurrentMatrix != nullptr) {
         memcpy(sCurrentMatrix, &state.currentMtxCopy, sizeof(MtxF));
     }
+    memcpy(gSegments, state.segmentsCopy, sizeof(gSegments));
     memcpy(&gSystemArena, &state.systemArenaCopy, sizeof(Arena));
     memcpy(&sZeldaArena, &state.zeldaArenaCopy, sizeof(Arena));
     memcpy(&gAudioCtx, &state.audioCtxCopy, sizeof(AudioContext));
     memcpy(gActiveSeqs, state.activeSeqsCopy, sizeof(ActiveSequence) * NUM_SEQ_PLAYERS);
+    memcpy(gActorOverlayTable, state.actorOverlayTableCopy, sizeof(gActorOverlayTable));
+    memcpy(gEffectSsOverlayTable, state.effectSsOverlayTableCopy, sizeof(gEffectSsOverlayTable));
+    memcpy(gKaleidoMgrOverlayTable, state.kaleidoMgrOverlayTableCopy, sizeof(gKaleidoMgrOverlayTable));
+    memcpy(gGameStateOverlayTable, state.gameStateOverlayTableCopy, sizeof(gGameStateOverlayTable));
 
     if (gPlayState != nullptr) {
         gPlayState->pauseCtx.state = 0;

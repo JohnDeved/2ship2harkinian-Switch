@@ -924,10 +924,10 @@ void BenMenu::AddEnhancements() {
             }
         })
         .Options(CheckboxOptions().Tooltip("Enables debug camera control."));
-    AddWidget(path, "R3 Toggle Debug Camera", WIDGET_CVAR_CHECKBOX)
+    AddWidget(path, "M1 + R3 Toggle Debug Camera", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Camera.DebugCam.RStickToggle")
         .Options(CheckboxOptions().Tooltip(
-            "When enabled, pressing the right stick (R3) will toggle the debug camera on and off.\n"
+            "When enabled, pressing M1 + right stick (R3) will toggle the debug camera on and off.\n"
             "This also works when Free Look is enabled."));
     AddWidget(path, "Invert Camera X Axis", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Camera.RightStick.InvertXAxis")

@@ -1,6 +1,7 @@
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
+#include "2s2h/BenPort.h"
 #include "CameraUtils.h"
 #include <SDL2/SDL.h>
 #include <ship/Context.h>
@@ -256,7 +257,13 @@ void RegisterDebugCam() {
         if (!gPlayState) {
             return;
         }
-        bool r3Pressed = CheckR3Pressed();
+        s32 controllerPort = CVarGetInteger("gEnhancements.Camera.DebugCam.Port", CAMERA_DEBUG_DEFAULT_PORT) - 1;
+        if (controllerPort > 3 || controllerPort < 0) {
+            controllerPort = 0;
+        }
+        bool m1Held =
+            CHECK_BTN_ALL(gPlayState->state.input[controllerPort].cur.button, BTN_CUSTOM_MODIFIER1);
+        bool r3Pressed = CheckR3Pressed() && m1Held;
         if (r3Pressed && !sPrevR3State) {
             sDebugCamRStickActive = !sDebugCamRStickActive;
             sDebugCamRefreshParams = true;

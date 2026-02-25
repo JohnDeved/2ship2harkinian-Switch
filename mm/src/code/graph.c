@@ -34,7 +34,6 @@ OSTime sGraphPrevUpdateEndTime;
 void Graph_StartFrame();
 void Graph_ProcessGfxCommands(Gfx* commands);
 void Graph_ProcessFrame(void (*run_one_game_iter)(void));
-void ProcessSaveStateRequests(void);
 
 void Graph_FaultClient(void) {
     FaultDrawer_DrawText(30, 100, "ShowFrameBuffer PAGE 0/1");
@@ -427,7 +426,6 @@ void RunFrame() {
             //  uint64_t diff = (ticksB - ticksA) / (freq / 1000);
             //  printf("Frame simulated in %ims\n", diff);
             runFrameContext.state = 1;
-            ProcessSaveStateRequests();
             return;
         nextFrame:;
         }

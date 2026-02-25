@@ -21,7 +21,6 @@
 #include <vector>
 
 struct ImFont;
-class SaveStateMgr;
 
 const std::string customMessageTableID = "BaseGameOverrides";
 const std::string appShortName = "2ship";
@@ -38,7 +37,6 @@ class OTRGlobals {
     ImFont* fontMonoLargest;
 
     std::shared_ptr<Ship::Context> context;
-    std::shared_ptr<SaveStateMgr> gSaveStateMgr;
 
     OTRGlobals();
     ~OTRGlobals();

@@ -5,7 +5,6 @@
 #include "DeveloperTools/SaveEditor.h"
 #include "DeveloperTools/CollisionViewer.h"
 #include "2s2h/Enhancements/GfxPatcher/AuthenticGfxPatches.h"
-#include "2s2h/Enhancements/SaveState/SaveState.h"
 #include "2s2h/PresetManager/PresetManager.h"
 #include "HudEditor.h"
 #include "Notification.h"
@@ -1035,48 +1034,6 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Climb Anywhere", WIDGET_CVAR_CHECKBOX)
         .CVar("gCheats.ClimbAnywhere")
         .Options(CheckboxOptions().Tooltip("Allows climbing on most walls regardless of vines."));
-    AddWidget(path, "Save States", WIDGET_CUSTOM).CustomFunction([](WidgetInfo& info) {
-        UIWidgets::CVarCheckbox("Enable Save States", "gSaveStatesEnabled",
-                                CheckboxOptions().Tooltip("Enable save states."));
-        bool enabled = CVarGetInteger("gSaveStatesEnabled", 0) != 0;
-        if (!enabled) {
-            return;
-        }
-        auto mgr = OTRGlobals::Instance->gSaveStateMgr;
-        if (!mgr) {
-            return;
-        }
-        ImGui::Indent();
-        unsigned int slot = mgr->GetCurrentSlot();
-        ImGui::Text("Current Slot: %u", slot);
-        ImGui::SameLine();
-        if (UIWidgets::Button("-##slotDec", ButtonOptions().Size(Sizes::Inline).Tooltip("Previous slot"))) {
-            mgr->SetCurrentSlot(slot == 0 ? 5 : slot - 1);
-        }
-        ImGui::SameLine();
-        if (UIWidgets::Button("+##slotInc", ButtonOptions().Size(Sizes::Inline).Tooltip("Next slot"))) {
-            mgr->SetCurrentSlot(slot > 4 ? 0 : slot + 1);
-        }
-        bool noPlayState = (gPlayState == nullptr);
-        ButtonOptions saveOpts;
-        saveOpts.tooltip = "Save the current game state to the active slot.";
-        saveOpts.size = Sizes::Inline;
-        saveOpts.disabled = noPlayState;
-        saveOpts.disabledTooltip = "Not available outside of gameplay.";
-        if (UIWidgets::Button("Save State (F5)", saveOpts)) {
-            mgr->AddRequest({ mgr->GetCurrentSlot(), RequestType::SAVE });
-        }
-        ImGui::SameLine();
-        ButtonOptions loadOpts;
-        loadOpts.tooltip = "Load the game state from the active slot.";
-        loadOpts.size = Sizes::Inline;
-        loadOpts.disabled = noPlayState;
-        loadOpts.disabledTooltip = "Not available outside of gameplay.";
-        if (UIWidgets::Button("Load State (F7)", loadOpts)) {
-            mgr->AddRequest({ mgr->GetCurrentSlot(), RequestType::LOAD });
-        }
-        ImGui::Unindent();
-    });
     AddWidget(path, "Rewind", WIDGET_CVAR_CHECKBOX)
         .CVar("gCheats.RewindEnabled")
         .Options(CheckboxOptions().Tooltip(

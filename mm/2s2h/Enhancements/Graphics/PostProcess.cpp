@@ -14,7 +14,10 @@
 #elif __APPLE__
 #include <SDL2/SDL.h>
 #include <GL/glew.h>
-#elif defined(USE_OPENGLES) || defined(__SWITCH__)
+#elif __SWITCH__
+#include <SDL2/SDL.h>
+#include <glad/glad.h>
+#elif defined(USE_OPENGLES)
 #include <SDL2/SDL.h>
 #include <GLES3/gl3.h>
 #else
@@ -49,7 +52,7 @@
 #elif defined(USE_OPENGLES) || defined(__SWITCH__)
 #define PP_TARGET_GLSL_VERSION "#version 300 es\nprecision mediump float;"
 #else
-#define PP_TARGET_GLSL_VERSION "#version 130"
+#define PP_TARGET_GLSL_VERSION "#version 330 core"
 #endif
 
 static std::string PatchGLSLForPlatform(const std::string& glsl) {
@@ -62,8 +65,11 @@ static std::string PatchGLSLForPlatform(const std::string& glsl) {
         patched.replace(pos, versionTag.size(), PP_TARGET_GLSL_VERSION);
     }
 
-#if defined(USE_OPENGLES) || defined(__SWITCH__)
-    // GLES 300 es does not support layout(binding = X) — strip binding qualifiers.
+    // Strip layout(binding = X) qualifiers:
+    // - GLES 300 es does not support them at all
+    // - Desktop #version 330 core does not support layout(binding=X)
+    //   (binding qualifiers require GLSL 420+)
+    // - Apple #version 410 core also pre-dates binding qualifier support
     // "layout(binding = N) uniform" -> "uniform"
     // "layout(std140, column_major, binding = 0) uniform" -> "layout(std140) uniform"
     std::string result;
@@ -102,7 +108,6 @@ static std::string PatchGLSLForPlatform(const std::string& glsl) {
         i++;
     }
     patched = result;
-#endif
 
     return patched;
 }
@@ -365,7 +370,7 @@ static void EnsureTextures(uint32_t width, uint32_t height) {
             glGenTextures(1, &sState.textures[i]);
         }
         glBindTexture(GL_TEXTURE_2D, sState.textures[i]);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -447,14 +452,14 @@ static uintptr_t PostProcessCallback(uintptr_t texId, uint32_t width, uint32_t h
     }
 
     // Save GL state
-    GLint prevFbo, prevViewport[4], prevProgram, prevVao, prevTex;
+    GLint prevFbo, prevViewport[4], prevProgram, prevVao, prevTex, prevActiveTexture;
     GLboolean prevDepthTest, prevBlend;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, prevViewport);
     glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
-#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
-#endif
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTexture);
+    glActiveTexture(GL_TEXTURE0);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
     prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
     prevBlend = glIsEnabled(GL_BLEND);
@@ -509,11 +514,10 @@ static uintptr_t PostProcessCallback(uintptr_t texId, uint32_t width, uint32_t h
     glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
     glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
     glUseProgram(prevProgram);
-#if defined(__APPLE__) || defined(USE_OPENGLES) || defined(__SWITCH__)
     glBindVertexArray(prevVao);
-#endif
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, prevTex);
+    glActiveTexture(prevActiveTexture);
     if (prevDepthTest)
         glEnable(GL_DEPTH_TEST);
     else
@@ -591,10 +595,6 @@ void PostProcess_RenderMenuOptions() {
 }
 
 // ─── Overlay API ────────────────────────────────────────────────────────────
-
-static const std::vector<std::string> sEmptyEffects;
-static const std::string sEmptyString;
-static const std::vector<reshadefx::uniform> sEmptyUniforms;
 
 const std::vector<std::string>& PostProcess_GetAvailableEffects() {
     return sState.availableEffects;

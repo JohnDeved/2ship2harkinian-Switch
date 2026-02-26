@@ -7,3 +7,6 @@
 [submodule "reshade"]
 	path = reshade
 	url = https://github.com/crosire/reshade.git
+[submodule "reshade-shaders"]
+	path = reshade-shaders
+	url = https://github.com/crosire/reshade-shaders.git

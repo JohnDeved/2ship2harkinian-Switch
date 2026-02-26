@@ -45,11 +45,6 @@ void PostProcess_ForceReload();
 // Rescan available effects
 void PostProcess_RescanEffects();
 
-extern "C" {
 #endif // __cplusplus
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif // POST_PROCESS_H

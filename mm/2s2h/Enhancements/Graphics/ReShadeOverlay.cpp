@@ -1,7 +1,10 @@
 #include "ReShadeOverlay.h"
 #include "PostProcess.h"
 #include <imgui.h>
+#include <cstring>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #ifdef ENABLE_OPENGL
 #include "effect_module.hpp"
@@ -67,46 +70,49 @@ static bool DrawUniformWidget(const reshadefx::uniform& u, uint8_t* data) {
 
     // Handle different types
     if (u.type.is_floating_point()) {
-        float* fptr = reinterpret_cast<float*>(ptr);
         int components = static_cast<int>(u.type.components());
+        float fvals[4] = {};
+        std::memcpy(fvals, ptr, components * sizeof(float));
 
         if (uiType == "color") {
             if (components >= 3) {
                 if (components >= 4)
-                    changed = ImGui::ColorEdit4(labelStr.c_str(), fptr);
+                    changed = ImGui::ColorEdit4(labelStr.c_str(), fvals);
                 else
-                    changed = ImGui::ColorEdit3(labelStr.c_str(), fptr);
+                    changed = ImGui::ColorEdit3(labelStr.c_str(), fvals);
             }
         } else if (uiType == "drag") {
             float fmin = AnnotationFloat(u.annotations, "ui_min", 0, 0.0f);
             float fmax = AnnotationFloat(u.annotations, "ui_max", 0, 1.0f);
             float step = AnnotationFloat(u.annotations, "ui_step", 0, 0.001f);
             if (components == 1)
-                changed = ImGui::DragFloat(labelStr.c_str(), fptr, step, fmin, fmax);
+                changed = ImGui::DragFloat(labelStr.c_str(), fvals, step, fmin, fmax);
             else if (components == 2)
-                changed = ImGui::DragFloat2(labelStr.c_str(), fptr, step, fmin, fmax);
+                changed = ImGui::DragFloat2(labelStr.c_str(), fvals, step, fmin, fmax);
             else if (components == 3)
-                changed = ImGui::DragFloat3(labelStr.c_str(), fptr, step, fmin, fmax);
+                changed = ImGui::DragFloat3(labelStr.c_str(), fvals, step, fmin, fmax);
             else if (components >= 4)
-                changed = ImGui::DragFloat4(labelStr.c_str(), fptr, step, fmin, fmax);
+                changed = ImGui::DragFloat4(labelStr.c_str(), fvals, step, fmin, fmax);
         } else {
             // Default: slider
             float fmin = AnnotationFloat(u.annotations, "ui_min", 0, 0.0f);
             float fmax = AnnotationFloat(u.annotations, "ui_max", 0, 1.0f);
-            float step = AnnotationFloat(u.annotations, "ui_step", 0, 0.001f);
             const char* format = "%.3f";
             if (components == 1)
-                changed = ImGui::SliderFloat(labelStr.c_str(), fptr, fmin, fmax, format);
+                changed = ImGui::SliderFloat(labelStr.c_str(), fvals, fmin, fmax, format);
             else if (components == 2)
-                changed = ImGui::SliderFloat2(labelStr.c_str(), fptr, fmin, fmax, format);
+                changed = ImGui::SliderFloat2(labelStr.c_str(), fvals, fmin, fmax, format);
             else if (components == 3)
-                changed = ImGui::SliderFloat3(labelStr.c_str(), fptr, fmin, fmax, format);
+                changed = ImGui::SliderFloat3(labelStr.c_str(), fvals, fmin, fmax, format);
             else if (components >= 4)
-                changed = ImGui::SliderFloat4(labelStr.c_str(), fptr, fmin, fmax, format);
+                changed = ImGui::SliderFloat4(labelStr.c_str(), fvals, fmin, fmax, format);
         }
+        if (changed)
+            std::memcpy(ptr, fvals, components * sizeof(float));
     } else if (u.type.base == reshadefx::type::t_int) {
-        int* iptr = reinterpret_cast<int*>(ptr);
         int components = static_cast<int>(u.type.components());
+        int ivals[4] = {};
+        std::memcpy(ivals, ptr, components * sizeof(int));
 
         if (uiType == "combo") {
             auto items = AnnotationString(u.annotations, "ui_items");
@@ -128,14 +134,14 @@ static bool DrawUniformWidget(const reshadefx::uniform& u, uint8_t* data) {
                 if (!current.empty())
                     itemList.push_back(current);
 
-                int val = *iptr;
+                int val = ivals[0];
                 if (ImGui::BeginCombo(labelStr.c_str(), (val >= 0 && val < static_cast<int>(itemList.size()))
                                                             ? itemList[val].c_str()
                                                             : "Unknown")) {
                     for (int j = 0; j < static_cast<int>(itemList.size()); j++) {
                         bool isSelected = (j == val);
                         if (ImGui::Selectable(itemList[j].c_str(), isSelected)) {
-                            *iptr = j;
+                            ivals[0] = j;
                             changed = true;
                         }
                         if (isSelected)
@@ -165,7 +171,7 @@ static bool DrawUniformWidget(const reshadefx::uniform& u, uint8_t* data) {
 
                 ImGui::Text("%s", labelStr.c_str());
                 for (int j = 0; j < static_cast<int>(itemList.size()); j++) {
-                    if (ImGui::RadioButton(itemList[j].c_str(), iptr, j))
+                    if (ImGui::RadioButton(itemList[j].c_str(), &ivals[0], j))
                         changed = true;
                     if (j + 1 < static_cast<int>(itemList.size()))
                         ImGui::SameLine();
@@ -176,18 +182,23 @@ static bool DrawUniformWidget(const reshadefx::uniform& u, uint8_t* data) {
             int imin = AnnotationInt(u.annotations, "ui_min", 0, 0);
             int imax = AnnotationInt(u.annotations, "ui_max", 0, 100);
             if (components == 1)
-                changed = ImGui::SliderInt(labelStr.c_str(), iptr, imin, imax);
+                changed = ImGui::SliderInt(labelStr.c_str(), ivals, imin, imax);
             else if (components == 2)
-                changed = ImGui::SliderInt2(labelStr.c_str(), iptr, imin, imax);
+                changed = ImGui::SliderInt2(labelStr.c_str(), ivals, imin, imax);
             else if (components == 3)
-                changed = ImGui::SliderInt3(labelStr.c_str(), iptr, imin, imax);
+                changed = ImGui::SliderInt3(labelStr.c_str(), ivals, imin, imax);
             else if (components >= 4)
-                changed = ImGui::SliderInt4(labelStr.c_str(), iptr, imin, imax);
+                changed = ImGui::SliderInt4(labelStr.c_str(), ivals, imin, imax);
         }
+        if (changed)
+            std::memcpy(ptr, ivals, components * sizeof(int));
     } else if (u.type.base == reshadefx::type::t_bool) {
-        bool val = (*reinterpret_cast<uint32_t*>(ptr)) != 0;
+        uint32_t raw = 0;
+        std::memcpy(&raw, ptr, sizeof(uint32_t));
+        bool val = raw != 0;
         if (ImGui::Checkbox(labelStr.c_str(), &val)) {
-            *reinterpret_cast<uint32_t*>(ptr) = val ? 1 : 0;
+            raw = val ? 1 : 0;
+            std::memcpy(ptr, &raw, sizeof(uint32_t));
             changed = true;
         }
     }

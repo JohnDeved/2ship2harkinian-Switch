@@ -233,11 +233,13 @@ void BenInputEditorWindow::DrawButtonLineAddMappingButton(uint8_t port, N64Butto
     if (ImGui::BeginPopup(popupId.c_str(), ImGuiWindowFlags_NoNavInputs)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto add mapping\n\nHold B to cancel");
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         if (ImGui::Button("Cancel")) {
             mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
+        ImGui::PopItemFlag();
 #ifndef __WIIU__
         bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
         if (bButtonDown) {
@@ -333,11 +335,13 @@ void BenInputEditorWindow::DrawButtonLineEditMappingButton(uint8_t port, N64Butt
     if (ImGui::BeginPopup(popupId.c_str(), ImGuiWindowFlags_NoNavInputs)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto edit mapping\n\nHold B to cancel");
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         if (ImGui::Button("Cancel")) {
             mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
+        ImGui::PopItemFlag();
 #ifndef __WIIU__
         bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
         if (bButtonDown) {

@@ -230,7 +230,7 @@ void BenInputEditorWindow::DrawButtonLineAddMappingButton(uint8_t port, N64Butto
     };
     ImGui::PopStyleVar();
 
-    if (ImGui::BeginPopup(popupId.c_str())) {
+    if (ImGui::BeginPopup(popupId.c_str(), ImGuiWindowFlags_NoNavInputs)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto add mapping\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
@@ -330,7 +330,7 @@ void BenInputEditorWindow::DrawButtonLineEditMappingButton(uint8_t port, N64Butt
     ImGui::PopStyleColor();
     ImGui::PopStyleColor();
 
-    if (ImGui::BeginPopup(popupId.c_str())) {
+    if (ImGui::BeginPopup(popupId.c_str(), ImGuiWindowFlags_NoNavInputs)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto edit mapping\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {

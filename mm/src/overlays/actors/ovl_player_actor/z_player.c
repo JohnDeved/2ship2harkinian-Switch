@@ -9636,7 +9636,10 @@ s32 Player_ActionHandler_2(Player* this, PlayState* play) {
             } else if (this->csAction == PLAYER_CSACTION_NONE) {
                 if (!(this->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR)) {
                     if (this->getItemId != GI_NONE) {
-                        if (CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_A)) {
+                        // #region 2S2H [Enhancement] - Auto open chests
+                        if (CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_A) ||
+                            CVarGetInteger("gEnhancements.Player.AutoOpenChests", 0)) {
+                        // #endregion
                             GetItemEntry* giEntry = &sGetItemTable[-this->getItemId - 1];
                             EnBox* chest = (EnBox*)interactRangeActor;
 

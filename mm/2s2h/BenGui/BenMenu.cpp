@@ -1094,6 +1094,12 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Player.OpenChestsFromAnyDirection")
         .Options(CheckboxOptions().Tooltip("Allows you to open chests from any direction while facing them, instead of "
                                            "requiring you to stand in front of the chest."));
+    AddWidget(path, "Auto Open Chests", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.AutoOpenChests")
+        .Options(CheckboxOptions().Tooltip("Automatically opens chests when you are close enough to them."));
+    AddWidget(path, "Auto Open Doors", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.AutoOpenDoors")
+        .Options(CheckboxOptions().Tooltip("Automatically opens doors when you are close enough to them."));
     AddWidget(path, "Prevent Diving Over Water", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.PreventDiveOverWater")
         .Options(CheckboxOptions().Tooltip("Prevents Link from automatically diving over bodies of water."));

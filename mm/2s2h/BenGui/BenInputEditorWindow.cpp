@@ -614,6 +614,7 @@ void BenInputEditorWindow::DrawStickDirectionLineAddMappingButton(uint8_t port, 
                         ->GetControllerByPort(port)
                         ->GetRightStick()
                         ->AddOrEditAxisDirectionMappingFromRawPress(direction, "")) {
+                    mInputEditorPopupOpen = false;
                     ImGui::CloseCurrentPopup();
                 }
             }
@@ -745,6 +746,7 @@ void BenInputEditorWindow::DrawStickDirectionLineEditMappingButton(uint8_t port,
                         ->GetControllerByPort(port)
                         ->GetRightStick()
                         ->AddOrEditAxisDirectionMappingFromRawPress(direction, id)) {
+                    mInputEditorPopupOpen = false;
                     ImGui::CloseCurrentPopup();
                 }
             }
@@ -754,6 +756,7 @@ void BenInputEditorWindow::DrawStickDirectionLineEditMappingButton(uint8_t port,
         ImGui::EndPopup();
     }
 
+    ImGui::PopStyleVar();
     ImGui::SameLine(0, 0);
     ImGui::PushStyleColor(ImGuiCol_Button, buttonColor);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, buttonHoveredColor);
@@ -1003,7 +1006,7 @@ void BenInputEditorWindow::DrawAddRumbleMappingButton(uint8_t port) {
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button\nor move any axis\nto add rumble device\n\nHold B to cancel");
+        ImGui::Text("Press any button (except B)\nor move any axis\nto add rumble device\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
             mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
@@ -1205,7 +1208,7 @@ void BenInputEditorWindow::DrawAddLEDMappingButton(uint8_t port) {
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button\nor move any axis\nto add LED device\n\nHold B to cancel");
+        ImGui::Text("Press any button (except B)\nor move any axis\nto add LED device\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
             mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
@@ -1303,7 +1306,7 @@ void BenInputEditorWindow::DrawAddGyroMappingButton(uint8_t port) {
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button\nor move any axis\nto add gyro device\n\nHold B to cancel");
+        ImGui::Text("Press any button (except B)\nor move any axis\nto add gyro device\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
             mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;

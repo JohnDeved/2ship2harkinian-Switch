@@ -9,9 +9,13 @@
 #include "2s2h/BenGui/BenGui.hpp"
 #ifndef __WIIU__
 #include <ship/controller/controldevice/controller/mapping/sdl/SDLAxisDirectionToButtonMapping.h>
+#include <ship/controller/controldevice/controller/mapping/sdl/SDLButtonToButtonMapping.h>
+#include <ship/controller/controldevice/controller/mapping/sdl/SDLButtonToAxisDirectionMapping.h>
 #endif
 
 #define SCALE_IMGUI_SIZE(value) ((value / 13.0f) * ImGui::GetFontSize())
+
+static constexpr float B_HOLD_CANCEL_THRESHOLD = 1.0f;
 
 using namespace UIWidgets;
 
@@ -222,25 +226,61 @@ void BenInputEditorWindow::DrawButtonLineAddMappingButton(uint8_t port, N64Butto
                       ImVec2(SCALE_IMGUI_SIZE(20.0f), 0.0f))) {
         ImGui::OpenPopup(popupId.c_str());
         OffsetMappingPopup();
+        Ship::Context::GetInstance()->GetWindow()->GetGui()->BlockGamepadNavigation();
     };
     ImGui::PopStyleVar();
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto add mapping");
+        ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto add mapping\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
+            mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
-        // todo: figure out why optional params (using id = "" in the definition) wasn't working
-        if (mMappingInputBlockTimer == INT32_MAX && Ship::Context::GetInstance()
-                                                        ->GetControlDeck()
-                                                        ->GetControllerByPort(port)
-                                                        ->GetButton(bitmask)
-                                                        ->AddOrEditButtonMappingFromRawPress(bitmask, "")) {
+#ifndef __WIIU__
+        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        if (bButtonDown) {
+            mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
+            if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
+                mBButtonHoldTimer = 0.0f;
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            } else {
+                ImGui::ProgressBar(mBButtonHoldTimer / B_HOLD_CANCEL_THRESHOLD, ImVec2(-1, 0), "Hold to cancel...");
+            }
+        } else if (mBButtonHoldTimer > 0.0f && mMappingInputBlockTimer == INT32_MAX) {
+            mBButtonHoldTimer = 0.0f;
+            auto controllerButton = Ship::Context::GetInstance()
+                                        ->GetControlDeck()
+                                        ->GetControllerByPort(port)
+                                        ->GetButton(bitmask);
+            auto mapping =
+                std::make_shared<Ship::SDLButtonToButtonMapping>(port, bitmask, SDL_CONTROLLER_BUTTON_B);
+            controllerButton->AddButtonMapping(mapping);
+            mapping->SaveToConfig();
+            controllerButton->SaveButtonMappingIdsToConfig();
+            const std::string hasConfigCvarKey =
+                StringHelper::Sprintf(CVAR_PREFIX_CONTROLLERS ".Port%d.HasConfig", port + 1);
+            Ship::Context::GetInstance()->GetConsoleVariables()->SetInteger(hasConfigCvarKey.c_str(), true);
+            Ship::Context::GetInstance()->GetConsoleVariables()->Save();
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
+        } else {
+            mBButtonHoldTimer = 0.0f;
+#endif
+            // todo: figure out why optional params (using id = "" in the definition) wasn't working
+            if (mMappingInputBlockTimer == INT32_MAX && Ship::Context::GetInstance()
+                                                            ->GetControlDeck()
+                                                            ->GetControllerByPort(port)
+                                                            ->GetButton(bitmask)
+                                                            ->AddOrEditButtonMappingFromRawPress(bitmask, "")) {
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            }
+#ifndef __WIIU__
         }
+#endif
         ImGui::EndPopup();
     }
 }
@@ -282,6 +322,7 @@ void BenInputEditorWindow::DrawButtonLineEditMappingButton(uint8_t port, N64Butt
             ImVec2(ImGui::CalcTextSize(physicalInputDisplayName.c_str()).x + SCALE_IMGUI_SIZE(12.0f), 0.0f))) {
         ImGui::OpenPopup(popupId.c_str());
         OffsetMappingPopup();
+        Ship::Context::GetInstance()->GetWindow()->GetGui()->BlockGamepadNavigation();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
         ImGui::SetTooltip("%s", mapping->GetPhysicalDeviceName().c_str());
@@ -291,19 +332,55 @@ void BenInputEditorWindow::DrawButtonLineEditMappingButton(uint8_t port, N64Butt
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto edit mapping");
+        ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto edit mapping\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
+            mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
-        if (mMappingInputBlockTimer == INT32_MAX && Ship::Context::GetInstance()
-                                                        ->GetControlDeck()
-                                                        ->GetControllerByPort(port)
-                                                        ->GetButton(bitmask)
-                                                        ->AddOrEditButtonMappingFromRawPress(bitmask, id)) {
+#ifndef __WIIU__
+        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        if (bButtonDown) {
+            mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
+            if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
+                mBButtonHoldTimer = 0.0f;
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            } else {
+                ImGui::ProgressBar(mBButtonHoldTimer / B_HOLD_CANCEL_THRESHOLD, ImVec2(-1, 0), "Hold to cancel...");
+            }
+        } else if (mBButtonHoldTimer > 0.0f && mMappingInputBlockTimer == INT32_MAX) {
+            mBButtonHoldTimer = 0.0f;
+            auto controllerButton = Ship::Context::GetInstance()
+                                        ->GetControlDeck()
+                                        ->GetControllerByPort(port)
+                                        ->GetButton(bitmask);
+            auto newMapping =
+                std::make_shared<Ship::SDLButtonToButtonMapping>(port, bitmask, SDL_CONTROLLER_BUTTON_B);
+            controllerButton->ClearButtonMapping(id);
+            controllerButton->AddButtonMapping(newMapping);
+            newMapping->SaveToConfig();
+            controllerButton->SaveButtonMappingIdsToConfig();
+            const std::string hasConfigCvarKey =
+                StringHelper::Sprintf(CVAR_PREFIX_CONTROLLERS ".Port%d.HasConfig", port + 1);
+            Ship::Context::GetInstance()->GetConsoleVariables()->SetInteger(hasConfigCvarKey.c_str(), true);
+            Ship::Context::GetInstance()->GetConsoleVariables()->Save();
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
+        } else {
+            mBButtonHoldTimer = 0.0f;
+#endif
+            if (mMappingInputBlockTimer == INT32_MAX && Ship::Context::GetInstance()
+                                                            ->GetControlDeck()
+                                                            ->GetControllerByPort(port)
+                                                            ->GetButton(bitmask)
+                                                            ->AddOrEditButtonMappingFromRawPress(bitmask, id)) {
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            }
+#ifndef __WIIU__
         }
+#endif
         ImGui::EndPopup();
     }
 
@@ -470,36 +547,79 @@ void BenInputEditorWindow::DrawStickDirectionLineAddMappingButton(uint8_t port, 
             ImVec2(SCALE_IMGUI_SIZE(20.0f), 0.0f))) {
         ImGui::OpenPopup(popupId.c_str());
         OffsetMappingPopup();
+        Ship::Context::GetInstance()->GetWindow()->GetGui()->BlockGamepadNavigation();
     };
     ImGui::PopStyleVar();
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto add mapping");
+        ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto add mapping\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
+            mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
-        if (stick == Ship::LEFT) {
-            if (mMappingInputBlockTimer == INT32_MAX &&
-                Ship::Context::GetInstance()
-                    ->GetControlDeck()
-                    ->GetControllerByPort(port)
-                    ->GetLeftStick()
-                    ->AddOrEditAxisDirectionMappingFromRawPress(direction, "")) {
+#ifndef __WIIU__
+        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        if (bButtonDown) {
+            mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
+            if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
+                mBButtonHoldTimer = 0.0f;
                 mInputEditorPopupOpen = false;
                 ImGui::CloseCurrentPopup();
+            } else {
+                ImGui::ProgressBar(mBButtonHoldTimer / B_HOLD_CANCEL_THRESHOLD, ImVec2(-1, 0), "Hold to cancel...");
             }
+        } else if (mBButtonHoldTimer > 0.0f && mMappingInputBlockTimer == INT32_MAX) {
+            mBButtonHoldTimer = 0.0f;
+            auto stickObj = (stick == Ship::LEFT)
+                                ? Ship::Context::GetInstance()
+                                      ->GetControlDeck()
+                                      ->GetControllerByPort(port)
+                                      ->GetLeftStick()
+                                : Ship::Context::GetInstance()
+                                      ->GetControlDeck()
+                                      ->GetControllerByPort(port)
+                                      ->GetRightStick();
+            Ship::StickIndex stickIndex =
+                (stick == Ship::LEFT) ? Ship::LEFT_STICK : Ship::RIGHT_STICK;
+            auto newMapping = std::make_shared<Ship::SDLButtonToAxisDirectionMapping>(
+                port, stickIndex, direction, SDL_CONTROLLER_BUTTON_B);
+            stickObj->AddAxisDirectionMapping(direction, newMapping);
+            newMapping->SaveToConfig();
+            stickObj->SaveAxisDirectionMappingIdsToConfig();
+            const std::string hasConfigCvarKey =
+                StringHelper::Sprintf(CVAR_PREFIX_CONTROLLERS ".Port%d.HasConfig", port + 1);
+            Ship::Context::GetInstance()->GetConsoleVariables()->SetInteger(hasConfigCvarKey.c_str(), true);
+            Ship::Context::GetInstance()->GetConsoleVariables()->Save();
+            mInputEditorPopupOpen = false;
+            ImGui::CloseCurrentPopup();
         } else {
-            if (mMappingInputBlockTimer == INT32_MAX &&
-                Ship::Context::GetInstance()
-                    ->GetControlDeck()
-                    ->GetControllerByPort(port)
-                    ->GetRightStick()
-                    ->AddOrEditAxisDirectionMappingFromRawPress(direction, "")) {
-                ImGui::CloseCurrentPopup();
+            mBButtonHoldTimer = 0.0f;
+#endif
+            if (stick == Ship::LEFT) {
+                if (mMappingInputBlockTimer == INT32_MAX &&
+                    Ship::Context::GetInstance()
+                        ->GetControlDeck()
+                        ->GetControllerByPort(port)
+                        ->GetLeftStick()
+                        ->AddOrEditAxisDirectionMappingFromRawPress(direction, "")) {
+                    mInputEditorPopupOpen = false;
+                    ImGui::CloseCurrentPopup();
+                }
+            } else {
+                if (mMappingInputBlockTimer == INT32_MAX &&
+                    Ship::Context::GetInstance()
+                        ->GetControlDeck()
+                        ->GetControllerByPort(port)
+                        ->GetRightStick()
+                        ->AddOrEditAxisDirectionMappingFromRawPress(direction, "")) {
+                    ImGui::CloseCurrentPopup();
+                }
             }
+#ifndef __WIIU__
         }
+#endif
         ImGui::EndPopup();
     }
 }
@@ -553,6 +673,7 @@ void BenInputEditorWindow::DrawStickDirectionLineEditMappingButton(uint8_t port,
             ImVec2(ImGui::CalcTextSize(physicalInputDisplayName.c_str()).x + SCALE_IMGUI_SIZE(12.0f), 0.0f))) {
         ImGui::OpenPopup(popupId.c_str());
         OffsetMappingPopup();
+        Ship::Context::GetInstance()->GetWindow()->GetGui()->BlockGamepadNavigation();
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
         ImGui::SetTooltip("%s", mapping->GetPhysicalDeviceName().c_str());
@@ -562,36 +683,77 @@ void BenInputEditorWindow::DrawStickDirectionLineEditMappingButton(uint8_t port,
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto edit mapping");
+        ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto edit mapping\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
+            mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
-
-        if (stick == Ship::LEFT) {
-            if (mMappingInputBlockTimer == INT32_MAX &&
-                Ship::Context::GetInstance()
-                    ->GetControlDeck()
-                    ->GetControllerByPort(port)
-                    ->GetLeftStick()
-                    ->AddOrEditAxisDirectionMappingFromRawPress(direction, id)) {
+#ifndef __WIIU__
+        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        if (bButtonDown) {
+            mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
+            if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
+                mBButtonHoldTimer = 0.0f;
                 mInputEditorPopupOpen = false;
                 ImGui::CloseCurrentPopup();
+            } else {
+                ImGui::ProgressBar(mBButtonHoldTimer / B_HOLD_CANCEL_THRESHOLD, ImVec2(-1, 0), "Hold to cancel...");
             }
+        } else if (mBButtonHoldTimer > 0.0f && mMappingInputBlockTimer == INT32_MAX) {
+            mBButtonHoldTimer = 0.0f;
+            auto stickObj = (stick == Ship::LEFT)
+                                ? Ship::Context::GetInstance()
+                                      ->GetControlDeck()
+                                      ->GetControllerByPort(port)
+                                      ->GetLeftStick()
+                                : Ship::Context::GetInstance()
+                                      ->GetControlDeck()
+                                      ->GetControllerByPort(port)
+                                      ->GetRightStick();
+            Ship::StickIndex stickIndex =
+                (stick == Ship::LEFT) ? Ship::LEFT_STICK : Ship::RIGHT_STICK;
+            auto newMapping = std::make_shared<Ship::SDLButtonToAxisDirectionMapping>(
+                port, stickIndex, direction, SDL_CONTROLLER_BUTTON_B);
+            stickObj->ClearAxisDirectionMapping(direction, id);
+            stickObj->AddAxisDirectionMapping(direction, newMapping);
+            newMapping->SaveToConfig();
+            stickObj->SaveAxisDirectionMappingIdsToConfig();
+            const std::string hasConfigCvarKey =
+                StringHelper::Sprintf(CVAR_PREFIX_CONTROLLERS ".Port%d.HasConfig", port + 1);
+            Ship::Context::GetInstance()->GetConsoleVariables()->SetInteger(hasConfigCvarKey.c_str(), true);
+            Ship::Context::GetInstance()->GetConsoleVariables()->Save();
+            mInputEditorPopupOpen = false;
+            ImGui::CloseCurrentPopup();
         } else {
-            if (mMappingInputBlockTimer == INT32_MAX &&
-                Ship::Context::GetInstance()
-                    ->GetControlDeck()
-                    ->GetControllerByPort(port)
-                    ->GetRightStick()
-                    ->AddOrEditAxisDirectionMappingFromRawPress(direction, id)) {
-                ImGui::CloseCurrentPopup();
+            mBButtonHoldTimer = 0.0f;
+#endif
+            if (stick == Ship::LEFT) {
+                if (mMappingInputBlockTimer == INT32_MAX &&
+                    Ship::Context::GetInstance()
+                        ->GetControlDeck()
+                        ->GetControllerByPort(port)
+                        ->GetLeftStick()
+                        ->AddOrEditAxisDirectionMappingFromRawPress(direction, id)) {
+                    mInputEditorPopupOpen = false;
+                    ImGui::CloseCurrentPopup();
+                }
+            } else {
+                if (mMappingInputBlockTimer == INT32_MAX &&
+                    Ship::Context::GetInstance()
+                        ->GetControlDeck()
+                        ->GetControllerByPort(port)
+                        ->GetRightStick()
+                        ->AddOrEditAxisDirectionMappingFromRawPress(direction, id)) {
+                    ImGui::CloseCurrentPopup();
+                }
             }
+#ifndef __WIIU__
         }
+#endif
         ImGui::EndPopup();
     }
 
-    ImGui::PopStyleVar();
     ImGui::SameLine(0, 0);
     ImGui::PushStyleColor(ImGuiCol_Button, buttonColor);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, buttonHoveredColor);
@@ -835,25 +997,43 @@ void BenInputEditorWindow::DrawAddRumbleMappingButton(uint8_t port) {
                       ImVec2(SCALE_IMGUI_SIZE(20.0f), SCALE_IMGUI_SIZE(20.0f)))) {
         ImGui::OpenPopup(popupId.c_str());
         OffsetMappingPopup();
+        Ship::Context::GetInstance()->GetWindow()->GetGui()->BlockGamepadNavigation();
     }
     ImGui::PopStyleVar();
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button\nor move any axis\nto add rumble device");
+        ImGui::Text("Press any button\nor move any axis\nto add rumble device\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
+            mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
-
-        if (mMappingInputBlockTimer == INT32_MAX && Ship::Context::GetInstance()
-                                                        ->GetControlDeck()
-                                                        ->GetControllerByPort(port)
-                                                        ->GetRumble()
-                                                        ->AddRumbleMappingFromRawPress()) {
-            mInputEditorPopupOpen = false;
-            ImGui::CloseCurrentPopup();
+#ifndef __WIIU__
+        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        if (bButtonDown) {
+            mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
+            if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
+                mBButtonHoldTimer = 0.0f;
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            } else {
+                ImGui::ProgressBar(mBButtonHoldTimer / B_HOLD_CANCEL_THRESHOLD, ImVec2(-1, 0), "Hold to cancel...");
+            }
+        } else {
+            mBButtonHoldTimer = 0.0f;
+#endif
+            if (mMappingInputBlockTimer == INT32_MAX && Ship::Context::GetInstance()
+                                                            ->GetControlDeck()
+                                                            ->GetControllerByPort(port)
+                                                            ->GetRumble()
+                                                            ->AddRumbleMappingFromRawPress()) {
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            }
+#ifndef __WIIU__
         }
+#endif
         ImGui::EndPopup();
     }
 }
@@ -1019,25 +1199,43 @@ void BenInputEditorWindow::DrawAddLEDMappingButton(uint8_t port) {
                       ImVec2(SCALE_IMGUI_SIZE(20.0f), SCALE_IMGUI_SIZE(20.0f)))) {
         ImGui::OpenPopup(popupId.c_str());
         OffsetMappingPopup();
+        Ship::Context::GetInstance()->GetWindow()->GetGui()->BlockGamepadNavigation();
     }
     ImGui::PopStyleVar();
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button\nor move any axis\nto add LED device");
+        ImGui::Text("Press any button\nor move any axis\nto add LED device\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
+            mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
-
-        if (mMappingInputBlockTimer == INT32_MAX && Ship::Context::GetInstance()
-                                                        ->GetControlDeck()
-                                                        ->GetControllerByPort(port)
-                                                        ->GetLED()
-                                                        ->AddLEDMappingFromRawPress()) {
-            mInputEditorPopupOpen = false;
-            ImGui::CloseCurrentPopup();
+#ifndef __WIIU__
+        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        if (bButtonDown) {
+            mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
+            if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
+                mBButtonHoldTimer = 0.0f;
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            } else {
+                ImGui::ProgressBar(mBButtonHoldTimer / B_HOLD_CANCEL_THRESHOLD, ImVec2(-1, 0), "Hold to cancel...");
+            }
+        } else {
+            mBButtonHoldTimer = 0.0f;
+#endif
+            if (mMappingInputBlockTimer == INT32_MAX && Ship::Context::GetInstance()
+                                                            ->GetControlDeck()
+                                                            ->GetControllerByPort(port)
+                                                            ->GetLED()
+                                                            ->AddLEDMappingFromRawPress()) {
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            }
+#ifndef __WIIU__
         }
+#endif
         ImGui::EndPopup();
     }
 }
@@ -1099,25 +1297,43 @@ void BenInputEditorWindow::DrawAddGyroMappingButton(uint8_t port) {
                       ImVec2(SCALE_IMGUI_SIZE(20.0f), SCALE_IMGUI_SIZE(20.0f)))) {
         ImGui::OpenPopup(popupId.c_str());
         OffsetMappingPopup();
+        Ship::Context::GetInstance()->GetWindow()->GetGui()->BlockGamepadNavigation();
     }
     ImGui::PopStyleVar();
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button\nor move any axis\nto add gyro device");
+        ImGui::Text("Press any button\nor move any axis\nto add gyro device\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
+            mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
-
-        if (mMappingInputBlockTimer == INT32_MAX && Ship::Context::GetInstance()
-                                                        ->GetControlDeck()
-                                                        ->GetControllerByPort(port)
-                                                        ->GetGyro()
-                                                        ->SetGyroMappingFromRawPress()) {
-            mInputEditorPopupOpen = false;
-            ImGui::CloseCurrentPopup();
+#ifndef __WIIU__
+        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        if (bButtonDown) {
+            mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
+            if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
+                mBButtonHoldTimer = 0.0f;
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            } else {
+                ImGui::ProgressBar(mBButtonHoldTimer / B_HOLD_CANCEL_THRESHOLD, ImVec2(-1, 0), "Hold to cancel...");
+            }
+        } else {
+            mBButtonHoldTimer = 0.0f;
+#endif
+            if (mMappingInputBlockTimer == INT32_MAX && Ship::Context::GetInstance()
+                                                            ->GetControlDeck()
+                                                            ->GetControllerByPort(port)
+                                                            ->GetGyro()
+                                                            ->SetGyroMappingFromRawPress()) {
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            }
+#ifndef __WIIU__
         }
+#endif
         ImGui::EndPopup();
     }
 }

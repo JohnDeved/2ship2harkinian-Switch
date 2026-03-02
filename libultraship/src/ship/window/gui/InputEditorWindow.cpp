@@ -4,10 +4,14 @@
 #include "ship/utils/StringHelper.h"
 #include "ship/config/ConsoleVariable.h"
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLAxisDirectionToButtonMapping.h"
+#include "ship/controller/controldevice/controller/mapping/sdl/SDLButtonToButtonMapping.h"
+#include "ship/controller/controldevice/controller/mapping/sdl/SDLButtonToAxisDirectionMapping.h"
 #include "ship/controller/controldeck/ControlDeck.h"
 #include "libultraship/libultra/controller.h"
 
 #define SCALE_IMGUI_SIZE(value) ((value / 13.0f) * ImGui::GetFontSize())
+
+static constexpr float B_HOLD_CANCEL_THRESHOLD = 1.0f;
 
 namespace Ship {
 
@@ -200,25 +204,59 @@ void InputEditorWindow::DrawButtonLineAddMappingButton(uint8_t port, CONTROLLERB
                       ImVec2(SCALE_IMGUI_SIZE(20.0f), 0.0f))) {
         ImGui::OpenPopup(popupId.c_str());
         OffsetMappingPopup();
+        Context::GetInstance()->GetWindow()->GetGui()->BlockGamepadNavigation();
     };
     ImGui::PopStyleVar();
 
     if (ImGui::BeginPopup(popupId.c_str())) {
         mInputEditorPopupOpen = true;
-        ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto add mapping");
+        ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto add mapping\n\nHold B to cancel");
         if (ImGui::Button("Cancel")) {
+            mBButtonHoldTimer = 0.0f;
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
         }
-        // todo: figure out why optional params (using id = "" in the definition) wasn't working
-        if (mMappingInputBlockTimer == INT32_MAX && Context::GetInstance()
-                                                        ->GetControlDeck()
-                                                        ->GetControllerByPort(port)
-                                                        ->GetButton(bitmask)
-                                                        ->AddOrEditButtonMappingFromRawPress(bitmask, "")) {
+#ifndef __WIIU__
+        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        if (bButtonDown) {
+            mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
+            if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
+                mBButtonHoldTimer = 0.0f;
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            } else {
+                ImGui::ProgressBar(mBButtonHoldTimer / B_HOLD_CANCEL_THRESHOLD, ImVec2(-1, 0), "Hold to cancel...");
+            }
+        } else if (mBButtonHoldTimer > 0.0f && mMappingInputBlockTimer == INT32_MAX) {
+            mBButtonHoldTimer = 0.0f;
+            auto controllerButton =
+                Context::GetInstance()->GetControlDeck()->GetControllerByPort(port)->GetButton(bitmask);
+            auto mapping =
+                std::make_shared<SDLButtonToButtonMapping>(port, bitmask, SDL_CONTROLLER_BUTTON_B);
+            controllerButton->AddButtonMapping(mapping);
+            mapping->SaveToConfig();
+            controllerButton->SaveButtonMappingIdsToConfig();
+            const std::string hasConfigCvarKey =
+                StringHelper::Sprintf(CVAR_PREFIX_CONTROLLERS ".Port%d.HasConfig", port + 1);
+            Context::GetInstance()->GetConsoleVariables()->SetInteger(hasConfigCvarKey.c_str(), true);
+            Context::GetInstance()->GetConsoleVariables()->Save();
             mInputEditorPopupOpen = false;
             ImGui::CloseCurrentPopup();
+        } else {
+            mBButtonHoldTimer = 0.0f;
+#endif
+            // todo: figure out why optional params (using id = "" in the definition) wasn't working
+            if (mMappingInputBlockTimer == INT32_MAX && Context::GetInstance()
+                                                            ->GetControlDeck()
+                                                            ->GetControllerByPort(port)
+                                                            ->GetButton(bitmask)
+                                                            ->AddOrEditButtonMappingFromRawPress(bitmask, "")) {
+                mInputEditorPopupOpen = false;
+                ImGui::CloseCurrentPopup();
+            }
+#ifndef __WIIU__
         }
+#endif
         ImGui::EndPopup();
     }
 }

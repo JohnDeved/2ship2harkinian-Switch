@@ -496,10 +496,10 @@ void Fast3dWindow::RenderThreadLoop() {
 void Fast3dWindow::InitRenderThread() {
     {
         std::unique_lock<std::mutex> lock(mRenderMutex);
-        if (mRenderThreadRunning.load(std::memory_order_relaxed)) {
+        if (mRenderThreadRunning.load()) {
             return;
         }
-        mRenderThreadRunning.store(true, std::memory_order_relaxed);
+        mRenderThreadRunning.store(true);
         mRenderHasWork = false;
         mRenderWorkDone = true;
         mGlCommandsDone.store(true, std::memory_order_relaxed);
@@ -514,10 +514,10 @@ void Fast3dWindow::InitRenderThread() {
 void Fast3dWindow::DestroyRenderThread() {
     {
         std::unique_lock<std::mutex> lock(mRenderMutex);
-        if (!mRenderThreadRunning.load(std::memory_order_relaxed)) {
+        if (!mRenderThreadRunning.load()) {
             return;
         }
-        mRenderThreadRunning.store(false, std::memory_order_relaxed);
+        mRenderThreadRunning.store(false);
     }
     mRenderCV.notify_all();
     if (mRenderThread.joinable()) {

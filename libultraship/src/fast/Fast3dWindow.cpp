@@ -494,30 +494,30 @@ void Fast3dWindow::RenderThreadLoop() {
 }
 
 void Fast3dWindow::InitRenderThread() {
-    if (mRenderThreadRunning) {
-        return;
+    {
+        std::unique_lock<std::mutex> lock(mRenderMutex);
+        if (mRenderThreadRunning.load(std::memory_order_relaxed)) {
+            return;
+        }
+        mRenderThreadRunning.store(true, std::memory_order_relaxed);
+        mRenderHasWork = false;
+        mRenderWorkDone = true;
+        mGlCommandsDone.store(true, std::memory_order_relaxed);
     }
 
     // Release GL context from main thread so the render thread can acquire it
     mWindowManagerApi->ReleaseContext();
 
-    {
-        std::unique_lock<std::mutex> lock(mRenderMutex);
-        mRenderThreadRunning = true;
-        mRenderHasWork = false;
-        mRenderWorkDone = true;
-        mGlCommandsDone.store(true, std::memory_order_relaxed);
-    }
     mRenderThread = std::thread(&Fast3dWindow::RenderThreadLoop, this);
 }
 
 void Fast3dWindow::DestroyRenderThread() {
-    if (!mRenderThreadRunning) {
-        return;
-    }
     {
         std::unique_lock<std::mutex> lock(mRenderMutex);
-        mRenderThreadRunning = false;
+        if (!mRenderThreadRunning.load(std::memory_order_relaxed)) {
+            return;
+        }
+        mRenderThreadRunning.store(false, std::memory_order_relaxed);
     }
     mRenderCV.notify_all();
     if (mRenderThread.joinable()) {

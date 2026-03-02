@@ -51,7 +51,6 @@ class InputEditorWindow : public GuiWindow {
     int32_t mGameInputBlockTimer;
     int32_t mMappingInputBlockTimer;
     int32_t mRumbleTimer;
-    float mBButtonHoldTimer = 0.0f;
     std::shared_ptr<ControllerRumbleMapping> mRumbleMappingToTest;
 
     // mBitmaskToMappingIds[port][bitmask] = { id0, id1, ... }

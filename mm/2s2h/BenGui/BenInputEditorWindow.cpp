@@ -21,6 +21,22 @@ using namespace UIWidgets;
 
 static s32 heldInputs = 0;
 
+#ifndef __WIIU__
+// Check B button state via SDL directly instead of ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight).
+// BlockGamepadNavigation() clears ImGuiConfigFlags_NavEnableGamepad which prevents the ImGui SDL
+// backend from updating gamepad key state, making ImGui::IsKeyDown unreliable for gamepad buttons.
+static bool IsSDLGamepadBButtonPressed(uint8_t port) {
+    auto connectedDeviceManager =
+        Ship::Context::GetInstance()->GetControlDeck()->GetConnectedPhysicalDeviceManager();
+    for (auto [instanceId, gamepad] : connectedDeviceManager->GetConnectedSDLGamepadsForPort(port)) {
+        if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_B)) {
+            return true;
+        }
+    }
+    return false;
+}
+#endif
+
 BenInputEditorWindow::~BenInputEditorWindow() {
 }
 
@@ -241,7 +257,7 @@ void BenInputEditorWindow::DrawButtonLineAddMappingButton(uint8_t port, N64Butto
         }
         ImGui::PopItemFlag();
 #ifndef __WIIU__
-        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        bool bButtonDown = IsSDLGamepadBButtonPressed(port);
         if (bButtonDown) {
             mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
             if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
@@ -343,7 +359,7 @@ void BenInputEditorWindow::DrawButtonLineEditMappingButton(uint8_t port, N64Butt
         }
         ImGui::PopItemFlag();
 #ifndef __WIIU__
-        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        bool bButtonDown = IsSDLGamepadBButtonPressed(port);
         if (bButtonDown) {
             mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
             if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
@@ -564,7 +580,7 @@ void BenInputEditorWindow::DrawStickDirectionLineAddMappingButton(uint8_t port, 
             ImGui::CloseCurrentPopup();
         }
 #ifndef __WIIU__
-        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        bool bButtonDown = IsSDLGamepadBButtonPressed(port);
         if (bButtonDown) {
             mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
             if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
@@ -695,7 +711,7 @@ void BenInputEditorWindow::DrawStickDirectionLineEditMappingButton(uint8_t port,
             ImGui::CloseCurrentPopup();
         }
 #ifndef __WIIU__
-        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        bool bButtonDown = IsSDLGamepadBButtonPressed(port);
         if (bButtonDown) {
             mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
             if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
@@ -1017,7 +1033,7 @@ void BenInputEditorWindow::DrawAddRumbleMappingButton(uint8_t port) {
             ImGui::CloseCurrentPopup();
         }
 #ifndef __WIIU__
-        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        bool bButtonDown = IsSDLGamepadBButtonPressed(port);
         if (bButtonDown) {
             mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
             if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
@@ -1219,7 +1235,7 @@ void BenInputEditorWindow::DrawAddLEDMappingButton(uint8_t port) {
             ImGui::CloseCurrentPopup();
         }
 #ifndef __WIIU__
-        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        bool bButtonDown = IsSDLGamepadBButtonPressed(port);
         if (bButtonDown) {
             mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
             if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {
@@ -1317,7 +1333,7 @@ void BenInputEditorWindow::DrawAddGyroMappingButton(uint8_t port) {
             ImGui::CloseCurrentPopup();
         }
 #ifndef __WIIU__
-        bool bButtonDown = ImGui::IsKeyDown(ImGuiKey_GamepadFaceRight);
+        bool bButtonDown = IsSDLGamepadBButtonPressed(port);
         if (bButtonDown) {
             mBButtonHoldTimer += ImGui::GetIO().DeltaTime;
             if (mBButtonHoldTimer >= B_HOLD_CANCEL_THRESHOLD) {

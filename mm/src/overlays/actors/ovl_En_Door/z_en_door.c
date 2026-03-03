@@ -23,6 +23,7 @@
 #include "objects/gameplay_field_keep/gameplay_field_keep.h"
 
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
@@ -784,6 +785,12 @@ void EnDoor_Idle(EnDoor* this, PlayState* play) {
                                                : PLAYER_DOORTYPE_TALKING;
                     }
                 }
+                // #region 2S2H [Enhancement] - Auto open doors
+                if (CVarGetInteger("gEnhancements.Player.AutoOpenDoors", 0) &&
+                    player->doorType == PLAYER_DOORTYPE_HANDLE) {
+                    player->doorType = PLAYER_DOORTYPE_PROXIMITY;
+                }
+                // #endregion
                 func_80122F28(player);
             }
         } else if ((this->doorType == ENDOOR_TYPE_AJAR) &&

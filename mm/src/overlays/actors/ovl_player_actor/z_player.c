@@ -6946,8 +6946,8 @@ s32 Player_ActionHandler_1(Player* this, PlayState* play) {
                (CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_A) ||
                 (Player_Action_TryOpeningDoor == this->actionFunc) || (this->doorType == PLAYER_DOORTYPE_STAIRCASE) ||
                 (this->doorType == PLAYER_DOORTYPE_PROXIMITY) ||
-                (CVarGetInteger("gEnhancements.Player.AutoOpenDoors", 0) &&
-                 (this->doorType == PLAYER_DOORTYPE_HANDLE))))))) {
+                ((this->doorType == PLAYER_DOORTYPE_HANDLE) &&
+                 CVarGetInteger("gEnhancements.Player.AutoOpenDoors", 0)))))) {
             Actor* doorActor = this->doorActor;
             Actor* var_v0_3;
 

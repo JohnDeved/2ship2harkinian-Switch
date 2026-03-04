@@ -1821,6 +1821,14 @@ typedef enum {
     // true
     // ```
     // #### `args`
+    // - `*f32` (speed multiplier)
+    VB_SET_HOOKSHOT_SPEED,
+
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // #### `args`
     // - `*EnElforg`
     VB_SET_DRAW_FOR_SAVED_STRAY_FAIRY,
 

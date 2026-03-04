@@ -93,8 +93,8 @@ void RegisterModernZTargeting() {
             sStickReleased = true;
         }
 
-        bool crossedRight = (sPrevRightStickX <= STICK_THRESHOLD) && (rightStickX > STICK_THRESHOLD);
-        bool crossedLeft = (sPrevRightStickX >= -STICK_THRESHOLD) && (rightStickX < -STICK_THRESHOLD);
+        bool crossedRight = (sPrevRightStickX < STICK_THRESHOLD) && (rightStickX > STICK_THRESHOLD);
+        bool crossedLeft = (sPrevRightStickX > -STICK_THRESHOLD) && (rightStickX < -STICK_THRESHOLD);
         bool hasFlick = crossedRight || crossedLeft;
 
         if (!sStickReleased || sSwitchCooldown > 0 || !hasFlick) {

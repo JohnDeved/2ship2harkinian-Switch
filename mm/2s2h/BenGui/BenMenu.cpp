@@ -1188,6 +1188,11 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Great Fairy Sword B-Button Attack", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Equipment.GreatFairySwordBButton")
         .Options(CheckboxOptions().Tooltip(
+            "When the Great Fairy's Sword is held, pressing B attacks with it instead of drawing "
+            "your equipped sword. The sword can still be put away with A as normal."));
+    AddWidget(path, "Great Fairy Sword M1 + B Attack", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Equipment.GreatFairySwordBButtonM1")
+        .Options(CheckboxOptions().Tooltip(
             "When you own the Great Fairy's Sword, hold M1 and press B to attack with it. "
             "Pressing B without M1 uses your regular equipped sword."));
 

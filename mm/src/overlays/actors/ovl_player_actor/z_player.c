@@ -3897,7 +3897,8 @@ void Player_ProcessItemButtons(Player* this, PlayState* play) {
 
     if (((this->actor.id == ACTOR_PLAYER) && (this->itemAction >= PLAYER_IA_FISHING_ROD)) &&
         !(((Player_GetHeldBButtonSword(this) == PLAYER_B_SWORD_NONE) || (gSaveContext.jinxTimer == 0)) &&
-          (Player_ItemIsInUse(this, (IREG(1) != 0) ? ITEM_FISHING_ROD : Inventory_GetBtnBItem(play)) ||
+          (Player_ItemIsInUse(this, (IREG(1) != 0) ? ITEM_FISHING_ROD
+                                                   : Player_GetItemOnButton(play, this, EQUIP_SLOT_B)) ||
            // #region 2S2H [Dpad]
            (CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0) &&
             (Player_ItemIsInUse(this, DPAD_BTN_ITEM(EQUIP_SLOT_D_RIGHT)) ||

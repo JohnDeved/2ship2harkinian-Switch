@@ -95,6 +95,9 @@ void RegisterModernZTargeting() {
             return;
         }
 
+        // Consume this as a single flick attempt; require returning to neutral before trying again.
+        sStickReleased = false;
+
         bool switchRight = rightStickX > 0;
 
         // Use camera yaw to determine screen-space left/right
@@ -176,7 +179,6 @@ void RegisterModernZTargeting() {
             player->zTargetActiveTimer = 15;
             player->stateFlags2 &= ~(PLAYER_STATE2_CAN_ACCEPT_TALK_OFFER | PLAYER_STATE2_200000);
 
-            sStickReleased = false;
             sSwitchCooldown = SWITCH_COOLDOWN;
         }
     });

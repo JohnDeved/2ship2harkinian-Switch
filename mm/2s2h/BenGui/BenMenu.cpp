@@ -1194,7 +1194,7 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Equipment.GreatFairySwordBButtonM1")
         .Options(CheckboxOptions().Tooltip(
             "When you own the Great Fairy's Sword, hold M1 and press B to attack with it. "
-            "Pressing B without M1 uses your regular equipped sword."));
+            "Pressing B without M1 uses your regular equipped sword unless the option above is also enabled."));
 
     path.column = SECTION_COLUMN_2;
     AddWidget(path, "Modes", WIDGET_SEPARATOR_TEXT);

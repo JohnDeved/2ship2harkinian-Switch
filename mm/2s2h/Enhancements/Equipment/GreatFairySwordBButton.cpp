@@ -20,7 +20,8 @@ void RegisterGreatFairySwordBButton() {
         ItemId* item = va_arg(args, ItemId*);
 
         if (slot == EQUIP_SLOT_B && player->transformation == PLAYER_FORM_HUMAN) {
-            if (CVAR_M1 && sPlayerControlInput != nullptr && INV_CONTENT(ITEM_SWORD_GREAT_FAIRY) == ITEM_SWORD_GREAT_FAIRY &&
+            if (sPlayerControlInput != nullptr && CVAR_M1 &&
+                INV_CONTENT(ITEM_SWORD_GREAT_FAIRY) == ITEM_SWORD_GREAT_FAIRY &&
                 CHECK_BTN_ALL(sPlayerControlInput->cur.button, BTN_CUSTOM_MODIFIER1)) {
                 *item = ITEM_SWORD_GREAT_FAIRY;
             } else if (CVAR && player->heldItemId == ITEM_SWORD_GREAT_FAIRY) {

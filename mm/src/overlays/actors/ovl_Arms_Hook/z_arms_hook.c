@@ -153,6 +153,7 @@ void ArmsHook_Shoot(ArmsHook* this, PlayState* play) {
 
         if (pullStandingItems && (touchedActor->id == ACTOR_EN_ITEM00)) {
             canPullTouchedActor = true;
+            canHookTouchedActor = true;
         }
 
         if ((touchedActor->update != NULL) && canPullTouchedActor) {

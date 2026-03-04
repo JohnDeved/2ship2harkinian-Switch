@@ -1112,7 +1112,8 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Hookshot Pulls Standing Items", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.HookshotPullsStandingItems")
         .Options(
-            CheckboxOptions().Tooltip("Allows the Hookshot to pull in standing collectibles, not just Skulltula tokens."));
+            CheckboxOptions().Tooltip("Allows the Hookshot to pull in standing collectibles, not just Gold Skulltula "
+                                       "tokens."));
     AddWidget(path, "Modern Z-Targeting", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting")
         .Options(CheckboxOptions().Tooltip(

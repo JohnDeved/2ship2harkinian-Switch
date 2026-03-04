@@ -6942,10 +6942,12 @@ s32 Player_ActionHandler_1(Player* this, PlayState* play) {
         if ((this->actor.category != ACTORCAT_PLAYER) ||
             ((((this->doorType <= PLAYER_DOORTYPE_TALKING) && CutsceneManager_IsNext(CS_ID_GLOBAL_TALK)) ||
               ((this->doorType >= PLAYER_DOORTYPE_HANDLE) && CutsceneManager_IsNext(CS_ID_GLOBAL_DOOR))) &&
-             (!(this->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) &&
-              (CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_A) ||
-               (Player_Action_TryOpeningDoor == this->actionFunc) || (this->doorType == PLAYER_DOORTYPE_STAIRCASE) ||
-               (this->doorType == PLAYER_DOORTYPE_PROXIMITY))))) {
+              (!(this->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) &&
+               (CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_A) ||
+                (Player_Action_TryOpeningDoor == this->actionFunc) || (this->doorType == PLAYER_DOORTYPE_STAIRCASE) ||
+                (this->doorType == PLAYER_DOORTYPE_PROXIMITY) ||
+                ((this->doorType == PLAYER_DOORTYPE_HANDLE) &&
+                 CVarGetInteger("gEnhancements.Player.AutoOpenDoors", 0)))))) {
             Actor* doorActor = this->doorActor;
             Actor* var_v0_3;
 

@@ -785,12 +785,6 @@ void EnDoor_Idle(EnDoor* this, PlayState* play) {
                                                : PLAYER_DOORTYPE_TALKING;
                     }
                 }
-                // #region 2S2H [Enhancement] - Auto open doors
-                if (CVarGetInteger("gEnhancements.Player.AutoOpenDoors", 0) &&
-                    player->doorType == PLAYER_DOORTYPE_HANDLE) {
-                    player->doorType = PLAYER_DOORTYPE_PROXIMITY;
-                }
-                // #endregion
                 func_80122F28(player);
             }
         } else if ((this->doorType == ENDOOR_TYPE_AJAR) &&

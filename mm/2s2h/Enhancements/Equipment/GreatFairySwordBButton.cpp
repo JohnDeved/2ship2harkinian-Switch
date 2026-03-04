@@ -1,5 +1,6 @@
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include "2s2h/BenPort.h"
 #include "2s2h/ShipInit.hpp"
 
 extern "C" {
@@ -17,7 +18,8 @@ void RegisterGreatFairySwordBButton() {
         ItemId* item = va_arg(args, ItemId*);
 
         if (slot == EQUIP_SLOT_B && player->transformation == PLAYER_FORM_HUMAN &&
-            player->heldItemId == ITEM_SWORD_GREAT_FAIRY) {
+            INV_CONTENT(ITEM_SWORD_GREAT_FAIRY) == ITEM_SWORD_GREAT_FAIRY && sPlayerControlInput != nullptr &&
+            CHECK_BTN_ALL(sPlayerControlInput->cur.button, BTN_CUSTOM_MODIFIER1)) {
             *item = ITEM_SWORD_GREAT_FAIRY;
         }
     });

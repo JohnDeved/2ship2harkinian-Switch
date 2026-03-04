@@ -1109,6 +1109,10 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Manual Jump", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ManualJump")
         .Options(CheckboxOptions().Tooltip("Z + A to Jump and B while midair to Jump Attack."));
+    AddWidget(path, "Hookshot Pulls Standing Items", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.HookshotPullsStandingItems")
+        .Options(
+            CheckboxOptions().Tooltip("Allows the Hookshot to pull in standing collectibles, not just Skulltula tokens."));
     AddWidget(path, "Modern Z-Targeting", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting")
         .Options(CheckboxOptions().Tooltip(

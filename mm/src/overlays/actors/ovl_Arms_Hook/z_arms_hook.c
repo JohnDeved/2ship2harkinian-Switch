@@ -8,6 +8,7 @@
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "objects/object_link_child/object_link_child.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED)
 
@@ -145,10 +146,18 @@ void ArmsHook_Shoot(ArmsHook* this, PlayState* play) {
     if ((this->timer != 0) && (this->collider.base.atFlags & AT_HIT) &&
         (this->collider.elem.atHitElem->elemMaterial != ELEM_MATERIAL_UNK4)) {
         Actor* touchedActor = this->collider.base.at;
+        s32 pullStandingItems = CVarGetInteger("gEnhancements.Player.HookshotPullsStandingItems", 0);
+        s32 canPullTouchedActor =
+            touchedActor->flags & (ACTOR_FLAG_HOOKSHOT_PULLS_ACTOR | ACTOR_FLAG_HOOKSHOT_PULLS_PLAYER);
+        s32 canHookTouchedActor = this->collider.elem.atHitElem->acElemFlags & ACELEM_HOOKABLE;
 
-        if ((touchedActor->update != NULL) &&
-            (touchedActor->flags & (ACTOR_FLAG_HOOKSHOT_PULLS_ACTOR | ACTOR_FLAG_HOOKSHOT_PULLS_PLAYER))) {
-            if (this->collider.elem.atHitElem->acElemFlags & ACELEM_HOOKABLE) {
+        if (pullStandingItems && (touchedActor->id == ACTOR_EN_ITEM00)) {
+            canPullTouchedActor = true;
+            canHookTouchedActor = true;
+        }
+
+        if ((touchedActor->update != NULL) && canPullTouchedActor) {
+            if (canHookTouchedActor) {
                 ArmsHook_AttachToActor(this, touchedActor);
                 if (CHECK_FLAG_ALL(touchedActor->flags, ACTOR_FLAG_HOOKSHOT_PULLS_PLAYER)) {
                     ArmsHook_PullPlayer(this);

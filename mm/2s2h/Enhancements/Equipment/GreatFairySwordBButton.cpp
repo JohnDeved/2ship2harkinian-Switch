@@ -17,8 +17,8 @@ void RegisterGreatFairySwordBButton() {
         EquipSlot slot = (EquipSlot)va_arg(args, int);
         ItemId* item = va_arg(args, ItemId*);
 
-        if (slot == EQUIP_SLOT_B && player->transformation == PLAYER_FORM_HUMAN &&
-            INV_CONTENT(ITEM_SWORD_GREAT_FAIRY) == ITEM_SWORD_GREAT_FAIRY && sPlayerControlInput != nullptr &&
+        if (slot == EQUIP_SLOT_B && sPlayerControlInput != nullptr && player->transformation == PLAYER_FORM_HUMAN &&
+            INV_CONTENT(ITEM_SWORD_GREAT_FAIRY) == ITEM_SWORD_GREAT_FAIRY &&
             CHECK_BTN_ALL(sPlayerControlInput->cur.button, BTN_CUSTOM_MODIFIER1)) {
             *item = ITEM_SWORD_GREAT_FAIRY;
         }

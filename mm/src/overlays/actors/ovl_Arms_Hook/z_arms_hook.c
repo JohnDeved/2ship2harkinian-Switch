@@ -7,9 +7,10 @@
 #include "z_arms_hook.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "objects/object_link_child/object_link_child.h"
-#include "2s2h/GameInteractor/GameInteractor.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED)
+#define CVAR_HOOKSHOT_SPEED "gEnhancements.Player.HookshotSpeed"
 
 void ArmsHook_Init(Actor* thisx, PlayState* play);
 void ArmsHook_Destroy(Actor* thisx, PlayState* play);
@@ -18,6 +19,10 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play);
 
 void ArmsHook_Wait(ArmsHook* this, PlayState* play);
 void ArmsHook_Shoot(ArmsHook* this, PlayState* play);
+
+static f32 ArmsHook_GetSpeedMultiplier(void) {
+    return CLAMP_MIN(CVarGetInteger(CVAR_HOOKSHOT_SPEED, 1), 1);
+}
 
 ActorProfile Arms_Hook_Profile = {
     /**/ ACTOR_ARMS_HOOK,
@@ -75,11 +80,8 @@ void ArmsHook_Destroy(Actor* thisx, PlayState* play) {
 
 void ArmsHook_Wait(ArmsHook* this, PlayState* play) {
     if (this->actor.parent == NULL) {
-        f32 speedMultiplier = 1.0f;
-
-        GameInteractor_Should(VB_SET_HOOKSHOT_SPEED, true, &speedMultiplier);
         ArmsHook_SetupAction(this, ArmsHook_Shoot);
-        Actor_SetSpeeds(&this->actor, 20.0f * speedMultiplier);
+        Actor_SetSpeeds(&this->actor, 20.0f * ArmsHook_GetSpeedMultiplier());
         this->actor.parent = &GET_PLAYER(play)->actor;
         this->timer = 26;
     }
@@ -196,9 +198,7 @@ void ArmsHook_Shoot(ArmsHook* this, PlayState* play) {
 
         {
             f32 velocity;
-            f32 speedMultiplier = 1.0f;
-
-            GameInteractor_Should(VB_SET_HOOKSHOT_SPEED, true, &speedMultiplier);
+            f32 speedMultiplier = ArmsHook_GetSpeedMultiplier();
 
             bodyDistDiff =
                 Math_Vec3f_DistXYZAndStoreDiff(&player->rightHandWorld.pos, &this->actor.world.pos, &bodyDistDiffVec);

@@ -924,7 +924,8 @@ static void UpdateVisibilityJumpscareCamera(PlayState* play) {
     }
 
     if (sState.jumpscareTimer > 0) {
-        camera->dist = Camera_ScaledStepToCeilF(JUMPSCARE_TARGET_DIST, camera->dist, JUMPSCARE_DIST_STEP_SCALE, 1.0f);
+        camera->dist = Camera_ScaledStepToCeilF(JUMPSCARE_TARGET_DIST, camera->dist, JUMPSCARE_DIST_STEP_SCALE,
+                                               JUMPSCARE_DIST_MIN_DIFF);
         camera->fov = Camera_ScaledStepToCeilF(JUMPSCARE_TARGET_FOV, camera->fov, camera->fovUpdateRate,
                                                JUMPSCARE_FOV_MIN_DIFF);
         DecrementCooldown(&sState.jumpscareTimer);
@@ -935,8 +936,8 @@ static void UpdateVisibilityJumpscareCamera(PlayState* play) {
         return;
     }
 
-    camera->dist =
-        Camera_ScaledStepToCeilF(sState.jumpscareOriginalDist, camera->dist, JUMPSCARE_DIST_STEP_SCALE, 1.0f);
+    camera->dist = Camera_ScaledStepToCeilF(sState.jumpscareOriginalDist, camera->dist, JUMPSCARE_DIST_STEP_SCALE,
+                                            JUMPSCARE_DIST_MIN_DIFF);
     camera->fov = Camera_ScaledStepToCeilF(sState.jumpscareOriginalFov, camera->fov, camera->fovUpdateRate,
                                            JUMPSCARE_FOV_MIN_DIFF);
 

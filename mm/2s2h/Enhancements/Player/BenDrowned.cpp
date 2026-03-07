@@ -9,6 +9,8 @@
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
 
+extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minDiff);
+
 extern "C" {
 #include "functions.h"
 #include "sfx.h"
@@ -71,6 +73,8 @@ extern "C" {
 // --- Cooldown durations ---
 #define DEFAULT_MOVE_COOLDOWN_FRAMES 3600
 #define EFFECT_COOLDOWN_FRAMES 30
+#define JUMPSCARE_ZOOM_FRAMES 20
+#define JUMPSCARE_COOLDOWN_FRAMES 90
 #define DEFAULT_RESPAWN_COOLDOWN_FRAMES 1800
 #define DEFAULT_DIALOGUE_COOLDOWN_FRAMES 600
 
@@ -104,6 +108,15 @@ extern "C" {
 #define DUST_SCALE 120
 #define DUST_SCALE_STEP (-8)
 #define DUST_LIFE 6
+
+// --- Visibility jumpscare ---
+#define JUMPSCARE_TARGET_DIST 60.0f
+#define JUMPSCARE_TARGET_FOV 40.0f
+#define JUMPSCARE_DIST_STEP_SCALE 0.35f
+#define JUMPSCARE_FOV_MIN_DIFF 0.1f
+#define JUMPSCARE_NOTE_LOW_PITCH 0.75f
+#define JUMPSCARE_NOTE_MID_PITCH 1.0f
+#define JUMPSCARE_NOTE_HIGH_PITCH 1.25f
 
 // --- Dialogue corruption ---
 #define DIALOGUE_SEARCH_WINDOW 96
@@ -166,6 +179,8 @@ static struct {
     s32 respawnCooldown;
     s32 colorDistortCooldown;
     s32 effectCooldown;
+    s32 jumpscareCooldown;
+    s32 jumpscareTimer;
     s32 laughCooldown;
     s32 dialogueCooldown;
     bool disappearAfterObserved;
@@ -175,6 +190,8 @@ static struct {
     EnTorch2* ownedStatue;
     bool spawnedStatue;
     u32 ignoreStatueInterpolationUntilFrame;
+    f32 jumpscareOriginalDist;
+    f32 jumpscareOriginalFov;
     s16 currentSceneId;
     s32 currentSceneLayer;
 } sState;
@@ -280,11 +297,15 @@ static void ResetZoneRuntimeState() {
     sState.respawnCooldown = 0;
     sState.colorDistortCooldown = 0;
     sState.effectCooldown = 0;
+    sState.jumpscareCooldown = 0;
+    sState.jumpscareTimer = 0;
     sState.dialogueCooldown = 0;
     sState.disappearAfterObserved = false;
     sState.statueObserved = false;
     sState.statueWasVisible = false;
     sState.ignoreStatueInterpolationUntilFrame = 0;
+    sState.jumpscareOriginalDist = 0.0f;
+    sState.jumpscareOriginalFov = 0.0f;
     ResetLaughCooldown();
 }
 
@@ -851,6 +872,72 @@ static void TriggerArrivalEffects(PlayState* play, Player* player, EnTorch2* sta
     sState.effectCooldown = EFFECT_COOLDOWN_FRAMES;
 }
 
+static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2* statue) {
+    Camera* camera;
+    f32 distSq;
+
+    if ((play == nullptr) || (player == nullptr) || (statue == nullptr) || (sState.jumpscareCooldown > 0)) {
+        return;
+    }
+
+    distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
+                             statue->actor.world.pos.z);
+    if (distSq > SQ(sTuning.closeEffectDist)) {
+        return;
+    }
+
+    camera = GET_ACTIVE_CAM(play);
+    if (camera == nullptr) {
+        return;
+    }
+
+    sState.jumpscareOriginalDist = camera->dist;
+    sState.jumpscareOriginalFov = camera->fov;
+    sState.jumpscareTimer = JUMPSCARE_ZOOM_FRAMES;
+    sState.jumpscareCooldown = JUMPSCARE_COOLDOWN_FRAMES;
+
+    Audio_PlaySfx(NA_SE_SY_CAMERA_ZOOM_UP_2);
+    Audio_PlaySfx_AtPosWithFreq(&statue->actor.projectedPos, NA_SE_OC_OCARINA, JUMPSCARE_NOTE_LOW_PITCH);
+    Audio_PlaySfx_AtPosWithFreq(&statue->actor.projectedPos, NA_SE_EV_OCARINA_BOUND_0, JUMPSCARE_NOTE_MID_PITCH);
+    Audio_PlaySfx_AtPosWithFreq(&statue->actor.projectedPos, NA_SE_EV_OCARINA_BOUND_1, JUMPSCARE_NOTE_HIGH_PITCH);
+}
+
+static void UpdateVisibilityJumpscareCamera(PlayState* play) {
+    Camera* camera;
+
+    if (play == nullptr) {
+        return;
+    }
+
+    camera = GET_ACTIVE_CAM(play);
+    if (camera == nullptr) {
+        return;
+    }
+
+    if (sState.jumpscareTimer > 0) {
+        camera->dist = Camera_ScaledStepToCeilF(JUMPSCARE_TARGET_DIST, camera->dist, JUMPSCARE_DIST_STEP_SCALE, 1.0f);
+        camera->fov = Camera_ScaledStepToCeilF(JUMPSCARE_TARGET_FOV, camera->fov, camera->fovUpdateRate,
+                                               JUMPSCARE_FOV_MIN_DIFF);
+        DecrementCooldown(&sState.jumpscareTimer);
+        return;
+    }
+
+    if ((sState.jumpscareOriginalDist <= 0.0f) || (sState.jumpscareOriginalFov <= 0.0f)) {
+        return;
+    }
+
+    camera->dist =
+        Camera_ScaledStepToCeilF(sState.jumpscareOriginalDist, camera->dist, JUMPSCARE_DIST_STEP_SCALE, 1.0f);
+    camera->fov = Camera_ScaledStepToCeilF(sState.jumpscareOriginalFov, camera->fov, camera->fovUpdateRate,
+                                           JUMPSCARE_FOV_MIN_DIFF);
+
+    if (fabsf(camera->dist - sState.jumpscareOriginalDist) < 0.5f &&
+        fabsf(camera->fov - sState.jumpscareOriginalFov) < JUMPSCARE_FOV_MIN_DIFF) {
+        sState.jumpscareOriginalDist = 0.0f;
+        sState.jumpscareOriginalFov = 0.0f;
+    }
+}
+
 static void UpdateStatueLaugh(EnTorch2* statue) {
     if ((statue == nullptr) || (sState.laughCooldown > 0)) {
         return;
@@ -1112,6 +1199,8 @@ void RegisterBenDrowned() {
         DecrementCooldown(&sState.colorDistortCooldown);
         DecrementCooldown(&sState.laughCooldown);
         DecrementCooldown(&sState.moveCooldown);
+        DecrementCooldown(&sState.jumpscareCooldown);
+        UpdateVisibilityJumpscareCamera(play);
 
         statue = GetStatue(play);
         if (statue != nullptr) {
@@ -1121,6 +1210,7 @@ void RegisterBenDrowned() {
             if (statueVisible) {
                 UpdateStatueColorDistortion(statue);
                 if (!sState.statueWasVisible) {
+                    TriggerVisibilityJumpscare(play, player, statue);
                     sState.disappearAfterObserved = Rand_ZeroOne() < sTuning.disappearChance;
                 }
                 sState.statueObserved = true;

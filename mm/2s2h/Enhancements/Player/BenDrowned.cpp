@@ -1007,6 +1007,13 @@ static void TriggerArrivalEffects(PlayState* play, Player* player, EnTorch2* sta
     sState.effectCooldown = EFFECT_COOLDOWN_FRAMES;
 }
 
+static void PlayGlobalJumpscareSfx() {
+    Audio_PlaySfx(NA_SE_SY_CAMERA_ZOOM_UP_2);
+    Audio_PlaySfx(NA_SE_OC_OCARINA);
+    Audio_PlaySfx(NA_SE_EV_OCARINA_BOUND_0);
+    Audio_PlaySfx(NA_SE_EV_OCARINA_BOUND_1);
+}
+
 static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2* statue) {
     Camera* camera;
     f32 distSq;
@@ -1017,7 +1024,7 @@ static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2
 
     distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
                              statue->actor.world.pos.z);
-    if (distSq > SQ(sTuning.closeEffectDist)) {
+    if (distSq > SQ(sTuning.jumpscareTriggerDist)) {
         return;
     }
 
@@ -1032,10 +1039,7 @@ static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2
     sState.jumpscareTimer = sTuning.jumpscareZoomFrames;
     sState.jumpscareCooldown = sTuning.jumpscareCooldownFrames;
 
-    Audio_PlaySfx(NA_SE_SY_CAMERA_ZOOM_UP_2);
-    Audio_PlaySfx(NA_SE_OC_OCARINA);
-    Audio_PlaySfx(NA_SE_EV_OCARINA_BOUND_0);
-    Audio_PlaySfx(NA_SE_EV_OCARINA_BOUND_1);
+    PlayGlobalJumpscareSfx();
 }
 
 static void UpdateVisibilityJumpscareCamera(PlayState* play) {

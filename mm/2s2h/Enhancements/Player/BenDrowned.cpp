@@ -6,6 +6,7 @@
 
 extern "C" {
 #include "functions.h"
+#include "message_data_fmt_nes.h"
 #include "variables.h"
 #include "z64quake.h"
 #include "overlays/actors/ovl_En_Torch2/z_en_torch2.h"
@@ -31,6 +32,7 @@ constexpr s32 BEN_DROWNED_MOVE_COOLDOWN_FRAMES = 3600;
 constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
 constexpr s32 BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES = 900;
 constexpr size_t BEN_DROWNED_DIALOGUE_SEARCH_WINDOW = 48;
+constexpr size_t BEN_DROWNED_MAX_DECODED_TEXT = 200;
 constexpr s32 BEN_DROWNED_DIALOGUE_TRIGGER_BASE = 8;
 constexpr s32 BEN_DROWNED_DIALOGUE_TRIGGER_RANGE = 8;
 constexpr f32 BEN_DROWNED_DIALOGUE_CHANCE = 0.12f;
@@ -74,6 +76,8 @@ struct BenDrownedHistoryEntry {
 };
 
 std::array<BenDrownedHistoryEntry, BEN_DROWNED_HISTORY_SIZE> sBenDrownedHistory;
+std::array<s16, BEN_DROWNED_MAX_DECODED_TEXT> sBenDrownedGlyphOffsets;
+std::array<bool, BEN_DROWNED_MAX_DECODED_TEXT> sBenDrownedSafeSpaces;
 Vec3f sBenDrownedZeroVelocity = { 0.0f, 0.0f, 0.0f };
 Vec3f sBenDrownedDustAccel = { 0.0f, 0.08f, 0.0f };
 Color_RGBA8 sBenDrownedDustPrimColor = { 170, 130, 90, 160 };
@@ -284,26 +288,120 @@ bool IsBenDrownedCorruptibleChar(char ch) {
     return (ch >= ' ') && (ch <= '~');
 }
 
+bool IsBenDrownedGlyphChar(char ch) {
+    return IsBenDrownedCorruptibleChar(ch) && (ch != ' ');
+}
+
+void BuildBenDrownedGlyphOffsets(MessageContext* msgCtx, std::array<s16, BEN_DROWNED_MAX_DECODED_TEXT>& glyphOffsets,
+                                 std::array<bool, BEN_DROWNED_MAX_DECODED_TEXT>& safeSpaces) {
+    s16 charTexOffset = 0;
+    size_t decodedTextLen = std::min<size_t>(msgCtx->decodedTextLen, BEN_DROWNED_MAX_DECODED_TEXT);
+
+    // This helper always succeeds; it builds a best-effort glyph-slot map for the currently decoded text window.
+    glyphOffsets.fill(-1);
+    safeSpaces.fill(false);
+
+    for (size_t i = 0; i < decodedTextLen; i++) {
+        u8 ch = static_cast<u8>(msgCtx->decodedBuffer.schar[i]);
+
+        switch (ch) {
+            case MESSAGE_COLOR_DEFAULT:
+            case MESSAGE_COLOR_RED:
+            case MESSAGE_COLOR_GREEN:
+            case MESSAGE_COLOR_BLUE:
+            case MESSAGE_COLOR_YELLOW:
+            case MESSAGE_COLOR_LIGHTBLUE:
+            case MESSAGE_COLOR_PINK:
+            case MESSAGE_COLOR_SILVER:
+            case MESSAGE_COLOR_ORANGE:
+            case MESSAGE_NEWLINE:
+            case MESSAGE_CARRIAGE_RETURN:
+            case MESSAGE_BOX_BREAK:
+            case MESSAGE_BOX_BREAK2:
+            case MESSAGE_QUICKTEXT_ENABLE:
+            case MESSAGE_QUICKTEXT_DISABLE:
+            case MESSAGE_TWO_CHOICE:
+            case MESSAGE_THREE_CHOICE:
+            case MESSAGE_INPUT_BANK:
+            case MESSAGE_INPUT_DOGGY_RACETRACK_BET:
+            case MESSAGE_INPUT_BOMBER_CODE:
+            case MESSAGE_PAUSE_MENU:
+            case MESSAGE_INPUT_LOTTERY_CODE:
+            case MESSAGE_CONTINUE:
+            case MESSAGE_END:
+            case MESSAGE_PERSISTENT:
+            case MESSAGE_EVENT:
+            case MESSAGE_EVENT2:
+            case MESSAGE_BACKGROUND:
+                break;
+
+            case MESSAGE_BOX_BREAK_DELAYED:
+            case MESSAGE_FADE:
+            case MESSAGE_FADE_SKIPPABLE:
+            case MESSAGE_SFX:
+            case MESSAGE_DELAY:
+                i = (i + 2 >= decodedTextLen) ? decodedTextLen : (i + 2); // Skip the 2-byte control parameter payload.
+                break;
+
+            case MESSAGE_TEXT_SPEED:
+                i = (i + 1 >= decodedTextLen) ? decodedTextLen : (i + 1); // Skip the 1-byte text speed parameter.
+                break;
+
+            case ' ':
+                safeSpaces[i] = true;
+                break;
+
+            default:
+                if ((ch >= MESSAGE_BTN_A) && (ch <= MESSAGE_CONTROL_PAD)) {
+                    glyphOffsets[i] = charTexOffset;
+                    charTexOffset += FONT_CHAR_TEX_SIZE;
+                } else if (IsBenDrownedGlyphChar(static_cast<char>(ch))) {
+                    glyphOffsets[i] = charTexOffset;
+                    charTexOffset += FONT_CHAR_TEX_SIZE;
+                }
+                break;
+        }
+    }
+
+}
+
 bool TryInjectBenDrownedDialoguePhrase(PlayState* play, MessageContext* msgCtx, const BenDrownedDialoguePhrase& phrase) {
+    size_t decodedTextLen = std::min<size_t>(msgCtx->decodedTextLen, BEN_DROWNED_MAX_DECODED_TEXT);
     size_t searchStart = msgCtx->textDrawPos + 1;
     size_t searchEnd;
     size_t startPos;
     size_t i;
 
-    if ((searchStart >= msgCtx->decodedTextLen) || ((msgCtx->decodedTextLen - searchStart) < phrase.length)) {
+    BuildBenDrownedGlyphOffsets(msgCtx, sBenDrownedGlyphOffsets, sBenDrownedSafeSpaces);
+
+    if ((searchStart >= decodedTextLen) || ((decodedTextLen - searchStart) < phrase.length)) {
         return false;
     }
 
     searchEnd = searchStart + BEN_DROWNED_DIALOGUE_SEARCH_WINDOW;
-    if (searchEnd > msgCtx->decodedTextLen) {
-        searchEnd = msgCtx->decodedTextLen;
+    if (searchEnd > decodedTextLen) {
+        searchEnd = decodedTextLen;
     }
 
     for (startPos = searchStart; (startPos + phrase.length) <= searchEnd; startPos++) {
         bool fits = true;
 
         for (i = 0; i < phrase.length; i++) {
-            if (!IsBenDrownedCorruptibleChar(msgCtx->decodedBuffer.schar[startPos + i])) {
+            char originalChar = msgCtx->decodedBuffer.schar[startPos + i];
+            bool phraseNeedsGlyph = IsBenDrownedGlyphChar(phrase.text[i]);
+
+            // Reject any control bytes up front so we never treat control payload bytes as candidate readable text.
+            if (!IsBenDrownedCorruptibleChar(originalChar)) {
+                fits = false;
+                break;
+            }
+
+            if (phraseNeedsGlyph) {
+                if (sBenDrownedGlyphOffsets[startPos + i] < 0) {
+                    fits = false;
+                    break;
+                }
+            } else if (!sBenDrownedSafeSpaces[startPos + i]) {
                 fits = false;
                 break;
             }
@@ -316,8 +414,9 @@ bool TryInjectBenDrownedDialoguePhrase(PlayState* play, MessageContext* msgCtx, 
         for (i = 0; i < phrase.length; i++) {
             if (msgCtx->decodedBuffer.schar[startPos + i] != phrase.text[i]) {
                 msgCtx->decodedBuffer.schar[startPos + i] = phrase.text[i];
-                // Font character slots are packed in 0x80-byte increments.
-                Font_LoadCharNES(play, phrase.text[i], (startPos + i) << 7);
+                if (sBenDrownedGlyphOffsets[startPos + i] >= 0) {
+                    Font_LoadCharNES(play, phrase.text[i], sBenDrownedGlyphOffsets[startPos + i]);
+                }
             }
         }
         return true;

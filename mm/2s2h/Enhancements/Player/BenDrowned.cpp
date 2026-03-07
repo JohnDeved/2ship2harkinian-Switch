@@ -1413,9 +1413,9 @@ void RegisterBenDrowned() {
             if (statueVisible) {
                 if (!sState.statueWasVisible) {
                     sState.disappearAfterObserved = Rand_ZeroOne() < sTuning.disappearChance;
+                    // Jumpscare on the first frame the statue becomes visible
+                    TriggerVisibilityJumpscare(play, player, statue);
                 }
-                // Check jumpscare every visible frame; the internal cooldown prevents repeat fires.
-                TriggerVisibilityJumpscare(play, player, statue);
                 sState.statueObserved = true;
                 sState.statueWasVisible = true;
                 return;

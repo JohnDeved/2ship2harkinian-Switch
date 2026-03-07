@@ -31,9 +31,6 @@ struct TuningParams {
     s32 jumpscareCooldownFrames;
     s32 laughBaseFrames;
     s32 laughRandomFrames;
-    s32 colorDistortBaseFrames;
-    s32 colorDistortRandomFrames;
-    s32 colorDistortDuration;
     f32 disappearChance;
     f32 dialogueChance;
     f32 laughMinPitch;
@@ -72,7 +69,6 @@ struct DebugSnapshot {
     s32 recordTimer;
     s32 moveCooldown;
     s32 respawnCooldown;
-    s32 colorDistortCooldown;
     s32 effectCooldown;
     s32 laughCooldown;
     s32 dialogueCooldown;

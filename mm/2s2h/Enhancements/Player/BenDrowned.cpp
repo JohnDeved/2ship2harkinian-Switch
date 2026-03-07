@@ -50,9 +50,6 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 #define TUNING_CVAR_JUMPSCARE_COOLDOWN TUNING_CVAR_BASE ".JumpscareCooldown"
 #define TUNING_CVAR_LAUGH_BASE TUNING_CVAR_BASE ".LaughBase"
 #define TUNING_CVAR_LAUGH_RANDOM TUNING_CVAR_BASE ".LaughRandom"
-#define TUNING_CVAR_COLOR_DISTORT_BASE TUNING_CVAR_BASE ".ColorDistortBase"
-#define TUNING_CVAR_COLOR_DISTORT_RANDOM TUNING_CVAR_BASE ".ColorDistortRandom"
-#define TUNING_CVAR_COLOR_DISTORT_DURATION TUNING_CVAR_BASE ".ColorDistortDuration"
 #define TUNING_CVAR_DISAPPEAR_CHANCE TUNING_CVAR_BASE ".DisappearChance"
 #define TUNING_CVAR_DIALOGUE_CHANCE TUNING_CVAR_BASE ".DialogueChance"
 #define TUNING_CVAR_LAUGH_MIN_PITCH TUNING_CVAR_BASE ".LaughMinPitch"
@@ -94,12 +91,6 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 #define DEFAULT_LAUGH_RANDOM_FRAMES 300
 #define DEFAULT_LAUGH_MIN_PITCH 0.9f
 #define DEFAULT_LAUGH_MAX_PITCH 1.1f
-
-// --- Color distortion ---
-#define DEFAULT_COLOR_DISTORT_BASE_FRAMES 240
-#define DEFAULT_COLOR_DISTORT_RANDOM_FRAMES 360
-#define DEFAULT_COLOR_DISTORT_DURATION 12
-#define COLOR_DISTORT_INTENSITY 160
 
 // --- Proximity rumble ---
 #define PROXIMITY_RUMBLE_MIN_STRENGTH 70
@@ -186,11 +177,6 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 static const s16 sFallbackYawOffsets[] = {
     FALLBACK_YAW_SIDE_NEAR,      (s16)-FALLBACK_YAW_SIDE_NEAR, FALLBACK_YAW_SIDE_FAR,
     (s16)-FALLBACK_YAW_SIDE_FAR, FALLBACK_YAW_BEHIND,
-};
-
-struct ColorDistortion {
-    u16 colorFlag;
-    u16 intensity;
 };
 
 static const std::string_view sDialogueMessages[] = {
@@ -299,12 +285,6 @@ static const std::string_view sDialogueMessages[] = {
   "This was not the first time."
 };
 
-static const ColorDistortion sColorDistortions[] = {
-    { COLORFILTER_COLORFLAG_BLUE, COLOR_DISTORT_INTENSITY },
-    { COLORFILTER_COLORFLAG_RED, COLOR_DISTORT_INTENSITY },
-    { COLORFILTER_COLORFLAG_GRAY, (u16)(COLORFILTER_INTENSITY_FLAG | COLOR_DISTORT_INTENSITY) },
-};
-
 // Consolidated mutable module state.
 static struct {
     std::array<Vec3f, HISTORY_SIZE> history;
@@ -313,7 +293,6 @@ static struct {
     s32 recordTimer;
     s32 moveCooldown;
     s32 respawnCooldown;
-    s32 colorDistortCooldown;
     s32 effectCooldown;
     s32 jumpscareCooldown;
     s32 jumpscareTimer;
@@ -349,8 +328,7 @@ static size_t sNextZoneHistoryCacheReplacementIndex = 0;
 static BenDrowned::TuningParams sTuning = {
     DEFAULT_MOVE_COOLDOWN_FRAMES,    DEFAULT_RESPAWN_COOLDOWN_FRAMES,   DEFAULT_DIALOGUE_COOLDOWN_FRAMES,
     DEFAULT_JUMPSCARE_ZOOM_FRAMES,   DEFAULT_JUMPSCARE_COOLDOWN_FRAMES, DEFAULT_LAUGH_BASE_FRAMES,
-    DEFAULT_LAUGH_RANDOM_FRAMES,     DEFAULT_COLOR_DISTORT_BASE_FRAMES, DEFAULT_COLOR_DISTORT_RANDOM_FRAMES,
-    DEFAULT_COLOR_DISTORT_DURATION,  DEFAULT_DISAPPEAR_CHANCE,          DIALOGUE_CHANCE,
+    DEFAULT_LAUGH_RANDOM_FRAMES,     DEFAULT_DISAPPEAR_CHANCE,          DIALOGUE_CHANCE,
     DEFAULT_LAUGH_MIN_PITCH,         DEFAULT_LAUGH_MAX_PITCH,           DEFAULT_HISTORY_POINT_MIN_DIST,
     DEFAULT_MIN_SPAWN_DIST,          DEFAULT_DISTANT_SPAWN_DIST,        DEFAULT_MAX_NEARBY_DIST,
     DEFAULT_MIN_REPOSITION_DISTANCE, DEFAULT_MOVE_THRESHOLD_DIST,       DEFAULT_CLOSE_EFFECT_DIST,
@@ -368,11 +346,6 @@ static void ResetLaughCooldown() {
     sState.laughCooldown = sTuning.laughBaseFrames + (s32)(Rand_ZeroOne() * sTuning.laughRandomFrames);
 }
 
-static void ResetColorDistortCooldown() {
-    sState.colorDistortCooldown =
-        sTuning.colorDistortBaseFrames + (s32)(Rand_ZeroOne() * sTuning.colorDistortRandomFrames);
-}
-
 static void NormalizeTuning() {
     sTuning.moveCooldownFrames = std::max(sTuning.moveCooldownFrames, 0);
     sTuning.respawnCooldownFrames = std::max(sTuning.respawnCooldownFrames, 0);
@@ -381,9 +354,6 @@ static void NormalizeTuning() {
     sTuning.jumpscareCooldownFrames = std::max(sTuning.jumpscareCooldownFrames, 0);
     sTuning.laughBaseFrames = std::max(sTuning.laughBaseFrames, 0);
     sTuning.laughRandomFrames = std::max(sTuning.laughRandomFrames, 0);
-    sTuning.colorDistortBaseFrames = std::max(sTuning.colorDistortBaseFrames, 0);
-    sTuning.colorDistortRandomFrames = std::max(sTuning.colorDistortRandomFrames, 0);
-    sTuning.colorDistortDuration = std::max(sTuning.colorDistortDuration, 1);
     sTuning.disappearChance = std::clamp(sTuning.disappearChance, 0.0f, 1.0f);
     sTuning.dialogueChance = std::clamp(sTuning.dialogueChance, 0.0f, 1.0f);
     sTuning.historyPointMinDist = std::max(sTuning.historyPointMinDist, TUNING_MIN_DISTANCE);
@@ -427,7 +397,6 @@ static void ResetHistoryBuffer() {
 static void ResetZoneRuntimeState() {
     sState.moveCooldown = 0;
     sState.respawnCooldown = 0;
-    sState.colorDistortCooldown = 0;
     sState.effectCooldown = 0;
     sState.jumpscareCooldown = 0;
     sState.jumpscareTimer = 0;
@@ -555,10 +524,6 @@ static void LoadTuning() {
     sTuning.jumpscareCooldownFrames = CVarGetInteger(TUNING_CVAR_JUMPSCARE_COOLDOWN, DEFAULT_JUMPSCARE_COOLDOWN_FRAMES);
     sTuning.laughBaseFrames = CVarGetInteger(TUNING_CVAR_LAUGH_BASE, DEFAULT_LAUGH_BASE_FRAMES);
     sTuning.laughRandomFrames = CVarGetInteger(TUNING_CVAR_LAUGH_RANDOM, DEFAULT_LAUGH_RANDOM_FRAMES);
-    sTuning.colorDistortBaseFrames = CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_BASE, DEFAULT_COLOR_DISTORT_BASE_FRAMES);
-    sTuning.colorDistortRandomFrames =
-        CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_RANDOM, DEFAULT_COLOR_DISTORT_RANDOM_FRAMES);
-    sTuning.colorDistortDuration = CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_DURATION, DEFAULT_COLOR_DISTORT_DURATION);
     sTuning.disappearChance = CVarGetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, DEFAULT_DISAPPEAR_CHANCE);
     sTuning.dialogueChance = CVarGetFloat(TUNING_CVAR_DIALOGUE_CHANCE, DIALOGUE_CHANCE);
     sTuning.laughMinPitch = CVarGetFloat(TUNING_CVAR_LAUGH_MIN_PITCH, DEFAULT_LAUGH_MIN_PITCH);
@@ -1199,21 +1164,6 @@ static void UpdateStatueProximityRumble(Player* player, EnTorch2* statue) {
     Rumble_Override(0.0f, strength, decayTimer, PROXIMITY_RUMBLE_STEP);
 }
 
-static void UpdateStatueColorDistortion(EnTorch2* statue) {
-    if (statue == nullptr) {
-        return;
-    }
-
-    if ((sState.colorDistortCooldown > 0) || (statue->actor.colorFilterTimer != 0)) {
-        return;
-    }
-
-    const ColorDistortion& distortion = sColorDistortions[RandomIndex(std::size(sColorDistortions))];
-    Actor_SetColorFilter(&statue->actor, distortion.colorFlag, distortion.intensity, COLORFILTER_BUFFLAG_OPA,
-                         sTuning.colorDistortDuration);
-    ResetColorDistortCooldown();
-}
-
 static void PopulateDebugHistoryEntry(PlayState* play, Player* player, const Vec3f& point,
                                       BenDrowned::DebugHistoryEntry* entry) {
     Vec3f pointCopy = point;
@@ -1326,7 +1276,6 @@ DebugSnapshot GetDebugSnapshot() {
     snapshot.recordTimer = sState.recordTimer;
     snapshot.moveCooldown = sState.moveCooldown;
     snapshot.respawnCooldown = sState.respawnCooldown;
-    snapshot.colorDistortCooldown = sState.colorDistortCooldown;
     snapshot.effectCooldown = sState.effectCooldown;
     snapshot.laughCooldown = sState.laughCooldown;
     snapshot.dialogueCooldown = sState.dialogueCooldown;
@@ -1370,9 +1319,6 @@ void SaveTuning() {
     CVarSetInteger(TUNING_CVAR_JUMPSCARE_COOLDOWN, sTuning.jumpscareCooldownFrames);
     CVarSetInteger(TUNING_CVAR_LAUGH_BASE, sTuning.laughBaseFrames);
     CVarSetInteger(TUNING_CVAR_LAUGH_RANDOM, sTuning.laughRandomFrames);
-    CVarSetInteger(TUNING_CVAR_COLOR_DISTORT_BASE, sTuning.colorDistortBaseFrames);
-    CVarSetInteger(TUNING_CVAR_COLOR_DISTORT_RANDOM, sTuning.colorDistortRandomFrames);
-    CVarSetInteger(TUNING_CVAR_COLOR_DISTORT_DURATION, sTuning.colorDistortDuration);
     CVarSetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, sTuning.disappearChance);
     CVarSetFloat(TUNING_CVAR_DIALOGUE_CHANCE, sTuning.dialogueChance);
     CVarSetFloat(TUNING_CVAR_LAUGH_MIN_PITCH, sTuning.laughMinPitch);
@@ -1433,7 +1379,6 @@ void RegisterBenDrowned() {
         }
         DecrementCooldown(&sState.effectCooldown);
         DecrementCooldown(&sState.respawnCooldown);
-        DecrementCooldown(&sState.colorDistortCooldown);
         DecrementCooldown(&sState.laughCooldown);
         DecrementCooldown(&sState.moveCooldown);
         DecrementCooldown(&sState.jumpscareCooldown);
@@ -1445,7 +1390,6 @@ void RegisterBenDrowned() {
             UpdateStatueProximityRumble(player, statue);
             statueVisible = CanCameraSeePoint(play, statue->actor.world.pos);
             if (statueVisible) {
-                UpdateStatueColorDistortion(statue);
                 if (!sState.statueWasVisible) {
                     TriggerVisibilityJumpscare(play, player, statue);
                     sState.disappearAfterObserved = Rand_ZeroOne() < sTuning.disappearChance;
@@ -1484,7 +1428,6 @@ void RegisterBenDrowned() {
             statue = SpawnStatue(play, hiddenPoint);
             spawnedThisFrame = statue != nullptr;
             if (spawnedThisFrame) {
-                ResetColorDistortCooldown();
                 sState.moveCooldown = sTuning.moveCooldownFrames;
             }
         }
@@ -1543,9 +1486,6 @@ static RegisterShipInitFunc initFunc(RegisterBenDrowned, {
                                                              TUNING_CVAR_JUMPSCARE_COOLDOWN,
                                                              TUNING_CVAR_LAUGH_BASE,
                                                              TUNING_CVAR_LAUGH_RANDOM,
-                                                             TUNING_CVAR_COLOR_DISTORT_BASE,
-                                                             TUNING_CVAR_COLOR_DISTORT_RANDOM,
-                                                             TUNING_CVAR_COLOR_DISTORT_DURATION,
                                                              TUNING_CVAR_DISAPPEAR_CHANCE,
                                                              TUNING_CVAR_DIALOGUE_CHANCE,
                                                              TUNING_CVAR_LAUGH_MIN_PITCH,

@@ -200,7 +200,6 @@ void RenderBenDrownedDebugSection() {
     ImGui::BulletText("Move cooldown: %d", snapshot.moveCooldown);
     ImGui::BulletText("Respawn cooldown: %d", snapshot.respawnCooldown);
     ImGui::BulletText("Laugh cooldown: %d", snapshot.laughCooldown);
-    ImGui::BulletText("Color distortion cooldown: %d", snapshot.colorDistortCooldown);
     ImGui::BulletText("Arrival effect cooldown: %d", snapshot.effectCooldown);
     ImGui::BulletText("Dialogue cooldown: %d", snapshot.dialogueCooldown);
 
@@ -221,9 +220,6 @@ void RenderBenDrownedDebugSection() {
                                             BenDrowned::MAX_TUNING_PITCH, "%.2f");
         tuningChanged |= ImGui::SliderFloat("Laugh max pitch", &tuning.laughMaxPitch, BenDrowned::MIN_TUNING_PITCH,
                                             BenDrowned::MAX_TUNING_PITCH, "%.2f");
-        tuningChanged |= ImGui::SliderInt("Color base (frames)", &tuning.colorDistortBaseFrames, 0, 3600);
-        tuningChanged |= ImGui::SliderInt("Color random (frames)", &tuning.colorDistortRandomFrames, 0, 3600);
-        tuningChanged |= ImGui::SliderInt("Color duration (frames)", &tuning.colorDistortDuration, 1, 120);
     }
 
     if (ImGui::CollapsingHeader("Distance Tuning")) {

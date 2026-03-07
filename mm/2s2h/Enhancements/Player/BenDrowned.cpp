@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <libultraship/bridge/consolevariablebridge.h>
@@ -43,6 +44,13 @@ constexpr s32 BEN_DROWNED_COLOR_DISTORT_BASE_FRAMES = 240;
 constexpr s32 BEN_DROWNED_COLOR_DISTORT_RANDOM_FRAMES = 360;
 constexpr u16 BEN_DROWNED_COLOR_DISTORT_DURATION = 12;
 constexpr u16 BEN_DROWNED_COLOR_DISTORT_INTENSITY = 160;
+constexpr f32 BEN_DROWNED_PROXIMITY_RUMBLE_DIST = 200.0f;
+constexpr f32 BEN_DROWNED_PROXIMITY_RUMBLE_DIST_SQ = BEN_DROWNED_PROXIMITY_RUMBLE_DIST * BEN_DROWNED_PROXIMITY_RUMBLE_DIST;
+constexpr u8 BEN_DROWNED_PROXIMITY_RUMBLE_MIN_STRENGTH = 70;
+constexpr u8 BEN_DROWNED_PROXIMITY_RUMBLE_MAX_STRENGTH = 255;
+constexpr u8 BEN_DROWNED_PROXIMITY_RUMBLE_MIN_DECAY = 2;
+constexpr u8 BEN_DROWNED_PROXIMITY_RUMBLE_MAX_DECAY = 18;
+constexpr u8 BEN_DROWNED_PROXIMITY_RUMBLE_STEP = 8;
 constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
 constexpr s32 BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES = 900;
 constexpr size_t BEN_DROWNED_DIALOGUE_SEARCH_WINDOW = 48;
@@ -123,6 +131,8 @@ PlayState* sLastPlayState = nullptr;
 EnTorch2* sOwnedBenDrownedStatue = nullptr;
 bool sSpawnedBenDrownedStatue = false;
 
+void ResetBenDrownedLaughCooldown();
+
 void ResetBenDrownedHistory() {
     sBenDrownedHistoryCount = 0;
     sBenDrownedHistoryWriteIndex = 0;
@@ -131,7 +141,7 @@ void ResetBenDrownedHistory() {
     sBenDrownedRespawnCooldown = 0;
     sBenDrownedColorDistortCooldown = 0;
     sBenDrownedEffectCooldown = 0;
-    sBenDrownedLaughCooldown = 0;
+    ResetBenDrownedLaughCooldown();
     sBenDrownedDialogueCooldown = 0;
     sBenDrownedDisappearAfterObserved = false;
     sBenDrownedStatueObserved = false;
@@ -332,8 +342,6 @@ bool IsBenDrownedStatueAlive(EnTorch2* statue) {
     return (statue != nullptr) && (statue->actor.update != NULL);
 }
 
-void ResetBenDrownedLaughCooldown();
-
 EnTorch2* GetBenDrownedStatue(PlayState* play) {
     EnTorch2* statue = play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN];
 
@@ -361,7 +369,6 @@ EnTorch2* SpawnBenDrownedStatue(PlayState* play, const Vec3f& spawnPos) {
         play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN] = statue;
         sOwnedBenDrownedStatue = statue;
         sSpawnedBenDrownedStatue = true;
-        ResetBenDrownedLaughCooldown();
     }
 
     return statue;
@@ -398,6 +405,10 @@ void ResetBenDrownedColorDistortCooldown() {
 
 template <size_t N> size_t GetBenDrownedRandomIndex() {
     return static_cast<size_t>(fminf(Rand_ZeroOne() * N, static_cast<f32>(N - 1)));
+}
+
+u8 LerpBenDrownedU8(u8 min, u8 max, f32 t) {
+    return static_cast<u8>(std::clamp<f32>(min + (t * (max - min)), min, max));
 }
 
 bool IsBenDrownedCorruptibleChar(char ch) {
@@ -539,7 +550,6 @@ void MoveBenDrownedStatue(PlayState* play, Player* player, EnTorch2* statue, con
 
 void TriggerBenDrownedArrivalEffects(PlayState* play, Player* player, EnTorch2* statue) {
     f32 distSq;
-    f32 dist;
     s16 quakeIndex;
 
     if (sBenDrownedEffectCooldown > 0) {
@@ -558,7 +568,6 @@ void TriggerBenDrownedArrivalEffects(PlayState* play, Player* player, EnTorch2* 
                        BEN_DROWNED_DUST_LIFE, DUST_UPDATE_NORMAL);
 
     if (distSq < BEN_DROWNED_JUMPSCARE_DIST_SQ) {
-        dist = sqrtf(distSq);
         quakeIndex = Quake_Request(GET_ACTIVE_CAM(play), QUAKE_TYPE_3);
 
         if (quakeIndex >= 0) {
@@ -568,7 +577,8 @@ void TriggerBenDrownedArrivalEffects(PlayState* play, Player* player, EnTorch2* 
             Quake_SetDuration(quakeIndex, BEN_DROWNED_QUAKE_DURATION);
         }
 
-        Rumble_Request(dist, BEN_DROWNED_RUMBLE_STRENGTH, BEN_DROWNED_RUMBLE_DECAY, BEN_DROWNED_RUMBLE_DURATION);
+        // Rumble_Request expects squared distance so the engine can handle attenuation internally.
+        Rumble_Request(distSq, BEN_DROWNED_RUMBLE_STRENGTH, BEN_DROWNED_RUMBLE_DECAY, BEN_DROWNED_RUMBLE_DURATION);
     }
 
     sBenDrownedEffectCooldown = BEN_DROWNED_EFFECT_COOLDOWN_FRAMES;
@@ -583,9 +593,38 @@ void UpdateBenDrownedStatueLaugh(EnTorch2* statue) {
 
     laughPitch = BEN_DROWNED_LAUGH_MIN_PITCH +
                  (Rand_ZeroOne() * (BEN_DROWNED_LAUGH_MAX_PITCH - BEN_DROWNED_LAUGH_MIN_PITCH));
-    AudioSfx_PlaySfx(NA_SE_VO_OMVO00, &statue->actor.projectedPos, 4, &laughPitch, &gSfxDefaultFreqAndVolScale,
-                     &gSfxDefaultReverb);
+    Audio_PlaySfx_AtPosWithFreq(&statue->actor.projectedPos, NA_SE_VO_OMVO00, laughPitch);
     ResetBenDrownedLaughCooldown();
+}
+
+void UpdateBenDrownedStatueProximityRumble(Player* player, EnTorch2* statue) {
+    f32 distSq;
+    f32 proximity;
+    f32 dist;
+    u8 strength;
+    u8 decayTimer;
+
+    if ((player == nullptr) || (statue == nullptr)) {
+        return;
+    }
+
+    distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
+                             statue->actor.world.pos.z);
+    if (distSq > BEN_DROWNED_PROXIMITY_RUMBLE_DIST_SQ) {
+        return;
+    }
+
+    dist = sqrtf(distSq);
+    proximity = std::clamp(1.0f - (dist / BEN_DROWNED_PROXIMITY_RUMBLE_DIST), 0.0f, 1.0f);
+
+    strength = LerpBenDrownedU8(BEN_DROWNED_PROXIMITY_RUMBLE_MIN_STRENGTH, BEN_DROWNED_PROXIMITY_RUMBLE_MAX_STRENGTH,
+                                proximity);
+    decayTimer = LerpBenDrownedU8(BEN_DROWNED_PROXIMITY_RUMBLE_MIN_DECAY, BEN_DROWNED_PROXIMITY_RUMBLE_MAX_DECAY,
+                                  proximity);
+
+    // Use the override channel for a continuous near-statue pulse while the one-shot request above remains reserved for
+    // off-camera arrival jolts.
+    Rumble_Override(distSq, strength, decayTimer, BEN_DROWNED_PROXIMITY_RUMBLE_STEP);
 }
 
 void UpdateBenDrownedStatueColorDistortion(EnTorch2* statue) {
@@ -660,6 +699,8 @@ void RegisterBenDrowned() {
 
         statue = GetBenDrownedStatue(play);
         if (statue != nullptr) {
+            UpdateBenDrownedStatueLaugh(statue);
+            UpdateBenDrownedStatueProximityRumble(player, statue);
             statueVisible = CanCameraSeePoint(play, statue->actor.world.pos);
             if (statueVisible) {
                 UpdateBenDrownedStatueColorDistortion(statue);
@@ -671,8 +712,6 @@ void RegisterBenDrowned() {
                 sBenDrownedStatueWasVisible = true;
                 return;
             }
-
-            UpdateBenDrownedStatueLaugh(statue);
 
             if (sBenDrownedStatueWasVisible) {
                 sBenDrownedStatueWasVisible = false;

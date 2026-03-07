@@ -99,7 +99,7 @@ class Fast3dWindow : public Ship::Window {
     std::mutex mRenderMutex;
     std::condition_variable mRenderCV;
     std::condition_variable mRenderDoneCV;
-    bool mRenderThreadRunning = false;
+    std::atomic<bool> mRenderThreadRunning{false};
     bool mRenderHasWork = false;
     bool mRenderWorkDone = true;
     std::atomic<bool> mGlCommandsDone{true};

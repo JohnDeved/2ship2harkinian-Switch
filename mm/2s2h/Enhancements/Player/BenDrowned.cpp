@@ -21,6 +21,7 @@ namespace {
 constexpr size_t BEN_DROWNED_HISTORY_SIZE = 24;
 constexpr s32 BEN_DROWNED_RECORD_INTERVAL_FRAMES = 20;
 constexpr f32 BEN_DROWNED_MIN_SPAWN_DIST_SQ = 100.0f * 100.0f;
+constexpr f32 BEN_DROWNED_DISTANT_SPAWN_DIST_SQ = 280.0f * 280.0f;
 constexpr f32 BEN_DROWNED_MAX_NEARBY_DIST_SQ = 450.0f * 450.0f;
 constexpr f32 BEN_DROWNED_MOVE_DIST_SQ = 30.0f * 30.0f;
 constexpr f32 BEN_DROWNED_CLOSE_EFFECT_DIST_SQ = 220.0f * 220.0f;
@@ -31,12 +32,14 @@ constexpr f32 BEN_DROWNED_VISIBILITY_SIDE_OFFSET = 20.0f;
 constexpr f32 BEN_DROWNED_FLOOR_RAYCAST_HEIGHT = 60.0f;
 constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.35f;
 constexpr f32 BEN_DROWNED_FALLBACK_STALK_DISTANCE = 160.0f;
-constexpr f32 BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED = 0.5f;
+constexpr f32 BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED = 0.7f;
+constexpr size_t BEN_DROWNED_MIN_DISTANT_SPAWN_POINTS = 4;
 constexpr s32 BEN_DROWNED_LAUGH_BASE_FRAMES = 3000;
 constexpr s32 BEN_DROWNED_LAUGH_RANDOM_FRAMES = 1200;
 constexpr f32 BEN_DROWNED_LAUGH_MIN_PITCH = 0.9f;
 constexpr f32 BEN_DROWNED_LAUGH_MAX_PITCH = 1.1f;
 constexpr s32 BEN_DROWNED_MOVE_COOLDOWN_FRAMES = 3600;
+constexpr s32 BEN_DROWNED_RESPAWN_COOLDOWN_FRAMES = 1800;
 constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
 constexpr s32 BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES = 900;
 constexpr size_t BEN_DROWNED_DIALOGUE_SEARCH_WINDOW = 48;
@@ -93,9 +96,11 @@ size_t sBenDrownedHistoryCount = 0;
 size_t sBenDrownedHistoryWriteIndex = 0;
 s32 sBenDrownedRecordTimer = 0;
 s32 sBenDrownedMoveCooldown = 0;
+s32 sBenDrownedRespawnCooldown = 0;
 s32 sBenDrownedEffectCooldown = 0;
 s32 sBenDrownedLaughCooldown = 0;
 s32 sBenDrownedDialogueCooldown = 0;
+bool sBenDrownedDisappearAfterObserved = false;
 bool sBenDrownedStatueObserved = false;
 bool sBenDrownedStatueWasVisible = false;
 PlayState* sLastPlayState = nullptr;
@@ -107,9 +112,11 @@ void ResetBenDrownedHistory() {
     sBenDrownedHistoryWriteIndex = 0;
     sBenDrownedRecordTimer = 0;
     sBenDrownedMoveCooldown = 0;
+    sBenDrownedRespawnCooldown = 0;
     sBenDrownedEffectCooldown = 0;
     sBenDrownedLaughCooldown = 0;
     sBenDrownedDialogueCooldown = 0;
+    sBenDrownedDisappearAfterObserved = false;
     sBenDrownedStatueObserved = false;
     sBenDrownedStatueWasVisible = false;
 }
@@ -117,6 +124,7 @@ void ResetBenDrownedHistory() {
 void ClearBenDrownedStatueTracking() {
     sOwnedBenDrownedStatue = nullptr;
     sSpawnedBenDrownedStatue = false;
+    sBenDrownedDisappearAfterObserved = false;
     sBenDrownedStatueObserved = false;
     sBenDrownedStatueWasVisible = false;
 }
@@ -238,6 +246,38 @@ bool FindHiddenBenDrownedHistoryPoint(PlayState* play, Player* player, f32 maxDi
     }
 
     return false;
+}
+
+bool FindDistantBenDrownedSpawnPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
+    Vec3f bestPoint = player->actor.world.pos;
+    size_t candidateCount = 0;
+    f32 bestDistSq = BEN_DROWNED_DISTANT_SPAWN_DIST_SQ;
+
+    for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
+        size_t historyIndex =
+            (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+        Vec3f candidatePoint = sBenDrownedHistory[historyIndex].pos;
+        f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
+
+        if (playerDistSq < BEN_DROWNED_DISTANT_SPAWN_DIST_SQ) {
+            continue;
+        }
+
+        if (!CanCameraSeePoint(play, candidatePoint)) {
+            candidateCount++;
+            if ((candidateCount == 1) || (playerDistSq > bestDistSq)) {
+                bestPoint = candidatePoint;
+                bestDistSq = playerDistSq;
+            }
+        }
+    }
+
+    if (candidateCount < BEN_DROWNED_MIN_DISTANT_SPAWN_POINTS) {
+        return false;
+    }
+
+    *hiddenPoint = bestPoint;
+    return true;
 }
 
 bool SnapBenDrownedPointToFloor(PlayState* play, Vec3f* point) {
@@ -552,6 +592,9 @@ void RegisterBenDrowned() {
         if (sBenDrownedEffectCooldown > 0) {
             sBenDrownedEffectCooldown--;
         }
+        if (sBenDrownedRespawnCooldown > 0) {
+            sBenDrownedRespawnCooldown--;
+        }
         if (sBenDrownedLaughCooldown > 0) {
             sBenDrownedLaughCooldown--;
         }
@@ -563,6 +606,10 @@ void RegisterBenDrowned() {
         if (statue != nullptr) {
             statueVisible = CanCameraSeePoint(play, statue->actor.world.pos);
             if (statueVisible) {
+                if (!sBenDrownedStatueWasVisible) {
+                    sBenDrownedDisappearAfterObserved =
+                        Rand_ZeroOne() < BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED;
+                }
                 sBenDrownedStatueObserved = true;
                 sBenDrownedStatueWasVisible = true;
                 return;
@@ -572,11 +619,11 @@ void RegisterBenDrowned() {
 
             if (sBenDrownedStatueWasVisible) {
                 sBenDrownedStatueWasVisible = false;
-                if (sBenDrownedStatueObserved &&
-                    (Rand_ZeroOne() < BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED)) {
+                if (sBenDrownedStatueObserved && sBenDrownedDisappearAfterObserved) {
                     DismissBenDrownedStatue(play, statue);
                     statue = nullptr;
                     dismissedStatueThisFrame = true;
+                    sBenDrownedRespawnCooldown = BEN_DROWNED_RESPAWN_COOLDOWN_FRAMES;
                 }
             }
         }
@@ -585,17 +632,19 @@ void RegisterBenDrowned() {
             return;
         }
 
-        if (FindBenDrownedTargetPoint(play, player, &hiddenPoint)) {
-            if (statue == nullptr) {
-                SnapBenDrownedPointToFloor(play, &hiddenPoint);
-                statue = SpawnBenDrownedStatue(play, hiddenPoint);
-                spawnedStatueThisFrame = statue != nullptr;
+        if ((statue == nullptr) && (sBenDrownedRespawnCooldown <= 0) &&
+            FindDistantBenDrownedSpawnPoint(play, player, &hiddenPoint)) {
+            SnapBenDrownedPointToFloor(play, &hiddenPoint);
+            statue = SpawnBenDrownedStatue(play, hiddenPoint);
+            spawnedStatueThisFrame = statue != nullptr;
+            if (spawnedStatueThisFrame) {
+                sBenDrownedMoveCooldown = BEN_DROWNED_MOVE_COOLDOWN_FRAMES;
             }
+        }
 
-            if ((statue != nullptr) &&
-                (spawnedStatueThisFrame ||
-                 ((sBenDrownedMoveCooldown <= 0) &&
-                  (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > BEN_DROWNED_MOVE_DIST_SQ)))) {
+        if ((statue != nullptr) && FindBenDrownedTargetPoint(play, player, &hiddenPoint)) {
+            if (!spawnedStatueThisFrame && (sBenDrownedMoveCooldown <= 0) &&
+                (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > BEN_DROWNED_MOVE_DIST_SQ)) {
                 MoveBenDrownedStatue(play, player, statue, hiddenPoint);
                 TriggerBenDrownedArrivalEffects(play, player, statue);
                 sBenDrownedMoveCooldown = BEN_DROWNED_MOVE_COOLDOWN_FRAMES;

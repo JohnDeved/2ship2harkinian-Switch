@@ -25,8 +25,9 @@ constexpr f32 BEN_DROWNED_CLOSE_EFFECT_DIST_SQ = 220.0f * 220.0f;
 constexpr f32 BEN_DROWNED_JUMPSCARE_DIST_SQ = 120.0f * 120.0f;
 constexpr f32 BEN_DROWNED_VISIBILITY_HEIGHT = 40.0f;
 constexpr f32 BEN_DROWNED_FLOOR_RAYCAST_HEIGHT = 60.0f;
-constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.15f;
+constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.35f;
 constexpr f32 BEN_DROWNED_FALLBACK_STALK_DISTANCE = 160.0f;
+constexpr s32 BEN_DROWNED_MOVE_COOLDOWN_FRAMES = 3600;
 constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
 constexpr s32 BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES = 900;
 constexpr size_t BEN_DROWNED_DIALOGUE_SEARCH_WINDOW = 48;
@@ -80,6 +81,7 @@ Color_RGBA8 sBenDrownedDustEnvColor = { 100, 60, 20, 110 };
 size_t sBenDrownedHistoryCount = 0;
 size_t sBenDrownedHistoryWriteIndex = 0;
 s32 sBenDrownedRecordTimer = 0;
+s32 sBenDrownedMoveCooldown = 0;
 s32 sBenDrownedEffectCooldown = 0;
 s32 sBenDrownedDialogueCooldown = 0;
 s16 sBenDrownedDialogueTriggerPos = -1;
@@ -93,6 +95,7 @@ void ResetBenDrownedHistory() {
     sBenDrownedHistoryCount = 0;
     sBenDrownedHistoryWriteIndex = 0;
     sBenDrownedRecordTimer = 0;
+    sBenDrownedMoveCooldown = 0;
     sBenDrownedEffectCooldown = 0;
     sBenDrownedDialogueCooldown = 0;
     sBenDrownedDialogueTriggerPos = -1;
@@ -494,6 +497,9 @@ void RegisterBenDrowned() {
         if (sBenDrownedEffectCooldown > 0) {
             sBenDrownedEffectCooldown--;
         }
+        if (sBenDrownedMoveCooldown > 0) {
+            sBenDrownedMoveCooldown--;
+        }
 
         statue = GetBenDrownedStatue(play);
         if ((statue != nullptr) && CanCameraSeePoint(play, statue->actor.world.pos)) {
@@ -509,13 +515,16 @@ void RegisterBenDrowned() {
 
             if ((statue != nullptr) &&
                 (spawnedStatueThisFrame ||
-                 (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > BEN_DROWNED_MOVE_DIST_SQ))) {
+                 ((sBenDrownedMoveCooldown <= 0) &&
+                  (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > BEN_DROWNED_MOVE_DIST_SQ)))) {
                 MoveBenDrownedStatue(play, player, statue, hiddenPoint);
                 TriggerBenDrownedArrivalEffects(play, player, statue);
+                sBenDrownedMoveCooldown = BEN_DROWNED_MOVE_COOLDOWN_FRAMES;
             }
         }
 
         if (statue != nullptr) {
+            // Keep the statue re-facing Link whenever it is off-camera, even if it is not ready to move again yet.
             SetBenDrownedStatueRotation(statue, player);
         }
     });

@@ -131,6 +131,20 @@ static void RenderBenDrownedDebugBool(const char* label, bool value) {
                        value ? "Yes" : "No");
 }
 
+static std::pair<const char*, ImVec4> GetBenDrownedHistoryFlagInfo(const BenDrowned::DebugHistoryEntry& entry) {
+    if (entry.distantEligible) {
+        return { "Hidden | Distant", ImVec4(0.4f, 0.8f, 1.0f, 1.0f) };
+    }
+    if (entry.spawnEligible) {
+        return { "Hidden | Spawn", ImVec4(0.4f, 1.0f, 0.5f, 1.0f) };
+    }
+    if (entry.visible) {
+        return { "Visible", ImVec4(1.0f, 0.4f, 0.4f, 1.0f) };
+    }
+
+    return { "Too Close", ImVec4(1.0f, 0.75f, 0.35f, 1.0f) };
+}
+
 static void RenderBenDrownedDebugSection() {
     BenDrowned::DebugSnapshot snapshot = BenDrowned::GetDebugSnapshot();
 
@@ -208,14 +222,7 @@ static void RenderBenDrownedDebugSection() {
 
         for (int i = 0; i < snapshot.historyCount; i++) {
             const BenDrowned::DebugHistoryEntry& entry = snapshot.history[i];
-            const char* flags = entry.distantEligible ? "Hidden | Distant"
-                                : entry.spawnEligible ? "Hidden | Spawn"
-                                : entry.visible       ? "Visible"
-                                                      : "Too Close";
-            ImVec4 flagColor = entry.distantEligible ? ImVec4(0.4f, 0.8f, 1.0f, 1.0f)
-                               : entry.spawnEligible ? ImVec4(0.4f, 1.0f, 0.5f, 1.0f)
-                               : entry.visible       ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f)
-                                                     : ImVec4(1.0f, 0.75f, 0.35f, 1.0f);
+            auto [flags, flagColor] = GetBenDrownedHistoryFlagInfo(entry);
 
             ImGui::TableNextRow();
             ImGui::TableNextColumn();

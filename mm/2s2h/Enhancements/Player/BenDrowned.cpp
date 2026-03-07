@@ -670,10 +670,42 @@ void UpdateBenDrownedStatueColorDistortion(EnTorch2* statue) {
     ResetBenDrownedColorDistortCooldown();
 }
 
+f32 GetBenDrownedPointDistSq(Player* player, const Vec3f& point) {
+    Vec3f pointCopy = point;
+
+    return Math3D_Vec3fDistSq(&pointCopy, &player->actor.world.pos);
+}
+
+void PopulateBenDrownedDebugHistoryEntry(PlayState* play, Player* player, const Vec3f& point,
+                                         BenDrowned::DebugHistoryEntry* entry) {
+    entry->pos = point;
+    entry->playerDistSq = GetBenDrownedPointDistSq(player, point);
+    entry->playerDist = sqrtf(entry->playerDistSq);
+    entry->visible = CanCameraSeePoint(play, point);
+    entry->spawnEligible = !entry->visible && (entry->playerDistSq >= BEN_DROWNED_MIN_SPAWN_DIST_SQ);
+    entry->distantEligible = entry->spawnEligible && (entry->playerDistSq >= BEN_DROWNED_DISTANT_SPAWN_DIST_SQ);
+}
+
 void AddBenDrownedDebugObject(PlayState* play, const Vec3f& pos, f32 scale, u8 red, u8 green, u8 blue, u8 alpha,
                               s16 type) {
     DebugDisplay_AddObject(pos.x, pos.y + BEN_DROWNED_DEBUG_MARKER_HEIGHT, pos.z, 0, 0, 0, scale, scale, scale, red,
                            green, blue, alpha, type, play->state.gfxCtx);
+}
+
+void AddBenDrownedDebugHistoryObject(PlayState* play, const BenDrowned::DebugHistoryEntry& entry) {
+    if (entry.distantEligible) {
+        AddBenDrownedDebugObject(play, entry.pos, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 80, 180, 255, 220,
+                                 BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+    } else if (entry.spawnEligible) {
+        AddBenDrownedDebugObject(play, entry.pos, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 80, 255, 120, 200,
+                                 BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+    } else if (entry.visible) {
+        AddBenDrownedDebugObject(play, entry.pos, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 255, 90, 90, 180,
+                                 BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+    } else {
+        AddBenDrownedDebugObject(play, entry.pos, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 255, 190, 70, 160,
+                                 BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+    }
 }
 
 void UpdateBenDrownedDebugOverlay(PlayState* play, Player* player, EnTorch2* statue) {
@@ -687,27 +719,13 @@ void UpdateBenDrownedDebugOverlay(PlayState* play, Player* player, EnTorch2* sta
     for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
         size_t historyIndex =
             (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
-        const Vec3f& point = sBenDrownedHistory[historyIndex].pos;
-        Vec3f pointCopy = point;
-        f32 playerDistSq = (player != nullptr) ? Math3D_Vec3fDistSq(&pointCopy, &player->actor.world.pos)
-                                               : BEN_DROWNED_MIN_SPAWN_DIST_SQ;
-        bool visible = CanCameraSeePoint(play, point);
-        bool spawnEligible = !visible && (playerDistSq >= BEN_DROWNED_MIN_SPAWN_DIST_SQ);
-        bool distantEligible = spawnEligible && (playerDistSq >= BEN_DROWNED_DISTANT_SPAWN_DIST_SQ);
+        BenDrowned::DebugHistoryEntry entry = {};
 
-        if (distantEligible) {
-            AddBenDrownedDebugObject(play, point, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 80, 180, 255, 220,
-                                     BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
-        } else if (spawnEligible) {
-            AddBenDrownedDebugObject(play, point, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 80, 255, 120, 200,
-                                     BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
-        } else if (visible) {
-            AddBenDrownedDebugObject(play, point, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 255, 90, 90, 180,
-                                     BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
-        } else {
-            AddBenDrownedDebugObject(play, point, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 255, 190, 70, 160,
-                                     BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+        entry.pos = sBenDrownedHistory[historyIndex].pos;
+        if (player != nullptr) {
+            PopulateBenDrownedDebugHistoryEntry(play, player, entry.pos, &entry);
         }
+        AddBenDrownedDebugHistoryObject(play, entry);
     }
 
     if ((player != nullptr) && FindDistantBenDrownedSpawnPoint(play, player, &spawnPoint)) {
@@ -781,16 +799,9 @@ DebugSnapshot GetDebugSnapshot() {
         size_t historyIndex =
             (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
         DebugHistoryEntry& entry = snapshot.history[i];
-        const Vec3f& point = sBenDrownedHistory[historyIndex].pos;
-        Vec3f pointCopy = point;
-
-        entry.pos = point;
+        entry.pos = sBenDrownedHistory[historyIndex].pos;
         if (snapshot.playerValid) {
-            entry.playerDistSq = Math3D_Vec3fDistSq(&pointCopy, &player->actor.world.pos);
-            entry.playerDist = sqrtf(entry.playerDistSq);
-            entry.visible = CanCameraSeePoint(play, point);
-            entry.spawnEligible = !entry.visible && (entry.playerDistSq >= BEN_DROWNED_MIN_SPAWN_DIST_SQ);
-            entry.distantEligible = entry.spawnEligible && (entry.playerDistSq >= BEN_DROWNED_DISTANT_SPAWN_DIST_SQ);
+            PopulateBenDrownedDebugHistoryEntry(play, player, entry.pos, &entry);
         }
     }
 

@@ -19,8 +19,10 @@ extern "C" {
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
 
 namespace {
-constexpr size_t BEN_DROWNED_HISTORY_SIZE = 24;
+constexpr size_t BEN_DROWNED_HISTORY_SIZE = 48;
+constexpr size_t BEN_DROWNED_HISTORY_DISTINCT_CHECK_WINDOW = 12;
 constexpr s32 BEN_DROWNED_RECORD_INTERVAL_FRAMES = 20;
+constexpr f32 BEN_DROWNED_MIN_HISTORY_POINT_DIST_SQ = 40.0f * 40.0f;
 constexpr f32 BEN_DROWNED_MIN_SPAWN_DIST_SQ = 100.0f * 100.0f;
 constexpr f32 BEN_DROWNED_DISTANT_SPAWN_DIST_SQ = 280.0f * 280.0f;
 constexpr f32 BEN_DROWNED_MAX_NEARBY_DIST_SQ = 450.0f * 450.0f;
@@ -184,12 +186,26 @@ bool IsPlayerGroundedAndDry(Player* player) {
 }
 
 void RecordBenDrownedHistoryPoint(Player* player) {
+    Vec3f playerPos = player->actor.world.pos;
+    size_t distinctCheckCount;
+
     if (sBenDrownedRecordTimer > 0) {
         sBenDrownedRecordTimer--;
         return;
     }
 
-    sBenDrownedHistory[sBenDrownedHistoryWriteIndex].pos = player->actor.world.pos;
+    distinctCheckCount = std::min(sBenDrownedHistoryCount, BEN_DROWNED_HISTORY_DISTINCT_CHECK_WINDOW);
+    for (size_t i = 0; i < distinctCheckCount; i++) {
+        size_t historyIndex = (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+
+        if (Math3D_Vec3fDistSq(&sBenDrownedHistory[historyIndex].pos, &playerPos) <
+            BEN_DROWNED_MIN_HISTORY_POINT_DIST_SQ) {
+            sBenDrownedRecordTimer = BEN_DROWNED_RECORD_INTERVAL_FRAMES;
+            return;
+        }
+    }
+
+    sBenDrownedHistory[sBenDrownedHistoryWriteIndex].pos = playerPos;
     sBenDrownedHistoryWriteIndex = (sBenDrownedHistoryWriteIndex + 1) % BEN_DROWNED_HISTORY_SIZE;
     if (sBenDrownedHistoryCount < BEN_DROWNED_HISTORY_SIZE) {
         sBenDrownedHistoryCount++;

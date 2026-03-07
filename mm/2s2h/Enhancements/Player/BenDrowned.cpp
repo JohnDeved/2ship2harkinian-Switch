@@ -30,6 +30,7 @@ constexpr f32 BEN_DROWNED_VISIBILITY_SIDE_OFFSET = 20.0f;
 constexpr f32 BEN_DROWNED_FLOOR_RAYCAST_HEIGHT = 60.0f;
 constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.35f;
 constexpr f32 BEN_DROWNED_FALLBACK_STALK_DISTANCE = 160.0f;
+constexpr f32 BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED = 0.5f;
 constexpr s32 BEN_DROWNED_MOVE_COOLDOWN_FRAMES = 3600;
 constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
 constexpr s32 BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES = 900;
@@ -89,6 +90,8 @@ s32 sBenDrownedRecordTimer = 0;
 s32 sBenDrownedMoveCooldown = 0;
 s32 sBenDrownedEffectCooldown = 0;
 s32 sBenDrownedDialogueCooldown = 0;
+bool sBenDrownedStatueObserved = false;
+bool sBenDrownedStatueWasVisible = false;
 PlayState* sLastPlayState = nullptr;
 EnTorch2* sOwnedBenDrownedStatue = nullptr;
 bool sSpawnedBenDrownedStatue = false;
@@ -100,11 +103,15 @@ void ResetBenDrownedHistory() {
     sBenDrownedMoveCooldown = 0;
     sBenDrownedEffectCooldown = 0;
     sBenDrownedDialogueCooldown = 0;
+    sBenDrownedStatueObserved = false;
+    sBenDrownedStatueWasVisible = false;
 }
 
 void ClearBenDrownedStatueTracking() {
     sOwnedBenDrownedStatue = nullptr;
     sSpawnedBenDrownedStatue = false;
+    sBenDrownedStatueObserved = false;
+    sBenDrownedStatueWasVisible = false;
 }
 
 void CleanupOwnedBenDrownedStatue() {
@@ -277,6 +284,18 @@ EnTorch2* SpawnBenDrownedStatue(PlayState* play, const Vec3f& spawnPos) {
     }
 
     return statue;
+}
+
+void DismissBenDrownedStatue(PlayState* play, EnTorch2* statue) {
+    if ((statue != nullptr) && (play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN] == statue)) {
+        play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN] = nullptr;
+    }
+
+    if ((statue != nullptr) && (statue->actor.update != NULL)) {
+        Actor_Kill(&statue->actor);
+    }
+
+    ClearBenDrownedStatueTracking();
 }
 
 void SetBenDrownedStatueRotation(EnTorch2* statue, Player* player) {
@@ -481,6 +500,8 @@ void RegisterBenDrowned() {
         EnTorch2* statue;
         Player* player;
         bool spawnedStatueThisFrame = false;
+        bool dismissedStatueThisFrame = false;
+        bool statueVisible = false;
 
         if (play == nullptr) {
             return;
@@ -511,7 +532,26 @@ void RegisterBenDrowned() {
         }
 
         statue = GetBenDrownedStatue(play);
-        if ((statue != nullptr) && CanCameraSeePoint(play, statue->actor.world.pos)) {
+        if (statue != nullptr) {
+            statueVisible = CanCameraSeePoint(play, statue->actor.world.pos);
+            if (statueVisible) {
+                sBenDrownedStatueObserved = true;
+                sBenDrownedStatueWasVisible = true;
+                return;
+            }
+
+            if (sBenDrownedStatueWasVisible) {
+                sBenDrownedStatueWasVisible = false;
+                if (sBenDrownedStatueObserved &&
+                    (Rand_ZeroOne() < BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED)) {
+                    DismissBenDrownedStatue(play, statue);
+                    statue = nullptr;
+                    dismissedStatueThisFrame = true;
+                }
+            }
+        }
+
+        if (dismissedStatueThisFrame) {
             return;
         }
 

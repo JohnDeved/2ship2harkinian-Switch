@@ -7,6 +7,7 @@
 
 extern "C" {
 #include "functions.h"
+#include "sfx.h"
 #include "variables.h"
 #include "z64quake.h"
 #include "overlays/actors/ovl_En_Torch2/z_en_torch2.h"
@@ -31,6 +32,10 @@ constexpr f32 BEN_DROWNED_FLOOR_RAYCAST_HEIGHT = 60.0f;
 constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.35f;
 constexpr f32 BEN_DROWNED_FALLBACK_STALK_DISTANCE = 160.0f;
 constexpr f32 BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED = 0.5f;
+constexpr s32 BEN_DROWNED_LAUGH_BASE_FRAMES = 3000;
+constexpr s32 BEN_DROWNED_LAUGH_RANDOM_FRAMES = 1200;
+constexpr f32 BEN_DROWNED_LAUGH_MIN_PITCH = 0.9f;
+constexpr f32 BEN_DROWNED_LAUGH_MAX_PITCH = 1.1f;
 constexpr s32 BEN_DROWNED_MOVE_COOLDOWN_FRAMES = 3600;
 constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
 constexpr s32 BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES = 900;
@@ -89,6 +94,7 @@ size_t sBenDrownedHistoryWriteIndex = 0;
 s32 sBenDrownedRecordTimer = 0;
 s32 sBenDrownedMoveCooldown = 0;
 s32 sBenDrownedEffectCooldown = 0;
+s32 sBenDrownedLaughCooldown = 0;
 s32 sBenDrownedDialogueCooldown = 0;
 bool sBenDrownedStatueObserved = false;
 bool sBenDrownedStatueWasVisible = false;
@@ -102,6 +108,7 @@ void ResetBenDrownedHistory() {
     sBenDrownedRecordTimer = 0;
     sBenDrownedMoveCooldown = 0;
     sBenDrownedEffectCooldown = 0;
+    sBenDrownedLaughCooldown = 0;
     sBenDrownedDialogueCooldown = 0;
     sBenDrownedStatueObserved = false;
     sBenDrownedStatueWasVisible = false;
@@ -254,6 +261,8 @@ bool IsBenDrownedStatueAlive(EnTorch2* statue) {
     return (statue != nullptr) && (statue->actor.update != NULL);
 }
 
+void ResetBenDrownedLaughCooldown();
+
 EnTorch2* GetBenDrownedStatue(PlayState* play) {
     EnTorch2* statue = play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN];
 
@@ -281,6 +290,7 @@ EnTorch2* SpawnBenDrownedStatue(PlayState* play, const Vec3f& spawnPos) {
         play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN] = statue;
         sOwnedBenDrownedStatue = statue;
         sSpawnedBenDrownedStatue = true;
+        ResetBenDrownedLaughCooldown();
     }
 
     return statue;
@@ -304,6 +314,10 @@ void SetBenDrownedStatueRotation(EnTorch2* statue, Player* player) {
     statue->actor.world.rot.y = targetYaw;
     statue->actor.shape.rot.y = targetYaw;
     statue->actor.home.rot.y = targetYaw;
+}
+
+void ResetBenDrownedLaughCooldown() {
+    sBenDrownedLaughCooldown = BEN_DROWNED_LAUGH_BASE_FRAMES + (s32)(Rand_ZeroOne() * BEN_DROWNED_LAUGH_RANDOM_FRAMES);
 }
 
 template <size_t N> size_t GetBenDrownedRandomIndex() {
@@ -467,9 +481,6 @@ void TriggerBenDrownedArrivalEffects(PlayState* play, Player* player, EnTorch2* 
                        &sBenDrownedDustEnvColor, BEN_DROWNED_DUST_SCALE, BEN_DROWNED_DUST_SCALE_STEP,
                        BEN_DROWNED_DUST_LIFE, DUST_UPDATE_NORMAL);
 
-    Actor_PlaySfx(&statue->actor, (distSq < BEN_DROWNED_JUMPSCARE_DIST_SQ) ? NA_SE_EV_STONEDOOR_STOP
-                                                                            : NA_SE_EV_STONE_STATUE_OPEN);
-
     if (distSq < BEN_DROWNED_JUMPSCARE_DIST_SQ) {
         dist = sqrtf(distSq);
         quakeIndex = Quake_Request(GET_ACTIVE_CAM(play), QUAKE_TYPE_3);
@@ -485,6 +496,20 @@ void TriggerBenDrownedArrivalEffects(PlayState* play, Player* player, EnTorch2* 
     }
 
     sBenDrownedEffectCooldown = BEN_DROWNED_EFFECT_COOLDOWN_FRAMES;
+}
+
+void UpdateBenDrownedStatueLaugh(EnTorch2* statue) {
+    f32 laughPitch;
+
+    if ((statue == nullptr) || (sBenDrownedLaughCooldown > 0)) {
+        return;
+    }
+
+    laughPitch = BEN_DROWNED_LAUGH_MIN_PITCH +
+                 (Rand_ZeroOne() * (BEN_DROWNED_LAUGH_MAX_PITCH - BEN_DROWNED_LAUGH_MIN_PITCH));
+    AudioSfx_PlaySfx(NA_SE_VO_OMVO00, &statue->actor.projectedPos, 4, &laughPitch, &gSfxDefaultFreqAndVolScale,
+                     &gSfxDefaultReverb);
+    ResetBenDrownedLaughCooldown();
 }
 } // namespace
 
@@ -527,6 +552,9 @@ void RegisterBenDrowned() {
         if (sBenDrownedEffectCooldown > 0) {
             sBenDrownedEffectCooldown--;
         }
+        if (sBenDrownedLaughCooldown > 0) {
+            sBenDrownedLaughCooldown--;
+        }
         if (sBenDrownedMoveCooldown > 0) {
             sBenDrownedMoveCooldown--;
         }
@@ -539,6 +567,8 @@ void RegisterBenDrowned() {
                 sBenDrownedStatueWasVisible = true;
                 return;
             }
+
+            UpdateBenDrownedStatueLaugh(statue);
 
             if (sBenDrownedStatueWasVisible) {
                 sBenDrownedStatueWasVisible = false;

@@ -289,7 +289,7 @@ bool FindDistantBenDrownedSpawnPoint(PlayState* play, Player* player, Vec3f* hid
         Vec3f candidatePoint = sBenDrownedHistory[historyIndex].pos;
         f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
 
-        if (playerDistSq < BEN_DROWNED_DISTANT_SPAWN_DIST_SQ) {
+        if (playerDistSq < BEN_DROWNED_MIN_SPAWN_DIST_SQ) {
             continue;
         }
 

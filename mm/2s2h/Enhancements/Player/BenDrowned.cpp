@@ -397,13 +397,22 @@ static void ResetHistoryBuffer() {
     sState.recordTimer = 0;
 }
 
-static void ResetZoneRuntimeState() {
+static void ResetCooldownState() {
     sState.moveCooldown = 0;
     sState.respawnCooldown = 0;
     sState.effectCooldown = 0;
     sState.jumpscareCooldown = 0;
-    sState.jumpscareTimer = 0;
+    sState.laughCooldown = 0;
     sState.dialogueCooldown = 0;
+    ResetLaughCooldown();
+}
+
+static void ResetZoneRuntimeState(bool preserveCooldowns) {
+    if (!preserveCooldowns) {
+        ResetCooldownState();
+    }
+
+    sState.jumpscareTimer = 0;
     sState.jumpscareCameraActive = false;
     sState.disappearAfterObserved = false;
     sState.statueObserved = false;
@@ -411,12 +420,11 @@ static void ResetZoneRuntimeState() {
     sState.ignoreStatueInterpolationUntilFrame = 0;
     sState.jumpscareOriginalDist = 0.0f;
     sState.jumpscareOriginalFov = 0.0f;
-    ResetLaughCooldown();
 }
 
 static void ResetHistory() {
     ResetHistoryBuffer();
-    ResetZoneRuntimeState();
+    ResetZoneRuntimeState(false);
 }
 
 static void ClearStatueTracking() {
@@ -515,7 +523,7 @@ static void HandleZoneChange(PlayState* play) {
     sState.currentSceneId = sceneId;
     sState.currentSceneLayer = sceneLayer;
     LoadZoneHistory(sceneId, sceneLayer);
-    ResetZoneRuntimeState();
+    ResetZoneRuntimeState(true);
     ClearStatueTracking();
 }
 

@@ -171,14 +171,17 @@ static struct {
     s32 currentSceneLayer;
 } sState;
 
-static struct {
+struct ZoneHistoryCacheEntry {
     bool valid;
     s16 sceneId;
     s32 sceneLayer;
     std::array<Vec3f, HISTORY_SIZE> history;
     size_t historyCount;
     size_t historyWriteIndex;
-} sZoneHistoryCache[HISTORY_ZONE_CACHE_SIZE];
+};
+
+static ZoneHistoryCacheEntry sZoneHistoryCache[HISTORY_ZONE_CACHE_SIZE];
+static size_t sNextZoneHistoryCacheReplacementIndex = 0;
 
 // Runtime-adjustable tuning parameters (exposed via debug menu).
 static BenDrowned::TuningParams sTuning = {
@@ -269,7 +272,7 @@ static s32 GetCurrentSceneLayer() {
     return gSaveContext.sceneLayer;
 }
 
-static decltype(&sZoneHistoryCache[0]) FindZoneHistoryCacheEntry(s16 sceneId, s32 sceneLayer) {
+static ZoneHistoryCacheEntry* FindZoneHistoryCacheEntry(s16 sceneId, s32 sceneLayer) {
     for (auto& entry : sZoneHistoryCache) {
         if (entry.valid && (entry.sceneId == sceneId) && (entry.sceneLayer == sceneLayer)) {
             return &entry;
@@ -279,7 +282,7 @@ static decltype(&sZoneHistoryCache[0]) FindZoneHistoryCacheEntry(s16 sceneId, s3
     return nullptr;
 }
 
-static decltype(&sZoneHistoryCache[0]) GetOrCreateZoneHistoryCacheEntry(s16 sceneId, s32 sceneLayer) {
+static ZoneHistoryCacheEntry* GetOrCreateZoneHistoryCacheEntry(s16 sceneId, s32 sceneLayer) {
     if (auto* entry = FindZoneHistoryCacheEntry(sceneId, sceneLayer); entry != nullptr) {
         return entry;
     }
@@ -295,7 +298,8 @@ static decltype(&sZoneHistoryCache[0]) GetOrCreateZoneHistoryCacheEntry(s16 scen
         }
     }
 
-    auto* entry = &sZoneHistoryCache[0];
+    auto* entry = &sZoneHistoryCache[sNextZoneHistoryCacheReplacementIndex];
+    sNextZoneHistoryCacheReplacementIndex = (sNextZoneHistoryCacheReplacementIndex + 1) % HISTORY_ZONE_CACHE_SIZE;
     entry->valid = true;
     entry->sceneId = sceneId;
     entry->sceneLayer = sceneLayer;
@@ -685,9 +689,15 @@ static bool ShouldCorruptOpenText(PlayState* play, u16 textId) {
 
 static bool IsPointFarEnoughFromReference(const Vec3f* referencePoint, f32 minReferenceDistSq, const Vec3f& point) {
     Vec3f pointCopy = point;
+    Vec3f referencePointCopy = {};
 
-    return (referencePoint == nullptr) || (minReferenceDistSq <= 0.0f) ||
-           (Math3D_Vec3fDistSq(const_cast<Vec3f*>(referencePoint), &pointCopy) >= minReferenceDistSq);
+    if ((referencePoint == nullptr) || (minReferenceDistSq <= 0.0f)) {
+        return true;
+    }
+
+    // Math3D_Vec3fDistSq still takes mutable Vec3f pointers.
+    referencePointCopy = *referencePoint;
+    return Math3D_Vec3fDistSq(&referencePointCopy, &pointCopy) >= minReferenceDistSq;
 }
 
 static bool FindFallbackPoint(PlayState* play, Player* player, const Vec3f* referencePoint, f32 minReferenceDistSq,
@@ -731,6 +741,7 @@ static bool FindTargetPoint(PlayState* play, Player* player, Vec3f* hiddenPoint)
 static bool FindTargetPointFarFromCurrent(PlayState* play, Player* player, const Vec3f& currentPoint,
                                           Vec3f* hiddenPoint) {
     Vec3f bestHistoryPoint = {};
+    // Math3D_Vec3fDistSq still takes mutable Vec3f pointers.
     Vec3f currentPointCopy = currentPoint;
     bool foundHistoryPoint = false;
     f32 bestHistoryDistSq = 0.0f;
@@ -912,6 +923,7 @@ static void DrawDebugOverlay() {
         return;
     }
 
+    // The engine's normal DebugDisplay pass has already run before OnPlayDrawWorldEnd.
     DebugDisplay_Init();
 
     player = GET_PLAYER(play);
@@ -1172,10 +1184,19 @@ void RegisterBenDrowned() {
     COND_HOOK(OnPlayDrawWorldEnd, CVAR, []() { DrawDebugOverlay(); });
 }
 
-static RegisterShipInitFunc initFunc(RegisterBenDrowned,
-                                     { CVAR_NAME, DEBUG_OVERLAY_CVAR, TUNING_CVAR_MOVE_COOLDOWN,
-                                       TUNING_CVAR_RESPAWN_COOLDOWN, TUNING_CVAR_DIALOGUE_COOLDOWN,
-                                       TUNING_CVAR_LAUGH_BASE, TUNING_CVAR_LAUGH_RANDOM, TUNING_CVAR_DISAPPEAR_CHANCE,
-                                       TUNING_CVAR_DIALOGUE_CHANCE, TUNING_CVAR_MIN_SPAWN_DIST,
-                                       TUNING_CVAR_DISTANT_SPAWN_DIST, TUNING_CVAR_MAX_NEARBY_DIST,
-                                       TUNING_CVAR_FALLBACK_STALK_DIST, TUNING_CVAR_PROXIMITY_RUMBLE_DIST });
+static RegisterShipInitFunc initFunc(RegisterBenDrowned, {
+                                                             CVAR_NAME,
+                                                             DEBUG_OVERLAY_CVAR,
+                                                             TUNING_CVAR_MOVE_COOLDOWN,
+                                                             TUNING_CVAR_RESPAWN_COOLDOWN,
+                                                             TUNING_CVAR_DIALOGUE_COOLDOWN,
+                                                             TUNING_CVAR_LAUGH_BASE,
+                                                             TUNING_CVAR_LAUGH_RANDOM,
+                                                             TUNING_CVAR_DISAPPEAR_CHANCE,
+                                                             TUNING_CVAR_DIALOGUE_CHANCE,
+                                                             TUNING_CVAR_MIN_SPAWN_DIST,
+                                                             TUNING_CVAR_DISTANT_SPAWN_DIST,
+                                                             TUNING_CVAR_MAX_NEARBY_DIST,
+                                                             TUNING_CVAR_FALLBACK_STALK_DIST,
+                                                             TUNING_CVAR_PROXIMITY_RUMBLE_DIST,
+                                                         });

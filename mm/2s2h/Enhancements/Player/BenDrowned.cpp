@@ -130,17 +130,31 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 #define DIALOGUE_TRIGGER_BASE 8
 #define DIALOGUE_TRIGGER_RANGE 8
 #define DIALOGUE_CHANCE 0.5f
-#define MESSAGE_BOX_BREAK 0x10
+#define MESSAGE_COLOR_MAX 0x08
+#define MESSAGE_TEXT_SPEED 0x0A
+#define MESSAGE_HS_BOAT_ARCHERY 0x0B
+#define MESSAGE_STRAY_FAIRIES 0x0C
+#define MESSAGE_TOKENS 0x0D
+#define MESSAGE_POINTS_TENS 0x0E
+#define MESSAGE_POINTS_THOUSANDS 0x0F
+#define MESSAGE_BOX_BREAK 0x10 // Immediate page break inside the same textbox flow.
 #define TEXTBOX_LINE_BREAK 0x11
-#define MESSAGE_BOX_BREAK2 0x12
+#define MESSAGE_BOX_BREAK2 0x12 // Alternate inline box-break control used by some vanilla messages.
+#define MESSAGE_CARRIAGE_RETURN 0x13
+#define MESSAGE_SHIFT 0x14
+#define MESSAGE_CONTINUE 0x15
 #define MESSAGE_NAME 0x16
+#define MESSAGE_QUICKTEXT_ENABLE 0x17
+#define MESSAGE_QUICKTEXT_DISABLE 0x18
 #define MESSAGE_EVENT 0x19
 #define MESSAGE_PERSISTENT 0x1A
-#define MESSAGE_BOX_BREAK_DELAYED 0x1B
+#define MESSAGE_BOX_BREAK_DELAYED 0x1B // Timed box break that should stay excluded from whole-message replacement.
 #define MESSAGE_FADE 0x1C
 #define MESSAGE_FADE_SKIPPABLE 0x1D
 #define MESSAGE_SFX 0x1E
 #define MESSAGE_TERMINATOR 0xBF
+#define MESSAGE_BUTTON_ICON_MIN 0xB0
+#define MESSAGE_BUTTON_ICON_MAX 0xBB
 #define MESSAGE_BACKGROUND 0xC1
 #define MESSAGE_TWO_CHOICE 0xC2
 #define MESSAGE_THREE_CHOICE 0xC3
@@ -730,8 +744,41 @@ static bool IsGlyphChar(char ch) {
     return IsCorruptibleChar(ch) && (ch != ' ');
 }
 
-static bool IsDisallowedDialogueControl(unsigned char ch) {
+typedef enum DialogueControlDisposition {
+    /* 0 */ DIALOGUE_CONTROL_NONE,
+    /* 1 */ DIALOGUE_CONTROL_ALLOWED,
+    /* 2 */ DIALOGUE_CONTROL_DISALLOWED,
+} DialogueControlDisposition;
+
+static DialogueControlDisposition ClassifyDialogueControl(unsigned char ch) {
+    if (ch <= MESSAGE_COLOR_MAX) {
+        return DIALOGUE_CONTROL_ALLOWED;
+    }
+
+    if ((ch >= MESSAGE_BUTTON_ICON_MIN) && (ch <= MESSAGE_BUTTON_ICON_MAX)) {
+        return DIALOGUE_CONTROL_ALLOWED;
+    }
+
     switch (ch) {
+        case MESSAGE_BOX_BREAK:
+        case TEXTBOX_LINE_BREAK:
+        case MESSAGE_BOX_BREAK2:
+        case MESSAGE_CARRIAGE_RETURN:
+        case MESSAGE_SHIFT:
+        case MESSAGE_CONTINUE:
+        case MESSAGE_NAME:
+        case MESSAGE_QUICKTEXT_ENABLE:
+        case MESSAGE_QUICKTEXT_DISABLE:
+        case MESSAGE_SFX:
+        case MESSAGE_TEXT_SPEED:
+        case MESSAGE_HS_BOAT_ARCHERY:
+        case MESSAGE_STRAY_FAIRIES:
+        case MESSAGE_TOKENS:
+        case MESSAGE_POINTS_TENS:
+        case MESSAGE_POINTS_THOUSANDS:
+        case MESSAGE_TERMINATOR:
+        case MESSAGE_BACKGROUND:
+            return DIALOGUE_CONTROL_ALLOWED;
         case MESSAGE_EVENT:
         case MESSAGE_PERSISTENT:
         case MESSAGE_BOX_BREAK_DELAYED:
@@ -747,9 +794,9 @@ static bool IsDisallowedDialogueControl(unsigned char ch) {
         case MESSAGE_INPUT_LOTTERY_CODE:
         case MESSAGE_SPIDER_HOUSE_MASK_CODE:
         case MESSAGE_EVENT2:
-            return true;
+            return DIALOGUE_CONTROL_DISALLOWED;
         default:
-            return false;
+            return DIALOGUE_CONTROL_NONE;
     }
 }
 
@@ -757,26 +804,22 @@ static bool CanReplaceWholeDialogueMessage(const std::string& msg) {
     bool hasGlyph = false;
 
     for (unsigned char ch : msg) {
-        if ((ch == MESSAGE_TERMINATOR) || (ch == TEXTBOX_LINE_BREAK) || (ch == MESSAGE_BOX_BREAK) ||
-            (ch == MESSAGE_BOX_BREAK2) || (ch == MESSAGE_NAME) || (ch == MESSAGE_SFX) || (ch == MESSAGE_BACKGROUND)) {
+        DialogueControlDisposition controlDisposition = ClassifyDialogueControl(ch);
+
+        if (controlDisposition == DIALOGUE_CONTROL_ALLOWED) {
             continue;
         }
 
-        if (IsDisallowedDialogueControl(ch)) {
+        if (controlDisposition == DIALOGUE_CONTROL_DISALLOWED) {
             return false;
         }
 
-        if ((ch <= 0x08) || (ch == 0x0A) || (ch == 0x0B) || (ch == 0x0C) || (ch == 0x0D) || (ch == 0x0E) ||
-            (ch == 0x0F) || (ch == 0x13) || (ch == 0x14) || (ch == 0x15) || (ch == 0x17) || (ch == 0x18) ||
-            ((ch >= 0xB0) && (ch <= 0xBB))) {
-            continue;
+        if (!IsCorruptibleChar(ch)) {
+            return false;
         }
 
-        if (IsCorruptibleChar(ch)) {
-            if (!hasGlyph && IsGlyphChar(ch)) {
-                hasGlyph = true;
-            }
-            continue;
+        if (!hasGlyph && IsGlyphChar(ch)) {
+            hasGlyph = true;
         }
     }
 

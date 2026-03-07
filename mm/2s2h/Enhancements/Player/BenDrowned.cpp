@@ -130,8 +130,28 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 #define DIALOGUE_TRIGGER_BASE 8
 #define DIALOGUE_TRIGGER_RANGE 8
 #define DIALOGUE_CHANCE 0.5f
+#define MESSAGE_BOX_BREAK 0x10
 #define TEXTBOX_LINE_BREAK 0x11
+#define MESSAGE_BOX_BREAK2 0x12
+#define MESSAGE_NAME 0x16
+#define MESSAGE_EVENT 0x19
+#define MESSAGE_PERSISTENT 0x1A
+#define MESSAGE_BOX_BREAK_DELAYED 0x1B
+#define MESSAGE_FADE 0x1C
+#define MESSAGE_FADE_SKIPPABLE 0x1D
+#define MESSAGE_SFX 0x1E
 #define MESSAGE_TERMINATOR 0xBF
+#define MESSAGE_BACKGROUND 0xC1
+#define MESSAGE_TWO_CHOICE 0xC2
+#define MESSAGE_THREE_CHOICE 0xC3
+#define MESSAGE_INPUT_BANK 0xCC
+#define MESSAGE_INPUT_DOGGY_RACETRACK_BET 0xD0
+#define MESSAGE_INPUT_BOMBER_CODE 0xD1
+#define MESSAGE_PAUSE_MENU 0xD2
+#define MESSAGE_OWL_WARP 0xD4
+#define MESSAGE_INPUT_LOTTERY_CODE 0xD5
+#define MESSAGE_SPIDER_HOUSE_MASK_CODE 0xD6
+#define MESSAGE_EVENT2 0xE0
 
 // --- Debug overlay ---
 #define DEBUG_OVERLAY_CVAR "gDeveloperTools.BenDrowned.DebugOverlay"
@@ -710,20 +730,53 @@ static bool IsGlyphChar(char ch) {
     return IsCorruptibleChar(ch) && (ch != ' ');
 }
 
+static bool IsDisallowedDialogueControl(unsigned char ch) {
+    switch (ch) {
+        case MESSAGE_EVENT:
+        case MESSAGE_PERSISTENT:
+        case MESSAGE_BOX_BREAK_DELAYED:
+        case MESSAGE_FADE:
+        case MESSAGE_FADE_SKIPPABLE:
+        case MESSAGE_TWO_CHOICE:
+        case MESSAGE_THREE_CHOICE:
+        case MESSAGE_INPUT_BANK:
+        case MESSAGE_INPUT_DOGGY_RACETRACK_BET:
+        case MESSAGE_INPUT_BOMBER_CODE:
+        case MESSAGE_PAUSE_MENU:
+        case MESSAGE_OWL_WARP:
+        case MESSAGE_INPUT_LOTTERY_CODE:
+        case MESSAGE_SPIDER_HOUSE_MASK_CODE:
+        case MESSAGE_EVENT2:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static bool CanReplaceWholeDialogueMessage(const std::string& msg) {
     bool hasGlyph = false;
 
     for (unsigned char ch : msg) {
-        if ((ch == MESSAGE_TERMINATOR) || (ch == TEXTBOX_LINE_BREAK)) {
+        if ((ch == MESSAGE_TERMINATOR) || (ch == TEXTBOX_LINE_BREAK) || (ch == MESSAGE_BOX_BREAK) ||
+            (ch == MESSAGE_BOX_BREAK2) || (ch == MESSAGE_NAME) || (ch == MESSAGE_SFX) || (ch == MESSAGE_BACKGROUND)) {
             continue;
         }
 
-        if (!IsCorruptibleChar(ch)) {
+        if (IsDisallowedDialogueControl(ch)) {
             return false;
         }
 
-        if (!hasGlyph && IsGlyphChar(ch)) {
-            hasGlyph = true;
+        if ((ch <= 0x08) || (ch == 0x0A) || (ch == 0x0B) || (ch == 0x0C) || (ch == 0x0D) || (ch == 0x0E) ||
+            (ch == 0x0F) || (ch == 0x13) || (ch == 0x14) || (ch == 0x15) || (ch == 0x17) || (ch == 0x18) ||
+            ((ch >= 0xB0) && (ch <= 0xBB))) {
+            continue;
+        }
+
+        if (IsCorruptibleChar(ch)) {
+            if (!hasGlyph && IsGlyphChar(ch)) {
+                hasGlyph = true;
+            }
+            continue;
         }
     }
 

@@ -1095,6 +1095,7 @@ static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2
     sState.jumpscareCooldown = sTuning.jumpscareCooldownFrames;
 
     PlayGlobalJumpscareSfx();
+    Rumble_Override(0.0f, PROXIMITY_RUMBLE_MAX_STRENGTH, PROXIMITY_RUMBLE_MAX_DECAY, PROXIMITY_RUMBLE_STEP);
 }
 
 static void UpdateVisibilityJumpscareCamera(PlayState* play) {
@@ -1391,9 +1392,10 @@ void RegisterBenDrowned() {
             statueVisible = CanCameraSeePoint(play, statue->actor.world.pos);
             if (statueVisible) {
                 if (!sState.statueWasVisible) {
-                    TriggerVisibilityJumpscare(play, player, statue);
                     sState.disappearAfterObserved = Rand_ZeroOne() < sTuning.disappearChance;
                 }
+                // Check jumpscare every visible frame; the internal cooldown prevents repeat fires.
+                TriggerVisibilityJumpscare(play, player, statue);
                 sState.statueObserved = true;
                 sState.statueWasVisible = true;
                 return;

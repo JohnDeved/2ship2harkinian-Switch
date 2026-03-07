@@ -1080,6 +1080,10 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Fierce Deity Putaway", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.FierceDeityPutaway")
         .Options(CheckboxOptions().Tooltip("Allows Fierce Deity Link to put away his sword."));
+    AddWidget(path, "Ben Drowned Mode", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.BenDrowned")
+        .Options(CheckboxOptions().Tooltip("Turns the human Elegy statue into a weeping angel that stalks Link from "
+                                           "recent hidden positions and only moves while off-camera."));
     AddWidget(path, "Climb speed", WIDGET_CVAR_SLIDER_INT)
         .CVar("gEnhancements.Player.ClimbSpeed")
         .Options(IntSliderOptions()

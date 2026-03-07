@@ -145,6 +145,16 @@ bool sSpawnedBenDrownedStatue = false;
 
 void ResetBenDrownedLaughCooldown();
 
+size_t GetBenDrownedHistoryIndexFromEnd(size_t i) {
+    return (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+}
+
+void DecrementBenDrownedCooldown(s32* cooldown) {
+    if (*cooldown > 0) {
+        (*cooldown)--;
+    }
+}
+
 void ResetBenDrownedHistory() {
     sBenDrownedHistoryCount = 0;
     sBenDrownedHistoryWriteIndex = 0;
@@ -206,7 +216,7 @@ void RecordBenDrownedHistoryPoint(Player* player) {
 
     distinctCheckCount = std::min(sBenDrownedHistoryCount, BEN_DROWNED_HISTORY_DISTINCT_CHECK_WINDOW);
     for (size_t i = 0; i < distinctCheckCount; i++) {
-        size_t historyIndex = (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+        size_t historyIndex = GetBenDrownedHistoryIndexFromEnd(i);
 
         if (Math3D_Vec3fDistSq(&sBenDrownedHistory[historyIndex].pos, &playerPos) <
             BEN_DROWNED_MIN_HISTORY_POINT_DIST_SQ) {
@@ -279,8 +289,7 @@ bool CanCameraSeePoint(PlayState* play, const Vec3f& point) {
 
 bool FindHiddenBenDrownedHistoryPoint(PlayState* play, Player* player, f32 maxDistSq, Vec3f* hiddenPoint) {
     for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
-        size_t historyIndex =
-            (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+        size_t historyIndex = GetBenDrownedHistoryIndexFromEnd(i);
         Vec3f candidatePoint = sBenDrownedHistory[historyIndex].pos;
         f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
 
@@ -310,8 +319,7 @@ bool FindDistantBenDrownedSpawnPoint(PlayState* play, Player* player, Vec3f* hid
     f32 bestFallbackDistSq = 0.0f;
 
     for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
-        size_t historyIndex =
-            (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+        size_t historyIndex = GetBenDrownedHistoryIndexFromEnd(i);
         Vec3f candidatePoint = sBenDrownedHistory[historyIndex].pos;
         f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
 
@@ -717,8 +725,7 @@ void UpdateBenDrownedDebugOverlay(PlayState* play, Player* player, EnTorch2* sta
     }
 
     for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
-        size_t historyIndex =
-            (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+        size_t historyIndex = GetBenDrownedHistoryIndexFromEnd(i);
         BenDrowned::DebugHistoryEntry entry = {};
 
         entry.pos = sBenDrownedHistory[historyIndex].pos;
@@ -796,8 +803,7 @@ DebugSnapshot GetDebugSnapshot() {
     }
 
     for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
-        size_t historyIndex =
-            (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+        size_t historyIndex = GetBenDrownedHistoryIndexFromEnd(i);
         DebugHistoryEntry& entry = snapshot.history[i];
         entry.pos = sBenDrownedHistory[historyIndex].pos;
         if (snapshot.playerValid) {
@@ -835,9 +841,7 @@ void RegisterBenDrowned() {
         }
 
         HandlePlayStateChange(play);
-        if (sBenDrownedDialogueCooldown > 0) {
-            sBenDrownedDialogueCooldown--;
-        }
+        DecrementBenDrownedCooldown(&sBenDrownedDialogueCooldown);
 
         if (!IsNormalGameplayState(play)) {
             return;
@@ -846,21 +850,11 @@ void RegisterBenDrowned() {
         if (IsPlayerGroundedAndDry(player)) {
             RecordBenDrownedHistoryPoint(player);
         }
-        if (sBenDrownedEffectCooldown > 0) {
-            sBenDrownedEffectCooldown--;
-        }
-        if (sBenDrownedRespawnCooldown > 0) {
-            sBenDrownedRespawnCooldown--;
-        }
-        if (sBenDrownedColorDistortCooldown > 0) {
-            sBenDrownedColorDistortCooldown--;
-        }
-        if (sBenDrownedLaughCooldown > 0) {
-            sBenDrownedLaughCooldown--;
-        }
-        if (sBenDrownedMoveCooldown > 0) {
-            sBenDrownedMoveCooldown--;
-        }
+        DecrementBenDrownedCooldown(&sBenDrownedEffectCooldown);
+        DecrementBenDrownedCooldown(&sBenDrownedRespawnCooldown);
+        DecrementBenDrownedCooldown(&sBenDrownedColorDistortCooldown);
+        DecrementBenDrownedCooldown(&sBenDrownedLaughCooldown);
+        DecrementBenDrownedCooldown(&sBenDrownedMoveCooldown);
 
         statue = GetBenDrownedStatue(play);
         if (statue != nullptr) {

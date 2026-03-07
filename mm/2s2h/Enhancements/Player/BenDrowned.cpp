@@ -1,12 +1,12 @@
 #include <array>
 #include <cmath>
 #include <libultraship/bridge/consolevariablebridge.h>
+#include "2s2h/CustomMessage/CustomMessage.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
 
 extern "C" {
 #include "functions.h"
-#include "message_data_fmt_nes.h"
 #include "variables.h"
 #include "z64quake.h"
 #include "overlays/actors/ovl_En_Torch2/z_en_torch2.h"
@@ -25,6 +25,8 @@ constexpr f32 BEN_DROWNED_MOVE_DIST_SQ = 30.0f * 30.0f;
 constexpr f32 BEN_DROWNED_CLOSE_EFFECT_DIST_SQ = 220.0f * 220.0f;
 constexpr f32 BEN_DROWNED_JUMPSCARE_DIST_SQ = 120.0f * 120.0f;
 constexpr f32 BEN_DROWNED_VISIBILITY_HEIGHT = 40.0f;
+constexpr f32 BEN_DROWNED_VISIBILITY_TOP_HEIGHT = 80.0f;
+constexpr f32 BEN_DROWNED_VISIBILITY_SIDE_OFFSET = 20.0f;
 constexpr f32 BEN_DROWNED_FLOOR_RAYCAST_HEIGHT = 60.0f;
 constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.35f;
 constexpr f32 BEN_DROWNED_FALLBACK_STALK_DISTANCE = 160.0f;
@@ -32,7 +34,8 @@ constexpr s32 BEN_DROWNED_MOVE_COOLDOWN_FRAMES = 3600;
 constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
 constexpr s32 BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES = 900;
 constexpr size_t BEN_DROWNED_DIALOGUE_SEARCH_WINDOW = 48;
-constexpr size_t BEN_DROWNED_MAX_DECODED_TEXT = 200;
+constexpr size_t BEN_DROWNED_DIALOGUE_LATE_START_NUMERATOR = 2;
+constexpr size_t BEN_DROWNED_DIALOGUE_LATE_START_DENOMINATOR = 3;
 constexpr s32 BEN_DROWNED_DIALOGUE_TRIGGER_BASE = 8;
 constexpr s32 BEN_DROWNED_DIALOGUE_TRIGGER_RANGE = 8;
 constexpr f32 BEN_DROWNED_DIALOGUE_CHANCE = 0.12f;
@@ -76,8 +79,6 @@ struct BenDrownedHistoryEntry {
 };
 
 std::array<BenDrownedHistoryEntry, BEN_DROWNED_HISTORY_SIZE> sBenDrownedHistory;
-std::array<s16, BEN_DROWNED_MAX_DECODED_TEXT> sBenDrownedGlyphOffsets;
-std::array<bool, BEN_DROWNED_MAX_DECODED_TEXT> sBenDrownedSafeSpaces;
 Vec3f sBenDrownedZeroVelocity = { 0.0f, 0.0f, 0.0f };
 Vec3f sBenDrownedDustAccel = { 0.0f, 0.08f, 0.0f };
 Color_RGBA8 sBenDrownedDustPrimColor = { 170, 130, 90, 160 };
@@ -88,9 +89,6 @@ s32 sBenDrownedRecordTimer = 0;
 s32 sBenDrownedMoveCooldown = 0;
 s32 sBenDrownedEffectCooldown = 0;
 s32 sBenDrownedDialogueCooldown = 0;
-s16 sBenDrownedDialogueTriggerPos = -1;
-u16 sBenDrownedDialogueTextId = 0;
-bool sBenDrownedDialogueInjected = false;
 PlayState* sLastPlayState = nullptr;
 EnTorch2* sOwnedBenDrownedStatue = nullptr;
 bool sSpawnedBenDrownedStatue = false;
@@ -102,9 +100,6 @@ void ResetBenDrownedHistory() {
     sBenDrownedMoveCooldown = 0;
     sBenDrownedEffectCooldown = 0;
     sBenDrownedDialogueCooldown = 0;
-    sBenDrownedDialogueTriggerPos = -1;
-    sBenDrownedDialogueTextId = 0;
-    sBenDrownedDialogueInjected = false;
 }
 
 void ClearBenDrownedStatueTracking() {
@@ -167,20 +162,44 @@ bool IsPointOnScreen(PlayState* play, const Vec3f& worldPos) {
 
 bool CanCameraSeePoint(PlayState* play, const Vec3f& point) {
     Camera* camera = GET_ACTIVE_CAM(play);
-    Vec3f watchPoint = point;
+    Vec3f cameraForward;
+    Vec3f cameraRight = { 1.0f, 0.0f, 0.0f };
     Vec3f hitPos;
+    Vec3f watchPoint;
     CollisionPoly* hitPoly = nullptr;
+    f32 cameraForwardDistSq;
+    auto isVisibleSample = [&](f32 x, f32 y, f32 z) {
+        watchPoint.x = x;
+        watchPoint.y = y;
+        watchPoint.z = z;
+
+        return IsPointOnScreen(play, watchPoint) &&
+               !BgCheck_AnyLineTest1(&play->colCtx, &camera->eye, &watchPoint, &hitPos, &hitPoly, false);
+    };
 
     if (camera == nullptr) {
         return false;
     }
 
-    watchPoint.y += BEN_DROWNED_VISIBILITY_HEIGHT;
-    if (!IsPointOnScreen(play, watchPoint)) {
-        return false;
+    cameraForward.x = camera->at.x - camera->eye.x;
+    cameraForward.y = 0.0f;
+    cameraForward.z = camera->at.z - camera->eye.z;
+    cameraForwardDistSq = SQ(cameraForward.x) + SQ(cameraForward.z);
+    if (cameraForwardDistSq > 0.001f) {
+        f32 invCameraForwardDist = 1.0f / sqrtf(cameraForwardDistSq);
+
+        cameraRight.x = cameraForward.z * invCameraForwardDist;
+        cameraRight.z = -cameraForward.x * invCameraForwardDist;
     }
 
-    return !BgCheck_AnyLineTest1(&play->colCtx, &camera->eye, &watchPoint, &hitPos, &hitPoly, false);
+    return isVisibleSample(point.x, point.y + BEN_DROWNED_VISIBILITY_HEIGHT, point.z) ||
+           isVisibleSample(point.x, point.y + BEN_DROWNED_VISIBILITY_TOP_HEIGHT, point.z) ||
+           isVisibleSample(point.x + (cameraRight.x * BEN_DROWNED_VISIBILITY_SIDE_OFFSET),
+                           point.y + BEN_DROWNED_VISIBILITY_HEIGHT,
+                           point.z + (cameraRight.z * BEN_DROWNED_VISIBILITY_SIDE_OFFSET)) ||
+           isVisibleSample(point.x - (cameraRight.x * BEN_DROWNED_VISIBILITY_SIDE_OFFSET),
+                           point.y + BEN_DROWNED_VISIBILITY_HEIGHT,
+                           point.z - (cameraRight.z * BEN_DROWNED_VISIBILITY_SIDE_OFFSET));
 }
 
 bool FindHiddenBenDrownedHistoryPoint(PlayState* play, Player* player, f32 maxDistSq, Vec3f* hiddenPoint) {
@@ -272,18 +291,6 @@ template <size_t N> size_t GetBenDrownedRandomIndex() {
     return static_cast<size_t>(fminf(Rand_ZeroOne() * N, static_cast<f32>(N - 1)));
 }
 
-void ResetBenDrownedDialogueState() {
-    sBenDrownedDialogueTriggerPos = -1;
-    sBenDrownedDialogueTextId = 0;
-    sBenDrownedDialogueInjected = false;
-}
-
-bool IsBenDrownedDialogueMsgMode(MessageContext* msgCtx) {
-    return (msgCtx->msgMode == MSGMODE_TEXT_STARTING) || (msgCtx->msgMode == MSGMODE_TEXT_NEXT_MSG) ||
-           (msgCtx->msgMode == MSGMODE_TEXT_CONTINUING) || (msgCtx->msgMode == MSGMODE_TEXT_DISPLAYING) ||
-           (msgCtx->msgMode == MSGMODE_TEXT_AWAIT_INPUT);
-}
-
 bool IsBenDrownedCorruptibleChar(char ch) {
     return (ch >= ' ') && (ch <= '~');
 }
@@ -292,116 +299,33 @@ bool IsBenDrownedGlyphChar(char ch) {
     return IsBenDrownedCorruptibleChar(ch) && (ch != ' ');
 }
 
-void BuildBenDrownedGlyphOffsets(MessageContext* msgCtx, std::array<s16, BEN_DROWNED_MAX_DECODED_TEXT>& glyphOffsets,
-                                 std::array<bool, BEN_DROWNED_MAX_DECODED_TEXT>& safeSpaces) {
-    s16 charTexOffset = 0;
-    size_t decodedTextLen = std::min<size_t>(msgCtx->decodedTextLen, BEN_DROWNED_MAX_DECODED_TEXT);
-
-    // This helper always succeeds; it builds a best-effort glyph-slot map for the currently decoded text window.
-    glyphOffsets.fill(-1);
-    safeSpaces.fill(false);
-
-    for (size_t i = 0; i < decodedTextLen; i++) {
-        u8 ch = static_cast<u8>(msgCtx->decodedBuffer.schar[i]);
-
-        switch (ch) {
-            case MESSAGE_COLOR_DEFAULT:
-            case MESSAGE_COLOR_RED:
-            case MESSAGE_COLOR_GREEN:
-            case MESSAGE_COLOR_BLUE:
-            case MESSAGE_COLOR_YELLOW:
-            case MESSAGE_COLOR_LIGHTBLUE:
-            case MESSAGE_COLOR_PINK:
-            case MESSAGE_COLOR_SILVER:
-            case MESSAGE_COLOR_ORANGE:
-            case MESSAGE_NEWLINE:
-            case MESSAGE_CARRIAGE_RETURN:
-            case MESSAGE_BOX_BREAK:
-            case MESSAGE_BOX_BREAK2:
-            case MESSAGE_QUICKTEXT_ENABLE:
-            case MESSAGE_QUICKTEXT_DISABLE:
-            case MESSAGE_TWO_CHOICE:
-            case MESSAGE_THREE_CHOICE:
-            case MESSAGE_INPUT_BANK:
-            case MESSAGE_INPUT_DOGGY_RACETRACK_BET:
-            case MESSAGE_INPUT_BOMBER_CODE:
-            case MESSAGE_PAUSE_MENU:
-            case MESSAGE_INPUT_LOTTERY_CODE:
-            case MESSAGE_CONTINUE:
-            case MESSAGE_END:
-            case MESSAGE_PERSISTENT:
-            case MESSAGE_EVENT:
-            case MESSAGE_EVENT2:
-            case MESSAGE_BACKGROUND:
-                break;
-
-            case MESSAGE_BOX_BREAK_DELAYED:
-            case MESSAGE_FADE:
-            case MESSAGE_FADE_SKIPPABLE:
-            case MESSAGE_SFX:
-            case MESSAGE_DELAY:
-                i = (i + 2 >= decodedTextLen) ? decodedTextLen : (i + 2); // Skip the 2-byte control parameter payload.
-                break;
-
-            case MESSAGE_TEXT_SPEED:
-                i = (i + 1 >= decodedTextLen) ? decodedTextLen : (i + 1); // Skip the 1-byte text speed parameter.
-                break;
-
-            case ' ':
-                safeSpaces[i] = true;
-                break;
-
-            default:
-                if ((ch >= MESSAGE_BTN_A) && (ch <= MESSAGE_CONTROL_PAD)) {
-                    glyphOffsets[i] = charTexOffset;
-                    charTexOffset += FONT_CHAR_TEX_SIZE;
-                } else if (IsBenDrownedGlyphChar(static_cast<char>(ch))) {
-                    glyphOffsets[i] = charTexOffset;
-                    charTexOffset += FONT_CHAR_TEX_SIZE;
-                }
-                break;
-        }
-    }
-
-}
-
-bool TryInjectBenDrownedDialoguePhrase(PlayState* play, MessageContext* msgCtx, const BenDrownedDialoguePhrase& phrase) {
-    size_t decodedTextLen = std::min<size_t>(msgCtx->decodedTextLen, BEN_DROWNED_MAX_DECODED_TEXT);
-    size_t searchStart = msgCtx->textDrawPos + 1;
-    size_t searchEnd;
+bool TryReplaceBenDrownedDialoguePhrase(std::string* msg, const BenDrownedDialoguePhrase& phrase, size_t searchStart,
+                                        size_t searchEnd) {
     size_t startPos;
     size_t i;
 
-    BuildBenDrownedGlyphOffsets(msgCtx, sBenDrownedGlyphOffsets, sBenDrownedSafeSpaces);
-
-    if ((searchStart >= decodedTextLen) || ((decodedTextLen - searchStart) < phrase.length)) {
+    if ((searchStart >= msg->size()) || ((msg->size() - searchStart) < phrase.length)) {
         return false;
     }
 
-    searchEnd = searchStart + BEN_DROWNED_DIALOGUE_SEARCH_WINDOW;
-    if (searchEnd > decodedTextLen) {
-        searchEnd = decodedTextLen;
+    if (searchEnd > msg->size()) {
+        searchEnd = msg->size();
     }
 
     for (startPos = searchStart; (startPos + phrase.length) <= searchEnd; startPos++) {
         bool fits = true;
 
         for (i = 0; i < phrase.length; i++) {
-            char originalChar = msgCtx->decodedBuffer.schar[startPos + i];
-            bool phraseNeedsGlyph = IsBenDrownedGlyphChar(phrase.text[i]);
+            char originalChar = (*msg)[startPos + i];
+            bool phraseCharIsGlyph = IsBenDrownedGlyphChar(phrase.text[i]);
+            bool originalCharIsGlyph = IsBenDrownedGlyphChar(originalChar);
 
-            // Reject any control bytes up front so we never treat control payload bytes as candidate readable text.
             if (!IsBenDrownedCorruptibleChar(originalChar)) {
                 fits = false;
                 break;
             }
 
-            if (phraseNeedsGlyph) {
-                if (sBenDrownedGlyphOffsets[startPos + i] < 0) {
-                    fits = false;
-                    break;
-                }
-            } else if (!sBenDrownedSafeSpaces[startPos + i]) {
+            if (phraseCharIsGlyph != originalCharIsGlyph) {
                 fits = false;
                 break;
             }
@@ -411,60 +335,44 @@ bool TryInjectBenDrownedDialoguePhrase(PlayState* play, MessageContext* msgCtx, 
             continue;
         }
 
-        for (i = 0; i < phrase.length; i++) {
-            if (msgCtx->decodedBuffer.schar[startPos + i] != phrase.text[i]) {
-                msgCtx->decodedBuffer.schar[startPos + i] = phrase.text[i];
-                if (sBenDrownedGlyphOffsets[startPos + i] >= 0) {
-                    Font_LoadCharNES(play, phrase.text[i], sBenDrownedGlyphOffsets[startPos + i]);
-                }
-            }
-        }
+        msg->replace(startPos, phrase.length, phrase.text, phrase.length);
         return true;
     }
 
     return false;
 }
 
-void UpdateBenDrownedDialogueHaunting(PlayState* play) {
-    MessageContext* msgCtx = &play->msgCtx;
+bool TryCorruptBenDrownedMessage(std::string* msg) {
+    size_t startIndex = GetBenDrownedRandomIndex<BEN_DROWNED_DIALOGUE_PHRASES.size()>();
+    size_t lateStart;
+    s32 triggerStart;
+    size_t searchStart;
+    size_t searchEnd;
 
-    if (sBenDrownedDialogueCooldown > 0) {
-        sBenDrownedDialogueCooldown--;
+    if (msg->empty()) {
+        return false;
     }
 
-    if ((gSaveContext.options.language == LANGUAGE_JPN) || (msgCtx->talkActor == nullptr) ||
-        (msgCtx->currentTextId == 0) || // no active textbox
-        !IsBenDrownedDialogueMsgMode(msgCtx)) {
-        ResetBenDrownedDialogueState();
-        return;
-    }
+    lateStart = (msg->size() / BEN_DROWNED_DIALOGUE_LATE_START_DENOMINATOR) * BEN_DROWNED_DIALOGUE_LATE_START_NUMERATOR;
+    triggerStart = BEN_DROWNED_DIALOGUE_TRIGGER_BASE + (s32)(Rand_ZeroOne() * BEN_DROWNED_DIALOGUE_TRIGGER_RANGE);
+    searchStart = std::max(lateStart, static_cast<size_t>(triggerStart));
+    searchEnd = std::min(msg->size(), searchStart + BEN_DROWNED_DIALOGUE_SEARCH_WINDOW);
 
-    if (msgCtx->currentTextId != sBenDrownedDialogueTextId) {
-        sBenDrownedDialogueTextId = msgCtx->currentTextId;
-        sBenDrownedDialogueInjected = false;
-        sBenDrownedDialogueTriggerPos = -1;
-
-        if ((sBenDrownedDialogueCooldown <= 0) && (Rand_ZeroOne() < BEN_DROWNED_DIALOGUE_CHANCE)) {
-            sBenDrownedDialogueTriggerPos =
-                BEN_DROWNED_DIALOGUE_TRIGGER_BASE + (s32)(Rand_ZeroOne() * BEN_DROWNED_DIALOGUE_TRIGGER_RANGE);
+    for (size_t offset = 0; offset < BEN_DROWNED_DIALOGUE_PHRASES.size(); offset++) {
+        if (TryReplaceBenDrownedDialoguePhrase(
+                msg, BEN_DROWNED_DIALOGUE_PHRASES[(startIndex + offset) % BEN_DROWNED_DIALOGUE_PHRASES.size()],
+                searchStart, searchEnd)) {
+            return true;
         }
     }
 
-    if (!sBenDrownedDialogueInjected && (sBenDrownedDialogueTriggerPos >= 0) &&
-        ((msgCtx->msgMode == MSGMODE_TEXT_DISPLAYING) || (msgCtx->msgMode == MSGMODE_TEXT_AWAIT_INPUT)) &&
-        (msgCtx->textDrawPos >= sBenDrownedDialogueTriggerPos)) {
-        size_t startIndex = GetBenDrownedRandomIndex<BEN_DROWNED_DIALOGUE_PHRASES.size()>();
+    return false;
+}
 
-        sBenDrownedDialogueInjected = true;
-        for (size_t offset = 0; offset < BEN_DROWNED_DIALOGUE_PHRASES.size(); offset++) {
-            if (TryInjectBenDrownedDialoguePhrase(
-                    play, msgCtx,
-                    BEN_DROWNED_DIALOGUE_PHRASES[(startIndex + offset) % BEN_DROWNED_DIALOGUE_PHRASES.size()])) {
-                sBenDrownedDialogueCooldown = BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES;
-                break;
-            }
-        }
-    }
+bool ShouldBenDrownedCorruptOpenText(PlayState* play, u16 textId) {
+    return (play != nullptr) && (gSaveContext.options.language != LANGUAGE_JPN) && (play->msgCtx.talkActor != nullptr) &&
+           (textId != 0) && (textId != CUSTOM_MESSAGE_ID) && (sBenDrownedDialogueCooldown <= 0) &&
+           (Rand_ZeroOne() < BEN_DROWNED_DIALOGUE_CHANCE);
 }
 
 bool FindBenDrownedFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
@@ -584,7 +492,9 @@ void RegisterBenDrowned() {
         }
 
         HandlePlayStateChange(play);
-        UpdateBenDrownedDialogueHaunting(play);
+        if (sBenDrownedDialogueCooldown > 0) {
+            sBenDrownedDialogueCooldown--;
+        }
 
         if (!IsNormalGameplayState(play)) {
             return;
@@ -626,6 +536,27 @@ void RegisterBenDrowned() {
             // Keep the statue re-facing Link whenever it is off-camera, even if it is not ready to move again yet.
             SetBenDrownedStatueRotation(statue, player);
         }
+    });
+
+    COND_HOOK(OnOpenText, CVAR, [](u16* textId, bool* loadFromMessageTable) {
+        PlayState* play = gPlayState;
+
+        if (!ShouldBenDrownedCorruptOpenText(play, *textId)) {
+            return;
+        }
+
+        CustomMessage::Entry entry = CustomMessage::LoadVanillaMessageTableEntry(*textId);
+        if (entry.msg.empty()) {
+            return;
+        }
+        if (!TryCorruptBenDrownedMessage(&entry.msg)) {
+            return;
+        }
+
+        entry.autoFormat = false;
+        CustomMessage::LoadCustomMessageIntoFont(entry);
+        *loadFromMessageTable = false;
+        sBenDrownedDialogueCooldown = BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES;
     });
 }
 

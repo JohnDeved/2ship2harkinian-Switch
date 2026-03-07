@@ -69,5 +69,6 @@ struct DebugSnapshot {
 
 DebugSnapshot GetDebugSnapshot();
 TuningParams& GetTuning();
+void SaveTuning();
 
 } // namespace BenDrowned

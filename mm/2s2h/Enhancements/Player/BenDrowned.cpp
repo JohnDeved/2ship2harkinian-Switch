@@ -37,6 +37,21 @@ extern "C" {
 #define DEFAULT_FALLBACK_STALK_DISTANCE 80.0f
 #define DEFAULT_PROXIMITY_RUMBLE_DIST 100.0f
 
+// --- Persisted tuning CVars ---
+#define TUNING_CVAR_BASE "gDeveloperTools.BenDrowned.Tuning"
+#define TUNING_CVAR_MOVE_COOLDOWN TUNING_CVAR_BASE ".MoveCooldown"
+#define TUNING_CVAR_RESPAWN_COOLDOWN TUNING_CVAR_BASE ".RespawnCooldown"
+#define TUNING_CVAR_DIALOGUE_COOLDOWN TUNING_CVAR_BASE ".DialogueCooldown"
+#define TUNING_CVAR_LAUGH_BASE TUNING_CVAR_BASE ".LaughBase"
+#define TUNING_CVAR_LAUGH_RANDOM TUNING_CVAR_BASE ".LaughRandom"
+#define TUNING_CVAR_DISAPPEAR_CHANCE TUNING_CVAR_BASE ".DisappearChance"
+#define TUNING_CVAR_DIALOGUE_CHANCE TUNING_CVAR_BASE ".DialogueChance"
+#define TUNING_CVAR_MIN_SPAWN_DIST TUNING_CVAR_BASE ".MinSpawnDist"
+#define TUNING_CVAR_DISTANT_SPAWN_DIST TUNING_CVAR_BASE ".DistantSpawnDist"
+#define TUNING_CVAR_MAX_NEARBY_DIST TUNING_CVAR_BASE ".MaxNearbyDist"
+#define TUNING_CVAR_FALLBACK_STALK_DIST TUNING_CVAR_BASE ".FallbackStalkDist"
+#define TUNING_CVAR_PROXIMITY_RUMBLE_DIST TUNING_CVAR_BASE ".ProximityRumbleDist"
+
 // --- Visibility ---
 #define VISIBILITY_HEIGHT 40.0f
 #define VISIBILITY_TOP_HEIGHT 80.0f
@@ -111,6 +126,7 @@ extern "C" {
 #define FALLBACK_YAW_SIDE_NEAR 0x5000
 #define FALLBACK_YAW_SIDE_FAR 0x7000
 #define FALLBACK_YAW_BEHIND ((s16)0x8000)
+#define HISTORY_ZONE_CACHE_SIZE 64
 
 static const s16 sFallbackYawOffsets[] = {
     FALLBACK_YAW_SIDE_NEAR,      (s16)-FALLBACK_YAW_SIDE_NEAR, FALLBACK_YAW_SIDE_FAR,
@@ -151,7 +167,18 @@ static struct {
     EnTorch2* ownedStatue;
     bool spawnedStatue;
     u32 ignoreStatueInterpolationUntilFrame;
+    s16 currentSceneId;
+    s32 currentSceneLayer;
 } sState;
+
+static struct {
+    bool valid;
+    s16 sceneId;
+    s32 sceneLayer;
+    std::array<Vec3f, HISTORY_SIZE> history;
+    size_t historyCount;
+    size_t historyWriteIndex;
+} sZoneHistoryCache[HISTORY_ZONE_CACHE_SIZE];
 
 // Runtime-adjustable tuning parameters (exposed via debug menu).
 static BenDrowned::TuningParams sTuning = {
@@ -193,10 +220,13 @@ static void DecrementCooldown(s32* cooldown) {
     }
 }
 
-static void ResetHistory() {
+static void ResetHistoryBuffer() {
     sState.historyCount = 0;
     sState.historyWriteIndex = 0;
     sState.recordTimer = 0;
+}
+
+static void ResetZoneRuntimeState() {
     sState.moveCooldown = 0;
     sState.respawnCooldown = 0;
     sState.colorDistortCooldown = 0;
@@ -207,6 +237,11 @@ static void ResetHistory() {
     sState.statueWasVisible = false;
     sState.ignoreStatueInterpolationUntilFrame = 0;
     ResetLaughCooldown();
+}
+
+static void ResetHistory() {
+    ResetHistoryBuffer();
+    ResetZoneRuntimeState();
 }
 
 static void ClearStatueTracking() {
@@ -226,9 +261,109 @@ static void CleanupOwnedStatue() {
     ClearStatueTracking();
 }
 
+static s16 GetCurrentSceneId(PlayState* play) {
+    return (play != nullptr) ? Play_GetOriginalSceneId(play->sceneId) : -1;
+}
+
+static s32 GetCurrentSceneLayer() {
+    return gSaveContext.sceneLayer;
+}
+
+static decltype(&sZoneHistoryCache[0]) FindZoneHistoryCacheEntry(s16 sceneId, s32 sceneLayer) {
+    for (auto& entry : sZoneHistoryCache) {
+        if (entry.valid && (entry.sceneId == sceneId) && (entry.sceneLayer == sceneLayer)) {
+            return &entry;
+        }
+    }
+
+    return nullptr;
+}
+
+static decltype(&sZoneHistoryCache[0]) GetOrCreateZoneHistoryCacheEntry(s16 sceneId, s32 sceneLayer) {
+    if (auto* entry = FindZoneHistoryCacheEntry(sceneId, sceneLayer); entry != nullptr) {
+        return entry;
+    }
+
+    for (auto& entry : sZoneHistoryCache) {
+        if (!entry.valid) {
+            entry.valid = true;
+            entry.sceneId = sceneId;
+            entry.sceneLayer = sceneLayer;
+            entry.historyCount = 0;
+            entry.historyWriteIndex = 0;
+            return &entry;
+        }
+    }
+
+    auto* entry = &sZoneHistoryCache[0];
+    entry->valid = true;
+    entry->sceneId = sceneId;
+    entry->sceneLayer = sceneLayer;
+    entry->historyCount = 0;
+    entry->historyWriteIndex = 0;
+    return entry;
+}
+
+static void SaveCurrentZoneHistory() {
+    if (sState.currentSceneId < 0) {
+        return;
+    }
+
+    auto* entry = GetOrCreateZoneHistoryCacheEntry(sState.currentSceneId, sState.currentSceneLayer);
+    entry->history = sState.history;
+    entry->historyCount = sState.historyCount;
+    entry->historyWriteIndex = sState.historyWriteIndex;
+}
+
+static void LoadZoneHistory(s16 sceneId, s32 sceneLayer) {
+    if (auto* entry = FindZoneHistoryCacheEntry(sceneId, sceneLayer); entry != nullptr) {
+        sState.history = entry->history;
+        sState.historyCount = entry->historyCount;
+        sState.historyWriteIndex = entry->historyWriteIndex;
+        sState.recordTimer = 0;
+        return;
+    }
+
+    ResetHistoryBuffer();
+}
+
+static void HandleZoneChange(PlayState* play) {
+    s16 sceneId = GetCurrentSceneId(play);
+    s32 sceneLayer = GetCurrentSceneLayer();
+
+    if ((sceneId == sState.currentSceneId) && (sceneLayer == sState.currentSceneLayer)) {
+        return;
+    }
+
+    SaveCurrentZoneHistory();
+    sState.currentSceneId = sceneId;
+    sState.currentSceneLayer = sceneLayer;
+    LoadZoneHistory(sceneId, sceneLayer);
+    ResetZoneRuntimeState();
+    ClearStatueTracking();
+}
+
+static void LoadTuning() {
+    sTuning.moveCooldownFrames = CVarGetInteger(TUNING_CVAR_MOVE_COOLDOWN, DEFAULT_MOVE_COOLDOWN_FRAMES);
+    sTuning.respawnCooldownFrames = CVarGetInteger(TUNING_CVAR_RESPAWN_COOLDOWN, DEFAULT_RESPAWN_COOLDOWN_FRAMES);
+    sTuning.dialogueCooldownFrames = CVarGetInteger(TUNING_CVAR_DIALOGUE_COOLDOWN, DEFAULT_DIALOGUE_COOLDOWN_FRAMES);
+    sTuning.laughBaseFrames = CVarGetInteger(TUNING_CVAR_LAUGH_BASE, DEFAULT_LAUGH_BASE_FRAMES);
+    sTuning.laughRandomFrames = CVarGetInteger(TUNING_CVAR_LAUGH_RANDOM, DEFAULT_LAUGH_RANDOM_FRAMES);
+    sTuning.disappearChance = CVarGetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, DEFAULT_DISAPPEAR_CHANCE);
+    sTuning.dialogueChance = CVarGetFloat(TUNING_CVAR_DIALOGUE_CHANCE, DIALOGUE_CHANCE);
+    sTuning.minSpawnDist = CVarGetFloat(TUNING_CVAR_MIN_SPAWN_DIST, DEFAULT_MIN_SPAWN_DIST);
+    sTuning.distantSpawnDist = CVarGetFloat(TUNING_CVAR_DISTANT_SPAWN_DIST, DEFAULT_DISTANT_SPAWN_DIST);
+    sTuning.maxNearbyDist = CVarGetFloat(TUNING_CVAR_MAX_NEARBY_DIST, DEFAULT_MAX_NEARBY_DIST);
+    sTuning.fallbackStalkDist = CVarGetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, DEFAULT_FALLBACK_STALK_DISTANCE);
+    sTuning.proximityRumbleDist = CVarGetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, DEFAULT_PROXIMITY_RUMBLE_DIST);
+}
+
 static void HandlePlayStateChange(PlayState* play) {
     if (play != sState.lastPlayState) {
+        SaveCurrentZoneHistory();
         sState.lastPlayState = play;
+        sState.currentSceneId = -1;
+        sState.currentSceneLayer = -1;
         ResetHistory();
         ClearStatueTracking();
     }
@@ -549,8 +684,10 @@ static bool ShouldCorruptOpenText(PlayState* play, u16 textId) {
 }
 
 static bool IsPointFarEnoughFromReference(const Vec3f* referencePoint, f32 minReferenceDistSq, const Vec3f& point) {
+    Vec3f pointCopy = point;
+
     return (referencePoint == nullptr) || (minReferenceDistSq <= 0.0f) ||
-           (Math3D_Vec3fDistSq(referencePoint, &point) >= minReferenceDistSq);
+           (Math3D_Vec3fDistSq(const_cast<Vec3f*>(referencePoint), &pointCopy) >= minReferenceDistSq);
 }
 
 static bool FindFallbackPoint(PlayState* play, Player* player, const Vec3f* referencePoint, f32 minReferenceDistSq,
@@ -591,8 +728,10 @@ static bool FindTargetPoint(PlayState* play, Player* player, Vec3f* hiddenPoint)
            FindHiddenHistoryPoint(play, player, 0.0f, hiddenPoint);
 }
 
-static bool FindTargetPointFarFromCurrent(PlayState* play, Player* player, const Vec3f& currentPoint, Vec3f* hiddenPoint) {
+static bool FindTargetPointFarFromCurrent(PlayState* play, Player* player, const Vec3f& currentPoint,
+                                          Vec3f* hiddenPoint) {
     Vec3f bestHistoryPoint = {};
+    Vec3f currentPointCopy = currentPoint;
     bool foundHistoryPoint = false;
     f32 bestHistoryDistSq = 0.0f;
     f32 minMoveDistSq = SQ(std::max(MIN_REPOSITION_DISTANCE, sTuning.minSpawnDist));
@@ -615,7 +754,7 @@ static bool FindTargetPointFarFromCurrent(PlayState* play, Player* player, const
             continue;
         }
 
-        statueDistSq = Math3D_Vec3fDistSq(&candidatePoint, &currentPoint);
+        statueDistSq = Math3D_Vec3fDistSq(&candidatePoint, &currentPointCopy);
         if (statueDistSq < minMoveDistSq) {
             continue;
         }
@@ -773,6 +912,8 @@ static void DrawDebugOverlay() {
         return;
     }
 
+    DebugDisplay_Init();
+
     player = GET_PLAYER(play);
     if ((player == nullptr) || (player->actor.update == NULL)) {
         player = nullptr;
@@ -806,6 +947,8 @@ static void DrawDebugOverlay() {
         AddDebugObject(play, statue->actor.world.pos, DEBUG_STATUE_MARKER_SCALE, 220, 80, 255, 255,
                        DEBUG_STATUE_MARKER_TYPE);
     }
+
+    DebugDisplay_DrawObjects(play);
 }
 
 namespace BenDrowned {
@@ -874,9 +1017,27 @@ TuningParams& GetTuning() {
     return sTuning;
 }
 
+void SaveTuning() {
+    CVarSetInteger(TUNING_CVAR_MOVE_COOLDOWN, sTuning.moveCooldownFrames);
+    CVarSetInteger(TUNING_CVAR_RESPAWN_COOLDOWN, sTuning.respawnCooldownFrames);
+    CVarSetInteger(TUNING_CVAR_DIALOGUE_COOLDOWN, sTuning.dialogueCooldownFrames);
+    CVarSetInteger(TUNING_CVAR_LAUGH_BASE, sTuning.laughBaseFrames);
+    CVarSetInteger(TUNING_CVAR_LAUGH_RANDOM, sTuning.laughRandomFrames);
+    CVarSetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, sTuning.disappearChance);
+    CVarSetFloat(TUNING_CVAR_DIALOGUE_CHANCE, sTuning.dialogueChance);
+    CVarSetFloat(TUNING_CVAR_MIN_SPAWN_DIST, sTuning.minSpawnDist);
+    CVarSetFloat(TUNING_CVAR_DISTANT_SPAWN_DIST, sTuning.distantSpawnDist);
+    CVarSetFloat(TUNING_CVAR_MAX_NEARBY_DIST, sTuning.maxNearbyDist);
+    CVarSetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, sTuning.fallbackStalkDist);
+    CVarSetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, sTuning.proximityRumbleDist);
+    CVarSave();
+}
+
 } // namespace BenDrowned
 
 void RegisterBenDrowned() {
+    LoadTuning();
+
     if (!CVAR && (gPlayState != nullptr)) {
         CleanupOwnedStatue();
         ResetHistory();
@@ -901,6 +1062,7 @@ void RegisterBenDrowned() {
         }
 
         HandlePlayStateChange(play);
+        HandleZoneChange(play);
         DecrementCooldown(&sState.dialogueCooldown);
 
         if (!IsNormalGameplayState(play)) {
@@ -1002,8 +1164,7 @@ void RegisterBenDrowned() {
 
     COND_ID_HOOK(ShouldActorDraw, ACTOR_EN_TORCH2, CVAR, [](Actor* actor, bool*) {
         if ((sState.ignoreStatueInterpolationUntilFrame != 0) && (actor == (Actor*)sState.ownedStatue) &&
-            (gPlayState != nullptr) &&
-            (gPlayState->gameplayFrames == sState.ignoreStatueInterpolationUntilFrame)) {
+            (gPlayState != nullptr) && (gPlayState->gameplayFrames == sState.ignoreStatueInterpolationUntilFrame)) {
             FrameInterpolation_IgnoreActorMtx();
         }
     });
@@ -1011,4 +1172,10 @@ void RegisterBenDrowned() {
     COND_HOOK(OnPlayDrawWorldEnd, CVAR, []() { DrawDebugOverlay(); });
 }
 
-static RegisterShipInitFunc initFunc(RegisterBenDrowned, { CVAR_NAME, DEBUG_OVERLAY_CVAR });
+static RegisterShipInitFunc initFunc(RegisterBenDrowned,
+                                     { CVAR_NAME, DEBUG_OVERLAY_CVAR, TUNING_CVAR_MOVE_COOLDOWN,
+                                       TUNING_CVAR_RESPAWN_COOLDOWN, TUNING_CVAR_DIALOGUE_COOLDOWN,
+                                       TUNING_CVAR_LAUGH_BASE, TUNING_CVAR_LAUGH_RANDOM, TUNING_CVAR_DISAPPEAR_CHANCE,
+                                       TUNING_CVAR_DIALOGUE_CHANCE, TUNING_CVAR_MIN_SPAWN_DIST,
+                                       TUNING_CVAR_DISTANT_SPAWN_DIST, TUNING_CVAR_MAX_NEARBY_DIST,
+                                       TUNING_CVAR_FALLBACK_STALK_DIST, TUNING_CVAR_PROXIMITY_RUMBLE_DIST });

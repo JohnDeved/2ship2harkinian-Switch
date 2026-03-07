@@ -204,22 +204,29 @@ void RenderBenDrownedDebugSection() {
     ImGui::BulletText("Arrival effect cooldown: %d", snapshot.effectCooldown);
     ImGui::BulletText("Dialogue cooldown: %d", snapshot.dialogueCooldown);
 
+    bool tuningChanged = false;
+
     if (ImGui::CollapsingHeader("Cooldown Tuning")) {
-        ImGui::SliderInt("Move cooldown (frames)", &tuning.moveCooldownFrames, 60, 7200);
-        ImGui::SliderInt("Respawn cooldown (frames)", &tuning.respawnCooldownFrames, 60, 7200);
-        ImGui::SliderInt("Dialogue cooldown (frames)", &tuning.dialogueCooldownFrames, 30, 3600);
-        ImGui::SliderInt("Laugh base (frames)", &tuning.laughBaseFrames, 30, 3600);
-        ImGui::SliderInt("Laugh random (frames)", &tuning.laughRandomFrames, 0, 3600);
-        ImGui::SliderFloat("Disappear chance", &tuning.disappearChance, 0.0f, 1.0f, "%.2f");
-        ImGui::SliderFloat("Dialogue chance", &tuning.dialogueChance, 0.0f, 1.0f, "%.2f");
+        tuningChanged |= ImGui::SliderInt("Move cooldown (frames)", &tuning.moveCooldownFrames, 60, 7200);
+        tuningChanged |= ImGui::SliderInt("Respawn cooldown (frames)", &tuning.respawnCooldownFrames, 60, 7200);
+        tuningChanged |= ImGui::SliderInt("Dialogue cooldown (frames)", &tuning.dialogueCooldownFrames, 30, 3600);
+        tuningChanged |= ImGui::SliderInt("Laugh base (frames)", &tuning.laughBaseFrames, 30, 3600);
+        tuningChanged |= ImGui::SliderInt("Laugh random (frames)", &tuning.laughRandomFrames, 0, 3600);
+        tuningChanged |= ImGui::SliderFloat("Disappear chance", &tuning.disappearChance, 0.0f, 1.0f, "%.2f");
+        tuningChanged |= ImGui::SliderFloat("Dialogue chance", &tuning.dialogueChance, 0.0f, 1.0f, "%.2f");
     }
 
     if (ImGui::CollapsingHeader("Distance Tuning")) {
-        ImGui::SliderFloat("Min spawn dist", &tuning.minSpawnDist, 10.0f, 500.0f, "%.0f");
-        ImGui::SliderFloat("Distant spawn dist", &tuning.distantSpawnDist, 20.0f, 1000.0f, "%.0f");
-        ImGui::SliderFloat("Max nearby dist", &tuning.maxNearbyDist, 50.0f, 1000.0f, "%.0f");
-        ImGui::SliderFloat("Fallback stalk dist", &tuning.fallbackStalkDist, 20.0f, 500.0f, "%.0f");
-        ImGui::SliderFloat("Proximity rumble dist", &tuning.proximityRumbleDist, 10.0f, 500.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Min spawn dist", &tuning.minSpawnDist, 10.0f, 500.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Distant spawn dist", &tuning.distantSpawnDist, 20.0f, 1000.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Max nearby dist", &tuning.maxNearbyDist, 50.0f, 1000.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Fallback stalk dist", &tuning.fallbackStalkDist, 20.0f, 500.0f, "%.0f");
+        tuningChanged |=
+            ImGui::SliderFloat("Proximity rumble dist", &tuning.proximityRumbleDist, 10.0f, 500.0f, "%.0f");
+    }
+
+    if (tuningChanged) {
+        BenDrowned::SaveTuning();
     }
 
     ImGui::SeparatorText("Recorded Locations");

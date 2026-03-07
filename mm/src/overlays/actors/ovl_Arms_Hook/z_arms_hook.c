@@ -8,8 +8,10 @@
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "objects/object_link_child/object_link_child.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED)
+#define CVAR_HOOKSHOT_SPEED "gEnhancements.Player.HookshotSpeed"
 
 void ArmsHook_Init(Actor* thisx, PlayState* play);
 void ArmsHook_Destroy(Actor* thisx, PlayState* play);
@@ -18,6 +20,10 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play);
 
 void ArmsHook_Wait(ArmsHook* this, PlayState* play);
 void ArmsHook_Shoot(ArmsHook* this, PlayState* play);
+
+static f32 ArmsHook_GetSpeedMultiplier(void) {
+    return (f32)CLAMP_MIN(CVarGetInteger(CVAR_HOOKSHOT_SPEED, 1), 1);
+}
 
 ActorProfile Arms_Hook_Profile = {
     /**/ ACTOR_ARMS_HOOK,
@@ -76,7 +82,7 @@ void ArmsHook_Destroy(Actor* thisx, PlayState* play) {
 void ArmsHook_Wait(ArmsHook* this, PlayState* play) {
     if (this->actor.parent == NULL) {
         ArmsHook_SetupAction(this, ArmsHook_Shoot);
-        Actor_SetSpeeds(&this->actor, 20.0f);
+        Actor_SetSpeeds(&this->actor, 20.0f * ArmsHook_GetSpeedMultiplier());
         this->actor.parent = &GET_PLAYER(play)->actor;
         this->timer = 26;
     }
@@ -193,6 +199,7 @@ void ArmsHook_Shoot(ArmsHook* this, PlayState* play) {
 
         {
             f32 velocity;
+            f32 speedMultiplier = ArmsHook_GetSpeedMultiplier();
 
             bodyDistDiff =
                 Math_Vec3f_DistXYZAndStoreDiff(&player->rightHandWorld.pos, &this->actor.world.pos, &bodyDistDiffVec);
@@ -202,11 +209,11 @@ void ArmsHook_Shoot(ArmsHook* this, PlayState* play) {
                 phi_f16 = 0.0f;
             } else {
                 if (this->actor.child != NULL) {
-                    velocity = 30.0f;
+                    velocity = 30.0f * speedMultiplier;
                 } else if (attachedActor != NULL) {
-                    velocity = 50.0f;
+                    velocity = 50.0f * speedMultiplier;
                 } else {
-                    velocity = 200.0f;
+                    velocity = 200.0f * speedMultiplier;
                 }
                 phi_f16 = bodyDistDiff - velocity;
                 if (bodyDistDiff <= velocity) {

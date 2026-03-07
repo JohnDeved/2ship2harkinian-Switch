@@ -158,6 +158,7 @@ nlohmann::json curatedPresetJ = R"(
                 "FastFlowerLaunch": 1,
                 "FasterPushAndPull": 1,
                 "FierceDeityPutaway": 1,
+                "HookshotSpeed": 5,
                 "InfiniteDekuHopping": 1,
                 "InstantPutaway": 1,
                 "PreventDiveOverWater": 1,

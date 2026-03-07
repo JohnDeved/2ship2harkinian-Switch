@@ -61,6 +61,7 @@ extern "C" {
 #define TUNING_CVAR_JUMPSCARE_DIST TUNING_CVAR_BASE ".JumpscareDist"
 #define TUNING_CVAR_FALLBACK_STALK_DIST TUNING_CVAR_BASE ".FallbackStalkDist"
 #define TUNING_CVAR_PROXIMITY_RUMBLE_DIST TUNING_CVAR_BASE ".ProximityRumbleDist"
+#define TUNING_MIN_DISTANCE 1.0f
 
 // --- Visibility ---
 #define VISIBILITY_HEIGHT 40.0f
@@ -83,6 +84,8 @@ extern "C" {
 #define DEFAULT_LAUGH_RANDOM_FRAMES 300
 #define DEFAULT_LAUGH_MIN_PITCH 0.9f
 #define DEFAULT_LAUGH_MAX_PITCH 1.1f
+#define TUNING_MIN_PITCH 0.1f
+#define TUNING_MAX_PITCH 3.0f
 
 // --- Color distortion ---
 #define DEFAULT_COLOR_DISTORT_BASE_FRAMES 240
@@ -245,13 +248,13 @@ static void NormalizeTuning() {
     sTuning.colorDistortBaseFrames = std::max(sTuning.colorDistortBaseFrames, 0);
     sTuning.colorDistortRandomFrames = std::max(sTuning.colorDistortRandomFrames, 0);
     sTuning.colorDistortDuration = std::max(sTuning.colorDistortDuration, 1);
-    sTuning.historyPointMinDist = std::max(sTuning.historyPointMinDist, 1.0f);
-    sTuning.minRepositionDist = std::max(sTuning.minRepositionDist, 1.0f);
-    sTuning.moveThresholdDist = std::max(sTuning.moveThresholdDist, 1.0f);
-    sTuning.closeEffectDist = std::max(sTuning.closeEffectDist, 1.0f);
-    sTuning.jumpscareDist = std::max(sTuning.jumpscareDist, 1.0f);
-    sTuning.laughMinPitch = std::clamp(sTuning.laughMinPitch, 0.1f, 3.0f);
-    sTuning.laughMaxPitch = std::clamp(sTuning.laughMaxPitch, 0.1f, 3.0f);
+    sTuning.historyPointMinDist = std::max(sTuning.historyPointMinDist, TUNING_MIN_DISTANCE);
+    sTuning.minRepositionDist = std::max(sTuning.minRepositionDist, TUNING_MIN_DISTANCE);
+    sTuning.moveThresholdDist = std::max(sTuning.moveThresholdDist, TUNING_MIN_DISTANCE);
+    sTuning.closeEffectDist = std::max(sTuning.closeEffectDist, TUNING_MIN_DISTANCE);
+    sTuning.jumpscareDist = std::max(sTuning.jumpscareDist, TUNING_MIN_DISTANCE);
+    sTuning.laughMinPitch = std::clamp(sTuning.laughMinPitch, TUNING_MIN_PITCH, TUNING_MAX_PITCH);
+    sTuning.laughMaxPitch = std::clamp(sTuning.laughMaxPitch, TUNING_MIN_PITCH, TUNING_MAX_PITCH);
 
     if (sTuning.laughMinPitch > sTuning.laughMaxPitch) {
         std::swap(sTuning.laughMinPitch, sTuning.laughMaxPitch);

@@ -113,7 +113,6 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 #define JUMPSCARE_DIST_STEP_SCALE 0.35f
 #define JUMPSCARE_DIST_MIN_DIFF 0.5f
 #define JUMPSCARE_FOV_MIN_DIFF 0.1f
-#define JUMPSCARE_FREEZE_FRAMES 40
 #define JUMPSCARE_RUMBLE_STRENGTH 255
 #define JUMPSCARE_RUMBLE_DECAY 20
 #define JUMPSCARE_RUMBLE_STEP 150
@@ -1099,9 +1098,6 @@ static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2
     sState.jumpscareCooldown = sTuning.jumpscareCooldownFrames;
 
     PlayGlobalJumpscareSfx();
-
-    // ReDead-style freeze: briefly lock the player in place
-    player->actor.freezeTimer = JUMPSCARE_FREEZE_FRAMES;
 
     // Force camera to lock onto the statue (same mechanism the ReDead uses)
     Player_SetAutoLockOnActor(play, &statue->actor);

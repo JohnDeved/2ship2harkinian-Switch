@@ -474,7 +474,12 @@ static bool TryReplaceDialoguePhrase(std::string* msg, std::string_view phrase, 
         for (size_t i = 0; i < phrase.size(); i++) {
             char originalChar = (*msg)[startPos + i];
 
-            if (!IsCorruptibleChar(originalChar) || (IsGlyphChar(phrase[i]) != IsGlyphChar(originalChar))) {
+            if (!IsCorruptibleChar(originalChar)) {
+                fits = false;
+                break;
+            }
+
+            if (IsGlyphChar(phrase[i]) != IsGlyphChar(originalChar)) {
                 fits = false;
                 break;
             }
@@ -525,9 +530,9 @@ static bool FindFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoin
         return false;
     }
 
-    for (size_t i = 0; i < std::size(sFallbackYawOffsets); i++) {
+    for (s16 yawOffset : sFallbackYawOffsets) {
         Vec3f candidatePoint = player->actor.world.pos;
-        s16 stalkYaw = Math_Vec3f_Yaw(&camera->eye, &camera->at) + sFallbackYawOffsets[i];
+        s16 stalkYaw = Math_Vec3f_Yaw(&camera->eye, &camera->at) + yawOffset;
 
         candidatePoint.x += Math_SinS(stalkYaw) * FALLBACK_STALK_DISTANCE;
         candidatePoint.z += Math_CosS(stalkYaw) * FALLBACK_STALK_DISTANCE;

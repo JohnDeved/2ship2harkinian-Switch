@@ -9,6 +9,7 @@
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
 
+// Engine camera helper used to smoothly interpolate gameplay camera values during the visibility jumpscare zoom.
 extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minDiff);
 
 extern "C" {
@@ -113,6 +114,7 @@ extern "C" {
 #define JUMPSCARE_TARGET_DIST 60.0f
 #define JUMPSCARE_TARGET_FOV 40.0f
 #define JUMPSCARE_DIST_STEP_SCALE 0.35f
+#define JUMPSCARE_DIST_MIN_DIFF 0.5f
 #define JUMPSCARE_FOV_MIN_DIFF 0.1f
 
 // --- Dialogue corruption ---
@@ -152,12 +154,19 @@ struct ColorDistortion {
 };
 
 static const std::string_view sDialogueMessages[] = {
+    "turn arround",
+    "god please help",
     "help me",
     "don't look behind you",
+    "it is right behind you",
     "you were not supposed to see me",
     "it followed you here",
     "this is not your save file",
     "it is still watching you",
+    "please wake up",
+    "you need to leave",
+    "it knows your name",
+    "your god has left you to die",
 };
 
 static const ColorDistortion sColorDistortions[] = {
@@ -180,6 +189,7 @@ static struct {
     s32 jumpscareTimer;
     s32 laughCooldown;
     s32 dialogueCooldown;
+    bool jumpscareCameraActive;
     bool disappearAfterObserved;
     bool statueObserved;
     bool statueWasVisible;
@@ -297,6 +307,7 @@ static void ResetZoneRuntimeState() {
     sState.jumpscareCooldown = 0;
     sState.jumpscareTimer = 0;
     sState.dialogueCooldown = 0;
+    sState.jumpscareCameraActive = false;
     sState.disappearAfterObserved = false;
     sState.statueObserved = false;
     sState.statueWasVisible = false;
@@ -890,6 +901,7 @@ static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2
 
     sState.jumpscareOriginalDist = camera->dist;
     sState.jumpscareOriginalFov = camera->fov;
+    sState.jumpscareCameraActive = true;
     sState.jumpscareTimer = JUMPSCARE_ZOOM_FRAMES;
     sState.jumpscareCooldown = JUMPSCARE_COOLDOWN_FRAMES;
 
@@ -919,7 +931,7 @@ static void UpdateVisibilityJumpscareCamera(PlayState* play) {
         return;
     }
 
-    if ((sState.jumpscareOriginalDist <= 0.0f) || (sState.jumpscareOriginalFov <= 0.0f)) {
+    if (!sState.jumpscareCameraActive) {
         return;
     }
 
@@ -928,8 +940,9 @@ static void UpdateVisibilityJumpscareCamera(PlayState* play) {
     camera->fov = Camera_ScaledStepToCeilF(sState.jumpscareOriginalFov, camera->fov, camera->fovUpdateRate,
                                            JUMPSCARE_FOV_MIN_DIFF);
 
-    if (fabsf(camera->dist - sState.jumpscareOriginalDist) < 0.5f &&
+    if (fabsf(camera->dist - sState.jumpscareOriginalDist) < JUMPSCARE_DIST_MIN_DIFF &&
         fabsf(camera->fov - sState.jumpscareOriginalFov) < JUMPSCARE_FOV_MIN_DIFF) {
+        sState.jumpscareCameraActive = false;
         sState.jumpscareOriginalDist = 0.0f;
         sState.jumpscareOriginalFov = 0.0f;
     }

@@ -2,12 +2,14 @@
 #include "UIWidgets.hpp"
 #include "BenPort.h"
 #include "BenInputEditorWindow.h"
+#include "2s2h/Enhancements/Player/BenDrowned.h"
 #include "DeveloperTools/SaveEditor.h"
 #include "DeveloperTools/CollisionViewer.h"
 #include "2s2h/Enhancements/GfxPatcher/AuthenticGfxPatches.h"
 #include "2s2h/PresetManager/PresetManager.h"
 #include "HudEditor.h"
 #include "Notification.h"
+#include <cmath>
 #include <variant>
 #include <ship/utils/StringHelper.h>
 #include <spdlog/fmt/fmt.h>
@@ -119,6 +121,120 @@ static const std::vector<const char*> logLevels = {
     "Critical", // DEBUG_LOG_CRITICAL
     "Off",      // DEBUG_LOG_OFF
 };
+
+static void RenderBenDrownedDebugBool(const char* label, bool value) {
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::Text("%s", label);
+    ImGui::TableNextColumn();
+    ImGui::TextColored(value ? ImVec4(0.35f, 0.95f, 0.45f, 1.0f) : ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s",
+                       value ? "Yes" : "No");
+}
+
+static void RenderBenDrownedDebugSection() {
+    BenDrowned::DebugSnapshot snapshot = BenDrowned::GetDebugSnapshot();
+
+    UIWidgets::CVarCheckbox("World Overlay", "gDeveloperTools.BenDrowned.DebugOverlay");
+    ImGui::SeparatorText("Runtime State");
+
+    if (!snapshot.enabled) {
+        ImGui::TextColored(UIWidgets::ColorValues.at(UIWidgets::Colors::Gray), "Ben Drowned mode is disabled.");
+        return;
+    }
+
+    if (!snapshot.hasPlayState) {
+        ImGui::TextColored(UIWidgets::ColorValues.at(UIWidgets::Colors::Gray), "No active play state.");
+        return;
+    }
+
+    if (ImGui::BeginTable("BenDrownedStateTable", 2, ImGuiTableFlags_SizingStretchSame)) {
+        RenderBenDrownedDebugBool("Normal gameplay", snapshot.normalGameplayState);
+        RenderBenDrownedDebugBool("Player valid", snapshot.playerValid);
+        RenderBenDrownedDebugBool("Grounded and dry", snapshot.playerGroundedAndDry);
+        RenderBenDrownedDebugBool("Statue alive", snapshot.statueAlive);
+        RenderBenDrownedDebugBool("Statue managed", snapshot.statueManaged);
+        RenderBenDrownedDebugBool("Statue observed", snapshot.statueObserved);
+        RenderBenDrownedDebugBool("Statue visible", snapshot.statueVisible);
+        RenderBenDrownedDebugBool("Disappear armed", snapshot.disappearAfterObserved);
+        RenderBenDrownedDebugBool("Respawn ready", snapshot.respawnReady);
+        RenderBenDrownedDebugBool("Move ready", snapshot.moveReady);
+        RenderBenDrownedDebugBool("Distant spawn found", snapshot.hasDistantSpawnPoint);
+        RenderBenDrownedDebugBool("Target point found", snapshot.hasTargetPoint);
+        ImGui::EndTable();
+    }
+
+    ImGui::SeparatorText("Positions");
+    if (snapshot.playerValid) {
+        ImGui::BulletText("Player: %.1f, %.1f, %.1f", snapshot.playerPos.x, snapshot.playerPos.y, snapshot.playerPos.z);
+    }
+    if (snapshot.statueAlive) {
+        ImGui::BulletText("Statue: %.1f, %.1f, %.1f", snapshot.statuePos.x, snapshot.statuePos.y, snapshot.statuePos.z);
+    }
+    if (snapshot.hasDistantSpawnPoint) {
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Best distant spawn: %.1f, %.1f, %.1f",
+                           snapshot.distantSpawnPoint.x, snapshot.distantSpawnPoint.y, snapshot.distantSpawnPoint.z);
+    }
+    if (snapshot.hasTargetPoint) {
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "Best active target: %.1f, %.1f, %.1f",
+                           snapshot.targetPoint.x, snapshot.targetPoint.y, snapshot.targetPoint.z);
+    }
+
+    ImGui::SeparatorText("Cooldowns");
+    ImGui::BulletText("History count: %d / %zu", snapshot.historyCount, BenDrowned::DEBUG_HISTORY_SIZE);
+    ImGui::BulletText("Record timer: %d", snapshot.recordTimer);
+    ImGui::BulletText("Move cooldown: %d", snapshot.moveCooldown);
+    ImGui::BulletText("Respawn cooldown: %d", snapshot.respawnCooldown);
+    ImGui::BulletText("Laugh cooldown: %d", snapshot.laughCooldown);
+    ImGui::BulletText("Color distortion cooldown: %d", snapshot.colorDistortCooldown);
+    ImGui::BulletText("Arrival effect cooldown: %d", snapshot.effectCooldown);
+    ImGui::BulletText("Dialogue cooldown: %d", snapshot.dialogueCooldown);
+
+    ImGui::SeparatorText("Recorded Locations");
+    if (snapshot.historyCount <= 0) {
+        ImGui::TextColored(UIWidgets::ColorValues.at(UIWidgets::Colors::Gray), "No recorded locations yet.");
+        return;
+    }
+
+    if (ImGui::BeginTable("BenDrownedHistoryTable", 6,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+                          ImVec2(0.0f, 260.0f))) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 28.0f);
+        ImGui::TableSetupColumn("X");
+        ImGui::TableSetupColumn("Y");
+        ImGui::TableSetupColumn("Z");
+        ImGui::TableSetupColumn("Dist");
+        ImGui::TableSetupColumn("Flags");
+        ImGui::TableHeadersRow();
+
+        for (int i = 0; i < snapshot.historyCount; i++) {
+            const BenDrowned::DebugHistoryEntry& entry = snapshot.history[i];
+            const char* flags = entry.distantEligible ? "Hidden | Distant"
+                                : entry.spawnEligible ? "Hidden | Spawn"
+                                : entry.visible       ? "Visible"
+                                                      : "Too Close";
+            ImVec4 flagColor = entry.distantEligible ? ImVec4(0.4f, 0.8f, 1.0f, 1.0f)
+                               : entry.spawnEligible ? ImVec4(0.4f, 1.0f, 0.5f, 1.0f)
+                               : entry.visible       ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f)
+                                                     : ImVec4(1.0f, 0.75f, 0.35f, 1.0f);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", i + 1);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", entry.pos.x);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", entry.pos.y);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", entry.pos.z);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", snapshot.playerValid ? sqrtf(entry.playerDistSq) : 0.0f);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(flagColor, "%s", flags);
+        }
+
+        ImGui::EndTable();
+    }
+}
 
 static const std::vector<const char*> timeStopOptions = {
     "Off",                     // TIME_STOP_OFF
@@ -2098,6 +2214,11 @@ void BenMenu::AddDevTools() {
         .CVar("gWindows.CollisionViewer")
         .Options(ButtonOptions().Tooltip("Makes collision visible on screen.").Size(Sizes::Inline))
         .WindowName("Collision Viewer");
+
+    path = { "Dev Tools", "Ben Drowned", SECTION_COLUMN_1 };
+    AddSidebarEntry("Dev Tools", "Ben Drowned", 1);
+    AddWidget(path, "Ben Drowned Debug", WIDGET_CUSTOM)
+        .CustomFunction([](WidgetInfo& info) { RenderBenDrownedDebugSection(); });
 
     path = { "Dev Tools", "Stats", SECTION_COLUMN_1 };
     AddSidebarEntry("Dev Tools", "Stats", 1);

@@ -2,6 +2,7 @@
 #include <array>
 #include <cmath>
 #include <libultraship/bridge/consolevariablebridge.h>
+#include "2s2h/Enhancements/Player/BenDrowned.h"
 #include "2s2h/CustomMessage/CustomMessage.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
@@ -10,6 +11,7 @@ extern "C" {
 #include "functions.h"
 #include "sfx.h"
 #include "variables.h"
+#include "z64debug_display.h"
 #include "z64quake.h"
 #include "overlays/actors/ovl_En_Torch2/z_en_torch2.h"
 #include "overlays/effects/ovl_Effect_Ss_Dust/z_eff_ss_dust.h"
@@ -61,6 +63,14 @@ constexpr size_t BEN_DROWNED_DIALOGUE_LATE_START_DENOMINATOR = 3;
 constexpr s32 BEN_DROWNED_DIALOGUE_TRIGGER_BASE = 8;
 constexpr s32 BEN_DROWNED_DIALOGUE_TRIGGER_RANGE = 8;
 constexpr f32 BEN_DROWNED_DIALOGUE_CHANCE = 0.12f;
+constexpr const char* BEN_DROWNED_DEBUG_OVERLAY_CVAR = "gDeveloperTools.BenDrowned.DebugOverlay";
+constexpr f32 BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE = 0.12f;
+constexpr f32 BEN_DROWNED_DEBUG_TARGET_MARKER_SCALE = 0.18f;
+constexpr f32 BEN_DROWNED_DEBUG_STATUE_MARKER_SCALE = 0.22f;
+constexpr f32 BEN_DROWNED_DEBUG_MARKER_HEIGHT = 12.0f;
+constexpr s16 BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE = 2;
+constexpr s16 BEN_DROWNED_DEBUG_TARGET_MARKER_TYPE = 1;
+constexpr s16 BEN_DROWNED_DEBUG_STATUE_MARKER_TYPE = 3;
 constexpr u16 BEN_DROWNED_DUST_DRAW_FLAGS = DUST_DRAWFLAG_RAND_COLOR_OFFSET;
 constexpr s16 BEN_DROWNED_DUST_SCALE = 120;
 constexpr s16 BEN_DROWNED_DUST_SCALE_STEP = -8;
@@ -659,7 +669,134 @@ void UpdateBenDrownedStatueColorDistortion(EnTorch2* statue) {
                          BEN_DROWNED_COLOR_DISTORT_DURATION);
     ResetBenDrownedColorDistortCooldown();
 }
+
+void AddBenDrownedDebugObject(PlayState* play, const Vec3f& pos, f32 scale, u8 red, u8 green, u8 blue, u8 alpha,
+                              s16 type) {
+    DebugDisplay_AddObject(pos.x, pos.y + BEN_DROWNED_DEBUG_MARKER_HEIGHT, pos.z, 0, 0, 0, scale, scale, scale, red,
+                           green, blue, alpha, type, play->state.gfxCtx);
+}
+
+void UpdateBenDrownedDebugOverlay(PlayState* play, Player* player, EnTorch2* statue) {
+    Vec3f spawnPoint;
+    Vec3f targetPoint;
+
+    if ((play == nullptr) || !CVarGetInteger(BEN_DROWNED_DEBUG_OVERLAY_CVAR, 0)) {
+        return;
+    }
+
+    for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
+        size_t historyIndex =
+            (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+        const Vec3f& point = sBenDrownedHistory[historyIndex].pos;
+        Vec3f pointCopy = point;
+        f32 playerDistSq = (player != nullptr) ? Math3D_Vec3fDistSq(&pointCopy, &player->actor.world.pos)
+                                               : BEN_DROWNED_MIN_SPAWN_DIST_SQ;
+        bool visible = CanCameraSeePoint(play, point);
+        bool spawnEligible = !visible && (playerDistSq >= BEN_DROWNED_MIN_SPAWN_DIST_SQ);
+        bool distantEligible = spawnEligible && (playerDistSq >= BEN_DROWNED_DISTANT_SPAWN_DIST_SQ);
+
+        if (distantEligible) {
+            AddBenDrownedDebugObject(play, point, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 80, 180, 255, 220,
+                                     BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+        } else if (spawnEligible) {
+            AddBenDrownedDebugObject(play, point, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 80, 255, 120, 200,
+                                     BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+        } else if (visible) {
+            AddBenDrownedDebugObject(play, point, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 255, 90, 90, 180,
+                                     BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+        } else {
+            AddBenDrownedDebugObject(play, point, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 255, 190, 70, 160,
+                                     BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+        }
+    }
+
+    if ((player != nullptr) && FindDistantBenDrownedSpawnPoint(play, player, &spawnPoint)) {
+        AddBenDrownedDebugObject(play, spawnPoint, BEN_DROWNED_DEBUG_TARGET_MARKER_SCALE, 80, 220, 255, 255,
+                                 BEN_DROWNED_DEBUG_TARGET_MARKER_TYPE);
+    }
+
+    if ((player != nullptr) && FindBenDrownedTargetPoint(play, player, &targetPoint)) {
+        AddBenDrownedDebugObject(play, targetPoint, BEN_DROWNED_DEBUG_TARGET_MARKER_SCALE, 255, 220, 80, 255,
+                                 BEN_DROWNED_DEBUG_TARGET_MARKER_TYPE);
+    }
+
+    if (statue != nullptr) {
+        AddBenDrownedDebugObject(play, statue->actor.world.pos, BEN_DROWNED_DEBUG_STATUE_MARKER_SCALE, 220, 80, 255,
+                                 255, BEN_DROWNED_DEBUG_STATUE_MARKER_TYPE);
+    }
+}
 } // namespace
+
+namespace BenDrowned {
+
+DebugSnapshot GetDebugSnapshot() {
+    DebugSnapshot snapshot = {};
+    PlayState* play = gPlayState;
+    EnTorch2* statue;
+    Player* player;
+
+    snapshot.enabled = CVAR != 0;
+    snapshot.hasPlayState = play != nullptr;
+    if (play == nullptr) {
+        return snapshot;
+    }
+
+    player = GET_PLAYER(play);
+    statue = GetBenDrownedStatue(play);
+
+    snapshot.normalGameplayState = IsNormalGameplayState(play);
+    snapshot.playerValid = (player != nullptr) && (player->actor.update != NULL);
+    snapshot.playerGroundedAndDry = snapshot.playerValid && IsPlayerGroundedAndDry(player);
+    snapshot.statueAlive = statue != nullptr;
+    snapshot.statueManaged = sSpawnedBenDrownedStatue;
+    snapshot.statueObserved = sBenDrownedStatueObserved;
+    snapshot.statueWasVisible = sBenDrownedStatueWasVisible;
+    snapshot.disappearAfterObserved = sBenDrownedDisappearAfterObserved;
+    snapshot.respawnReady = sBenDrownedRespawnCooldown <= 0;
+    snapshot.moveReady = sBenDrownedMoveCooldown <= 0;
+    snapshot.historyCount = static_cast<s32>(sBenDrownedHistoryCount);
+    snapshot.recordTimer = sBenDrownedRecordTimer;
+    snapshot.moveCooldown = sBenDrownedMoveCooldown;
+    snapshot.respawnCooldown = sBenDrownedRespawnCooldown;
+    snapshot.colorDistortCooldown = sBenDrownedColorDistortCooldown;
+    snapshot.effectCooldown = sBenDrownedEffectCooldown;
+    snapshot.laughCooldown = sBenDrownedLaughCooldown;
+    snapshot.dialogueCooldown = sBenDrownedDialogueCooldown;
+
+    if (snapshot.playerValid) {
+        snapshot.playerPos = player->actor.world.pos;
+    }
+
+    if (snapshot.statueAlive) {
+        snapshot.statuePos = statue->actor.world.pos;
+        snapshot.statueVisible = CanCameraSeePoint(play, statue->actor.world.pos);
+    }
+
+    if (snapshot.playerValid) {
+        snapshot.hasDistantSpawnPoint = FindDistantBenDrownedSpawnPoint(play, player, &snapshot.distantSpawnPoint);
+        snapshot.hasTargetPoint = FindBenDrownedTargetPoint(play, player, &snapshot.targetPoint);
+    }
+
+    for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
+        size_t historyIndex =
+            (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+        DebugHistoryEntry& entry = snapshot.history[i];
+        const Vec3f& point = sBenDrownedHistory[historyIndex].pos;
+        Vec3f pointCopy = point;
+
+        entry.pos = point;
+        if (snapshot.playerValid) {
+            entry.playerDistSq = Math3D_Vec3fDistSq(&pointCopy, &player->actor.world.pos);
+            entry.visible = CanCameraSeePoint(play, point);
+            entry.spawnEligible = !entry.visible && (entry.playerDistSq >= BEN_DROWNED_MIN_SPAWN_DIST_SQ);
+            entry.distantEligible = entry.spawnEligible && (entry.playerDistSq >= BEN_DROWNED_DISTANT_SPAWN_DIST_SQ);
+        }
+    }
+
+    return snapshot;
+}
+
+} // namespace BenDrowned
 
 void RegisterBenDrowned() {
     if (!CVAR && (gPlayState != nullptr)) {
@@ -726,6 +863,7 @@ void RegisterBenDrowned() {
                 }
                 sBenDrownedStatueObserved = true;
                 sBenDrownedStatueWasVisible = true;
+                UpdateBenDrownedDebugOverlay(play, player, statue);
                 return;
             }
 
@@ -741,6 +879,7 @@ void RegisterBenDrowned() {
         }
 
         if (dismissedStatueThisFrame) {
+            UpdateBenDrownedDebugOverlay(play, player, nullptr);
             return;
         }
 
@@ -768,6 +907,8 @@ void RegisterBenDrowned() {
             // Keep the statue re-facing Link whenever it is off-camera, even if it is not ready to move again yet.
             SetBenDrownedStatueRotation(statue, player);
         }
+
+        UpdateBenDrownedDebugOverlay(play, player, statue);
     });
 
     COND_HOOK(OnOpenText, CVAR, [](u16* textId, bool* loadFromMessageTable) {

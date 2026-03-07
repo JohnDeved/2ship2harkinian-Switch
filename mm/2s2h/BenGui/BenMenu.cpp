@@ -924,10 +924,10 @@ void BenMenu::AddEnhancements() {
             }
         })
         .Options(CheckboxOptions().Tooltip("Enables debug camera control."));
-    AddWidget(path, "R3 Toggle Debug Camera", WIDGET_CVAR_CHECKBOX)
+    AddWidget(path, "M1 + R3 Toggle Debug Camera", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Camera.DebugCam.RStickToggle")
         .Options(CheckboxOptions().Tooltip(
-            "When enabled, pressing the right stick (R3) will toggle the debug camera on and off.\n"
+            "When enabled, pressing M1 + right stick (R3) will toggle the debug camera on and off.\n"
             "This also works when Free Look is enabled."));
     AddWidget(path, "Invert Camera X Axis", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Camera.RightStick.InvertXAxis")
@@ -1094,6 +1094,12 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Player.OpenChestsFromAnyDirection")
         .Options(CheckboxOptions().Tooltip("Allows you to open chests from any direction while facing them, instead of "
                                            "requiring you to stand in front of the chest."));
+    AddWidget(path, "Auto Open Chests", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.AutoOpenChests")
+        .Options(CheckboxOptions().Tooltip("Automatically opens chests when you are close enough to them."));
+    AddWidget(path, "Auto Open Doors", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.AutoOpenDoors")
+        .Options(CheckboxOptions().Tooltip("Automatically opens doors when you are close enough to them."));
     AddWidget(path, "Prevent Diving Over Water", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.PreventDiveOverWater")
         .Options(CheckboxOptions().Tooltip("Prevents Link from automatically diving over bodies of water."));
@@ -1184,6 +1190,11 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "When the Great Fairy's Sword is held, pressing B attacks with it instead of drawing "
             "your equipped sword. The sword can still be put away with A as normal."));
+    AddWidget(path, "Great Fairy Sword M1 + B Attack", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Equipment.GreatFairySwordBButtonM1")
+        .Options(CheckboxOptions().Tooltip(
+            "When you own the Great Fairy's Sword, hold M1 and press B to attack with it. "
+            "Pressing B without M1 uses your regular equipped sword unless the option above is also enabled."));
 
     path.column = SECTION_COLUMN_2;
     AddWidget(path, "Modes", WIDGET_SEPARATOR_TEXT);
@@ -1669,6 +1680,9 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip(
             "Fixes a bug that results in the wrong audio playing upon receiving a 4th piece of heart to "
             "fill a new heart container."));
+    AddWidget(path, "Fix Cow Shadow Flickering", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Fixes.CowShadowFlicker")
+        .Options(CheckboxOptions().Tooltip("Fixes flickering shadows on cows during their breathing animation."));
 
     // Restorations
     path = { "Enhancements", "Restorations", SECTION_COLUMN_1 };

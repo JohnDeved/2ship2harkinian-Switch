@@ -3897,7 +3897,8 @@ void Player_ProcessItemButtons(Player* this, PlayState* play) {
 
     if (((this->actor.id == ACTOR_PLAYER) && (this->itemAction >= PLAYER_IA_FISHING_ROD)) &&
         !(((Player_GetHeldBButtonSword(this) == PLAYER_B_SWORD_NONE) || (gSaveContext.jinxTimer == 0)) &&
-          (Player_ItemIsInUse(this, (IREG(1) != 0) ? ITEM_FISHING_ROD : Inventory_GetBtnBItem(play)) ||
+          (Player_ItemIsInUse(this, (IREG(1) != 0) ? ITEM_FISHING_ROD
+                                                   : Player_GetItemOnButton(play, this, EQUIP_SLOT_B)) ||
            // #region 2S2H [Dpad]
            (CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0) &&
             (Player_ItemIsInUse(this, DPAD_BTN_ITEM(EQUIP_SLOT_D_RIGHT)) ||
@@ -6942,10 +6943,12 @@ s32 Player_ActionHandler_1(Player* this, PlayState* play) {
         if ((this->actor.category != ACTORCAT_PLAYER) ||
             ((((this->doorType <= PLAYER_DOORTYPE_TALKING) && CutsceneManager_IsNext(CS_ID_GLOBAL_TALK)) ||
               ((this->doorType >= PLAYER_DOORTYPE_HANDLE) && CutsceneManager_IsNext(CS_ID_GLOBAL_DOOR))) &&
-             (!(this->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) &&
-              (CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_A) ||
-               (Player_Action_TryOpeningDoor == this->actionFunc) || (this->doorType == PLAYER_DOORTYPE_STAIRCASE) ||
-               (this->doorType == PLAYER_DOORTYPE_PROXIMITY))))) {
+              (!(this->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) &&
+               (CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_A) ||
+                (Player_Action_TryOpeningDoor == this->actionFunc) || (this->doorType == PLAYER_DOORTYPE_STAIRCASE) ||
+                (this->doorType == PLAYER_DOORTYPE_PROXIMITY) ||
+                ((this->doorType == PLAYER_DOORTYPE_HANDLE) &&
+                 CVarGetInteger("gEnhancements.Player.AutoOpenDoors", 0)))))) {
             Actor* doorActor = this->doorActor;
             Actor* var_v0_3;
 
@@ -9636,7 +9639,10 @@ s32 Player_ActionHandler_2(Player* this, PlayState* play) {
             } else if (this->csAction == PLAYER_CSACTION_NONE) {
                 if (!(this->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR)) {
                     if (this->getItemId != GI_NONE) {
-                        if (CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_A)) {
+                        // #region 2S2H [Enhancement] - Auto open chests
+                        if (CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_A) ||
+                            CVarGetInteger("gEnhancements.Player.AutoOpenChests", 0)) {
+                        // #endregion
                             GetItemEntry* giEntry = &sGetItemTable[-this->getItemId - 1];
                             EnBox* chest = (EnBox*)interactRangeActor;
 

@@ -1,6 +1,7 @@
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
+#include "2s2h/BenPort.h"
 #include "CameraUtils.h"
 #include <SDL2/SDL.h>
 #include <ship/Context.h>
@@ -256,7 +257,13 @@ void RegisterDebugCam() {
         if (!gPlayState) {
             return;
         }
-        bool r3Pressed = CheckR3Pressed();
+        s32 controllerPort = CVarGetInteger("gEnhancements.Camera.DebugCam.Port", CAMERA_DEBUG_DEFAULT_PORT) - 1;
+        if (controllerPort > 3 || controllerPort < 0) {
+            controllerPort = 0;
+        }
+        bool m1Held =
+            CHECK_BTN_ALL(gPlayState->state.input[controllerPort].cur.button, BTN_CUSTOM_MODIFIER1);
+        bool r3Pressed = CheckR3Pressed() && m1Held;
         if (r3Pressed && !sPrevR3State) {
             sDebugCamRStickActive = !sDebugCamRStickActive;
             sDebugCamRefreshParams = true;
@@ -272,14 +279,20 @@ void RegisterDebugCam() {
         }
     });
 
-    COND_HOOK(OnPassPlayerInputs, debugCamEnabled || rStickToggleEnabled, [](Input* input) {
-        if (!IsDebugCamActive()) {
-            return;
-        }
+    COND_HOOK(OnPassPlayerInputs, debugCamEnabled || rStickToggleEnabled, [rStickToggleEnabled](Input* input) {
         s32 controllerPort = CVarGetInteger("gEnhancements.Camera.DebugCam.Port", CAMERA_DEBUG_DEFAULT_PORT) - 1;
         if (controllerPort > 3 || controllerPort < 0) {
             controllerPort = CAMERA_DEBUG_DEFAULT_PORT - 1;
             CVarSetInteger("gEnhancements.Camera.DebugCam.Port", CAMERA_DEBUG_DEFAULT_PORT);
+        }
+        // When M1 is held and R3 toggle is enabled, suppress input so R3 doesn't conflict
+        if (rStickToggleEnabled && controllerPort == 0 &&
+            CHECK_BTN_ALL(input->cur.button, BTN_CUSTOM_MODIFIER1) && CheckR3Pressed()) {
+            memset(input, 0, sizeof(Input));
+            return;
+        }
+        if (!IsDebugCamActive()) {
+            return;
         }
         if (controllerPort == 0) {
             // Disable Link Inputs

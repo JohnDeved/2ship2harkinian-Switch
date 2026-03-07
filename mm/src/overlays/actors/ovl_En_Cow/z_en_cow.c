@@ -9,6 +9,7 @@
 #include "z64voice.h"
 
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_FRIENDLY)
 
@@ -197,6 +198,13 @@ void EnCow_UpdateAnimation(EnCow* this, PlayState* play) {
     } else {
         this->actor.scale.x = 0.01f;
     }
+    // #region 2S2H [Enhancement] [Fixes] - Fix cow shadow flickering
+    if (CVarGetInteger("gEnhancements.Fixes.CowShadowFlicker", 0)) {
+        this->actor.scale.z = this->actor.scale.x;
+    } else {
+        this->actor.scale.z = 0.01f;
+    }
+    // #endregion
 
     if (this->animCycle > 0x10) {
         this->actor.scale.y = ((Math_SinS((this->animCycle * 0x400) - 0x4000) * (1.0f / 100.0f)) + 1.0f) * 0.01f;

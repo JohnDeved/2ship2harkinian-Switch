@@ -2,7 +2,6 @@
 #include "UIWidgets.hpp"
 #include "BenPort.h"
 #include "BenInputEditorWindow.h"
-#include "BenDrownedDebugWindow.h"
 #include "2s2h/Enhancements/Player/BenDrowned.h"
 #include "DeveloperTools/SaveEditor.h"
 #include "DeveloperTools/CollisionViewer.h"
@@ -2283,11 +2282,6 @@ void BenMenu::AddDevTools() {
         .CVar("gWindows.BenDrownedDebug")
         .Options(ButtonOptions().Tooltip("Opens the Spooky Mode debug panel in a separate window.").Size(Sizes::Inline))
         .WindowName("Spooky Mode Debug");
-    AddWidget(path, "Spooky Mode Debug", WIDGET_CUSTOM).CustomFunction([](WidgetInfo& info) {
-        ImGui::PushID("BenDrownedDebugInline");
-        RenderBenDrownedDebugSection();
-        ImGui::PopID();
-    });
 
     path = { "Dev Tools", "Stats", SECTION_COLUMN_1 };
     AddSidebarEntry("Dev Tools", "Stats", 1);

@@ -677,8 +677,8 @@ void AddBenDrownedDebugObject(PlayState* play, const Vec3f& pos, f32 scale, u8 r
 }
 
 void UpdateBenDrownedDebugOverlay(PlayState* play, Player* player, EnTorch2* statue) {
-    Vec3f spawnPoint;
-    Vec3f targetPoint;
+    Vec3f spawnPoint = { 0.0f, 0.0f, 0.0f };
+    Vec3f targetPoint = { 0.0f, 0.0f, 0.0f };
 
     if ((play == nullptr) || !CVarGetInteger(BEN_DROWNED_DEBUG_OVERLAY_CVAR, 0)) {
         return;
@@ -787,6 +787,7 @@ DebugSnapshot GetDebugSnapshot() {
         entry.pos = point;
         if (snapshot.playerValid) {
             entry.playerDistSq = Math3D_Vec3fDistSq(&pointCopy, &player->actor.world.pos);
+            entry.playerDist = sqrtf(entry.playerDistSq);
             entry.visible = CanCameraSeePoint(play, point);
             entry.spawnEligible = !entry.visible && (entry.playerDistSq >= BEN_DROWNED_MIN_SPAWN_DIST_SQ);
             entry.distantEligible = entry.spawnEligible && (entry.playerDistSq >= BEN_DROWNED_DISTANT_SPAWN_DIST_SQ);

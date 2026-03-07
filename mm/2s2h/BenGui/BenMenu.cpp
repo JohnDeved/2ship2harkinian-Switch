@@ -227,7 +227,7 @@ static void RenderBenDrownedDebugSection() {
             ImGui::TableNextColumn();
             ImGui::Text("%.1f", entry.pos.z);
             ImGui::TableNextColumn();
-            ImGui::Text("%.1f", snapshot.playerValid ? sqrtf(entry.playerDistSq) : 0.0f);
+            ImGui::Text("%.1f", snapshot.playerValid ? entry.playerDist : 0.0f);
             ImGui::TableNextColumn();
             ImGui::TextColored(flagColor, "%s", flags);
         }

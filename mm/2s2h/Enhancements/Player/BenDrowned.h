@@ -14,6 +14,7 @@ constexpr std::size_t DEBUG_HISTORY_SIZE = 48;
 
 struct DebugHistoryEntry {
     Vec3f pos;
+    f32 playerDist;
     f32 playerDistSq;
     bool visible;
     bool spawnEligible;

@@ -1,14 +1,12 @@
 #include <array>
 #include <cmath>
 #include <libultraship/bridge/consolevariablebridge.h>
-#include "2s2h/BenGui/Notification.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
 
 extern "C" {
 #include "functions.h"
 #include "variables.h"
-#include "z64effect_ss.h"
 #include "z64quake.h"
 #include "overlays/actors/ovl_En_Torch2/z_en_torch2.h"
 #include "overlays/effects/ovl_Effect_Ss_Dust/z_eff_ss_dust.h"
@@ -25,37 +23,16 @@ constexpr f32 BEN_DROWNED_MAX_NEARBY_DIST_SQ = 450.0f * 450.0f;
 constexpr f32 BEN_DROWNED_MOVE_DIST_SQ = 30.0f * 30.0f;
 constexpr f32 BEN_DROWNED_CLOSE_EFFECT_DIST_SQ = 220.0f * 220.0f;
 constexpr f32 BEN_DROWNED_JUMPSCARE_DIST_SQ = 120.0f * 120.0f;
-constexpr f32 BEN_DROWNED_PLAYER_STILLNESS_THRESHOLD = 0.1f;
 constexpr f32 BEN_DROWNED_VISIBILITY_HEIGHT = 40.0f;
 constexpr f32 BEN_DROWNED_FLOOR_RAYCAST_HEIGHT = 60.0f;
 constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.15f;
 constexpr f32 BEN_DROWNED_FALLBACK_STALK_DISTANCE = 160.0f;
 constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
-constexpr s32 BEN_DROWNED_HAUNT_IDLE_TRIGGER_FRAMES = 120;
-constexpr s32 BEN_DROWNED_HAUNT_FIRST_PERSON_TRIGGER_FRAMES = 70;
-constexpr s32 BEN_DROWNED_HAUNT_COOLDOWN_MIN_FRAMES = 180;
-constexpr s32 BEN_DROWNED_HAUNT_COOLDOWN_RANGE_FRAMES = 120;
-constexpr s32 BEN_DROWNED_HAUNT_MESSAGE_COOLDOWN_FRAMES = 600;
-constexpr s32 BEN_DROWNED_HAUNT_FIRST_PERSON_COOLDOWN_FRAMES = 450;
-constexpr f32 BEN_DROWNED_HAUNT_OFFSET_DIST = 70.0f;
-constexpr f32 BEN_DROWNED_HAUNT_HEIGHT_OFFSET = 25.0f;
-constexpr f32 BEN_DROWNED_HAUNT_DRIP_HEIGHT_OFFSET = 45.0f;
-constexpr f32 BEN_DROWNED_HAUNT_RIPPLE_HEIGHT_OFFSET = 2.0f;
-constexpr f32 BEN_DROWNED_HAUNT_SMOKE_SCALE = 150.0f;
-constexpr s16 BEN_DROWNED_HAUNT_RIPPLE_RADIUS = 120;
-constexpr s16 BEN_DROWNED_HAUNT_RIPPLE_RADIUS_MAX = 360;
-constexpr s16 BEN_DROWNED_HAUNT_RIPPLE_LIFE = 0;
-constexpr s8 BEN_DROWNED_HAUNT_REVERB = 0x20;
-constexpr f32 BEN_DROWNED_HAUNT_NOTIFICATION_DURATION = 4.0f;
-constexpr s16 BEN_DROWNED_FIRST_PERSON_QUAKE_SPEED = 21536;
-constexpr s16 BEN_DROWNED_FIRST_PERSON_QUAKE_X = 3;
-constexpr s16 BEN_DROWNED_FIRST_PERSON_QUAKE_Y = 0;
-constexpr s16 BEN_DROWNED_FIRST_PERSON_QUAKE_Z = 0;
-constexpr s16 BEN_DROWNED_FIRST_PERSON_QUAKE_W = 0;
-constexpr s16 BEN_DROWNED_FIRST_PERSON_QUAKE_DURATION = 6;
-constexpr u8 BEN_DROWNED_FIRST_PERSON_RUMBLE_STRENGTH = 120;
-constexpr u8 BEN_DROWNED_FIRST_PERSON_RUMBLE_DECAY = 20;
-constexpr u8 BEN_DROWNED_FIRST_PERSON_RUMBLE_DURATION = 20;
+constexpr s32 BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES = 900;
+constexpr size_t BEN_DROWNED_DIALOGUE_SEARCH_WINDOW = 48;
+constexpr s32 BEN_DROWNED_DIALOGUE_TRIGGER_BASE = 8;
+constexpr s32 BEN_DROWNED_DIALOGUE_TRIGGER_RANGE = 8;
+constexpr f32 BEN_DROWNED_DIALOGUE_CHANCE = 0.12f;
 constexpr u16 BEN_DROWNED_DUST_DRAW_FLAGS = DUST_DRAWFLAG_RAND_COLOR_OFFSET;
 constexpr s16 BEN_DROWNED_DUST_SCALE = 120;
 constexpr s16 BEN_DROWNED_DUST_SCALE_STEP = -8;
@@ -77,18 +54,18 @@ constexpr std::array<s16, 5> BEN_DROWNED_FALLBACK_YAW_OFFSETS = { BEN_DROWNED_FA
                                                                    BEN_DROWNED_FALLBACK_YAW_SIDE_FAR,
                                                                    (s16)-BEN_DROWNED_FALLBACK_YAW_SIDE_FAR,
                                                                    BEN_DROWNED_FALLBACK_YAW_BEHIND };
-constexpr std::array<s16, 3> BEN_DROWNED_HAUNT_YAW_OFFSETS = { 0x7000, -0x7000, (s16)0x8000 };
-constexpr std::array<const char*, 5> BEN_DROWNED_CREEPY_MESSAGES = { "Did you hear that?", "Don't look away.",
-                                                                     "It followed you here.", "The water remembers.",
-                                                                     "You are not alone." };
+struct BenDrownedDialoguePhrase {
+    const char* text;
+    size_t length;
+};
 
-enum BenDrownedHauntEffect {
-    BEN_DROWNED_HAUNT_EFFECT_DRIP,
-    BEN_DROWNED_HAUNT_EFFECT_RIPPLE,
-    BEN_DROWNED_HAUNT_EFFECT_COLD_BREATH,
-    BEN_DROWNED_HAUNT_EFFECT_GHOST_AUDIO,
-    BEN_DROWNED_HAUNT_EFFECT_NOTIFICATION,
-    BEN_DROWNED_HAUNT_EFFECT_COUNT,
+constexpr std::array<BenDrownedDialoguePhrase, 6> BEN_DROWNED_DIALOGUE_PHRASES = {
+    BenDrownedDialoguePhrase{ "help me", sizeof("help me") - 1 },
+    BenDrownedDialoguePhrase{ "look behind", sizeof("look behind") - 1 },
+    BenDrownedDialoguePhrase{ "don't turn", sizeof("don't turn") - 1 },
+    BenDrownedDialoguePhrase{ "you saw me", sizeof("you saw me") - 1 },
+    BenDrownedDialoguePhrase{ "it sees you", sizeof("it sees you") - 1 },
+    BenDrownedDialoguePhrase{ "watching you", sizeof("watching you") - 1 },
 };
 
 struct BenDrownedHistoryEntry {
@@ -104,11 +81,10 @@ size_t sBenDrownedHistoryCount = 0;
 size_t sBenDrownedHistoryWriteIndex = 0;
 s32 sBenDrownedRecordTimer = 0;
 s32 sBenDrownedEffectCooldown = 0;
-s32 sBenDrownedHauntCooldown = 0;
-s32 sBenDrownedHauntMessageCooldown = 0;
-s32 sBenDrownedFirstPersonCooldown = 0;
-s32 sBenDrownedIdleFrames = 0;
-s32 sBenDrownedFirstPersonFrames = 0;
+s32 sBenDrownedDialogueCooldown = 0;
+s16 sBenDrownedDialogueTriggerPos = -1;
+u16 sBenDrownedDialogueTextId = 0;
+bool sBenDrownedDialogueInjected = false;
 PlayState* sLastPlayState = nullptr;
 EnTorch2* sOwnedBenDrownedStatue = nullptr;
 bool sSpawnedBenDrownedStatue = false;
@@ -118,11 +94,10 @@ void ResetBenDrownedHistory() {
     sBenDrownedHistoryWriteIndex = 0;
     sBenDrownedRecordTimer = 0;
     sBenDrownedEffectCooldown = 0;
-    sBenDrownedHauntCooldown = 0;
-    sBenDrownedHauntMessageCooldown = 0;
-    sBenDrownedFirstPersonCooldown = 0;
-    sBenDrownedIdleFrames = 0;
-    sBenDrownedFirstPersonFrames = 0;
+    sBenDrownedDialogueCooldown = 0;
+    sBenDrownedDialogueTriggerPos = -1;
+    sBenDrownedDialogueTextId = 0;
+    sBenDrownedDialogueInjected = false;
 }
 
 void ClearBenDrownedStatueTracking() {
@@ -155,10 +130,6 @@ bool IsNormalGameplayState(PlayState* play) {
 
 bool IsPlayerGroundedAndDry(Player* player) {
     return (player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && !(player->actor.bgCheckFlags & BGCHECKFLAG_WATER);
-}
-
-bool IsPlayerStandingStill(Player* player) {
-    return fabsf(player->actor.speed) < BEN_DROWNED_PLAYER_STILLNESS_THRESHOLD;
 }
 
 void RecordBenDrownedHistoryPoint(Player* player) {
@@ -290,150 +261,107 @@ void SetBenDrownedStatueRotation(EnTorch2* statue, Player* player) {
     statue->actor.home.rot.y = targetYaw;
 }
 
-Vec3f GetBenDrownedHauntPoint(Player* player, s16 yawOffset, f32 dist, f32 yOffset) {
-    Vec3f point = player->actor.world.pos;
-    s16 yaw = player->actor.shape.rot.y + yawOffset;
-
-    point.x += Math_SinS(yaw) * dist;
-    point.z += Math_CosS(yaw) * dist;
-    point.y += yOffset;
-    return point;
-}
-
 template <size_t N> size_t GetBenDrownedRandomIndex() {
     return static_cast<size_t>(fminf(Rand_ZeroOne() * N, static_cast<f32>(N - 1)));
 }
 
-void DecrementCooldown(s32& cooldown) {
-    if (cooldown > 0) {
-        cooldown--;
-    }
+void ResetBenDrownedDialogueState() {
+    sBenDrownedDialogueTriggerPos = -1;
+    sBenDrownedDialogueTextId = 0;
+    sBenDrownedDialogueInjected = false;
 }
 
-s16 GetBenDrownedRandomYawOffset() {
-    return BEN_DROWNED_HAUNT_YAW_OFFSETS[GetBenDrownedRandomIndex<BEN_DROWNED_HAUNT_YAW_OFFSETS.size()>()];
+bool IsBenDrownedDialogueMsgMode(MessageContext* msgCtx) {
+    return (msgCtx->msgMode == MSGMODE_TEXT_STARTING) || (msgCtx->msgMode == MSGMODE_TEXT_NEXT_MSG) ||
+           (msgCtx->msgMode == MSGMODE_TEXT_CONTINUING) || (msgCtx->msgMode == MSGMODE_TEXT_DISPLAYING) ||
+           (msgCtx->msgMode == MSGMODE_TEXT_AWAIT_INPUT);
 }
 
-void TriggerBenDrownedPhantomDrip(Player* player) {
-    Vec3f soundPos = GetBenDrownedHauntPoint(player, GetBenDrownedRandomYawOffset(), BEN_DROWNED_HAUNT_OFFSET_DIST,
-                                            BEN_DROWNED_HAUNT_DRIP_HEIGHT_OFFSET);
-
-    Audio_PlaySfx_AtPosWithReverb(&soundPos, NA_SE_EV_WATERDROP_GRD, BEN_DROWNED_HAUNT_REVERB);
+bool IsBenDrownedCorruptibleChar(char ch) {
+    return (ch >= ' ') && (ch <= '~');
 }
 
-void TriggerBenDrownedDryRipple(PlayState* play, Player* player) {
-    Vec3f ripplePos = player->actor.world.pos;
+bool TryInjectBenDrownedDialoguePhrase(PlayState* play, MessageContext* msgCtx, const BenDrownedDialoguePhrase& phrase) {
+    size_t searchStart = msgCtx->textDrawPos + 1;
+    size_t searchEnd;
+    size_t startPos;
+    size_t i;
 
-    ripplePos.y = player->actor.floorHeight + BEN_DROWNED_HAUNT_RIPPLE_HEIGHT_OFFSET;
-    EffectSsGRipple_Spawn(play, &ripplePos, BEN_DROWNED_HAUNT_RIPPLE_RADIUS, BEN_DROWNED_HAUNT_RIPPLE_RADIUS_MAX,
-                          BEN_DROWNED_HAUNT_RIPPLE_LIFE);
-    Audio_PlaySfx_AtPosWithReverb(&ripplePos, NA_SE_EV_WATERDROP_GRD, BEN_DROWNED_HAUNT_REVERB);
-}
-
-void TriggerBenDrownedColdBreath(PlayState* play, Player* player) {
-    Vec3f smokePos = GetBenDrownedHauntPoint(player, 0, 0.0f, BEN_DROWNED_HAUNT_HEIGHT_OFFSET);
-    Vec3f smokeVelocity;
-
-    smokeVelocity.x = Rand_CenteredFloat(0.15f);
-    smokeVelocity.y = 0.2f;
-    smokeVelocity.z = Rand_CenteredFloat(0.15f);
-
-    EffectSsIceSmoke_Spawn(play, &smokePos, &smokeVelocity, &gZeroVec3f, BEN_DROWNED_HAUNT_SMOKE_SCALE);
-    Audio_PlaySfx_AtPosWithReverb(&smokePos, NA_SE_EV_UNDER_WATER, BEN_DROWNED_HAUNT_REVERB);
-}
-
-void TriggerBenDrownedGhostAudio(Player* player) {
-    Vec3f soundPos = GetBenDrownedHauntPoint(player, GetBenDrownedRandomYawOffset(), BEN_DROWNED_HAUNT_OFFSET_DIST,
-                                            BEN_DROWNED_HAUNT_HEIGHT_OFFSET);
-    u16 sound = (Rand_ZeroOne() < 0.5f) ? NA_SE_EN_PO_LAUGH : NA_SE_EN_STALKIDS_FLOAT;
-
-    Audio_PlaySfx_AtPosWithReverb(&soundPos, sound, BEN_DROWNED_HAUNT_REVERB);
-}
-
-void TriggerBenDrownedCreepyNotification() {
-    if (sBenDrownedHauntMessageCooldown > 0) {
-        return;
+    if ((searchStart >= msgCtx->decodedTextLen) || ((msgCtx->decodedTextLen - searchStart) < phrase.length)) {
+        return false;
     }
 
-    Notification::Emit({
-        .message = BEN_DROWNED_CREEPY_MESSAGES[GetBenDrownedRandomIndex<BEN_DROWNED_CREEPY_MESSAGES.size()>()],
-        .remainingTime = BEN_DROWNED_HAUNT_NOTIFICATION_DURATION,
-        .mute = true,
-    });
-
-    sBenDrownedHauntMessageCooldown = BEN_DROWNED_HAUNT_MESSAGE_COOLDOWN_FRAMES;
-}
-
-void TriggerBenDrownedFirstPersonScare(PlayState* play, Player* player) {
-    s16 quakeIndex;
-
-    if (sBenDrownedFirstPersonCooldown > 0) {
-        return;
+    searchEnd = searchStart + BEN_DROWNED_DIALOGUE_SEARCH_WINDOW;
+    if (searchEnd > msgCtx->decodedTextLen) {
+        searchEnd = msgCtx->decodedTextLen;
     }
 
-    Audio_PlaySfx_2(NA_SE_SY_STALKIDS_PSYCHO);
-    Audio_PlaySfx_AtPosWithReverb(&player->actor.world.pos, NA_SE_EN_PO_DISAPPEAR, BEN_DROWNED_HAUNT_REVERB);
+    for (startPos = searchStart; (startPos + phrase.length) <= searchEnd; startPos++) {
+        bool fits = true;
 
-    quakeIndex = Quake_Request(GET_ACTIVE_CAM(play), QUAKE_TYPE_3);
-    if (quakeIndex >= 0) {
-        Quake_SetSpeed(quakeIndex, BEN_DROWNED_FIRST_PERSON_QUAKE_SPEED);
-        Quake_SetPerturbations(quakeIndex, BEN_DROWNED_FIRST_PERSON_QUAKE_X, BEN_DROWNED_FIRST_PERSON_QUAKE_Y,
-                               BEN_DROWNED_FIRST_PERSON_QUAKE_Z, BEN_DROWNED_FIRST_PERSON_QUAKE_W);
-        Quake_SetDuration(quakeIndex, BEN_DROWNED_FIRST_PERSON_QUAKE_DURATION);
-    }
-
-    Rumble_Request(0.0f, BEN_DROWNED_FIRST_PERSON_RUMBLE_STRENGTH, BEN_DROWNED_FIRST_PERSON_RUMBLE_DECAY,
-                   BEN_DROWNED_FIRST_PERSON_RUMBLE_DURATION);
-    TriggerBenDrownedCreepyNotification();
-    sBenDrownedFirstPersonCooldown = BEN_DROWNED_HAUNT_FIRST_PERSON_COOLDOWN_FRAMES;
-}
-
-void TriggerRandomBenDrownedHaunt(PlayState* play, Player* player) {
-    switch (GetBenDrownedRandomIndex<BEN_DROWNED_HAUNT_EFFECT_COUNT>()) {
-        case BEN_DROWNED_HAUNT_EFFECT_DRIP:
-            TriggerBenDrownedPhantomDrip(player);
-            break;
-        case BEN_DROWNED_HAUNT_EFFECT_RIPPLE:
-            TriggerBenDrownedDryRipple(play, player);
-            break;
-        case BEN_DROWNED_HAUNT_EFFECT_COLD_BREATH:
-            TriggerBenDrownedColdBreath(play, player);
-            break;
-        case BEN_DROWNED_HAUNT_EFFECT_GHOST_AUDIO:
-            TriggerBenDrownedGhostAudio(player);
-            break;
-        default:
-            TriggerBenDrownedCreepyNotification();
-            break;
-    }
-
-    sBenDrownedHauntCooldown = BEN_DROWNED_HAUNT_COOLDOWN_MIN_FRAMES +
-                               (s32)(Rand_ZeroOne() * BEN_DROWNED_HAUNT_COOLDOWN_RANGE_FRAMES);
-}
-
-void UpdateBenDrownedHaunting(PlayState* play, Player* player) {
-    DecrementCooldown(sBenDrownedEffectCooldown);
-    DecrementCooldown(sBenDrownedHauntCooldown);
-    DecrementCooldown(sBenDrownedHauntMessageCooldown);
-    DecrementCooldown(sBenDrownedFirstPersonCooldown);
-
-    if (IsPlayerGroundedAndDry(player) && IsPlayerStandingStill(player)) {
-        sBenDrownedIdleFrames++;
-    } else {
-        sBenDrownedIdleFrames = 0;
-    }
-
-    if (player->unk_AA5 == PLAYER_UNKAA5_3) {
-        sBenDrownedFirstPersonFrames++;
-        if (sBenDrownedFirstPersonFrames == BEN_DROWNED_HAUNT_FIRST_PERSON_TRIGGER_FRAMES) {
-            TriggerBenDrownedFirstPersonScare(play, player);
+        for (i = 0; i < phrase.length; i++) {
+            if (!IsBenDrownedCorruptibleChar(msgCtx->decodedBuffer.schar[startPos + i])) {
+                fits = false;
+                break;
+            }
         }
-    } else {
-        sBenDrownedFirstPersonFrames = 0;
+
+        if (!fits) {
+            continue;
+        }
+
+        for (i = 0; i < phrase.length; i++) {
+            if (msgCtx->decodedBuffer.schar[startPos + i] != phrase.text[i]) {
+                msgCtx->decodedBuffer.schar[startPos + i] = phrase.text[i];
+                // Font character slots are packed in 0x80-byte increments.
+                Font_LoadCharNES(play, phrase.text[i], (startPos + i) << 7);
+            }
+        }
+        return true;
     }
 
-    if ((sBenDrownedIdleFrames >= BEN_DROWNED_HAUNT_IDLE_TRIGGER_FRAMES) && (sBenDrownedHauntCooldown <= 0)) {
-        TriggerRandomBenDrownedHaunt(play, player);
+    return false;
+}
+
+void UpdateBenDrownedDialogueHaunting(PlayState* play) {
+    MessageContext* msgCtx = &play->msgCtx;
+
+    if (sBenDrownedDialogueCooldown > 0) {
+        sBenDrownedDialogueCooldown--;
+    }
+
+    if ((gSaveContext.options.language == LANGUAGE_JPN) || (msgCtx->talkActor == nullptr) ||
+        (msgCtx->currentTextId == 0) || // no active textbox
+        !IsBenDrownedDialogueMsgMode(msgCtx)) {
+        ResetBenDrownedDialogueState();
+        return;
+    }
+
+    if (msgCtx->currentTextId != sBenDrownedDialogueTextId) {
+        sBenDrownedDialogueTextId = msgCtx->currentTextId;
+        sBenDrownedDialogueInjected = false;
+        sBenDrownedDialogueTriggerPos = -1;
+
+        if ((sBenDrownedDialogueCooldown <= 0) && (Rand_ZeroOne() < BEN_DROWNED_DIALOGUE_CHANCE)) {
+            sBenDrownedDialogueTriggerPos =
+                BEN_DROWNED_DIALOGUE_TRIGGER_BASE + (s32)(Rand_ZeroOne() * BEN_DROWNED_DIALOGUE_TRIGGER_RANGE);
+        }
+    }
+
+    if (!sBenDrownedDialogueInjected && (sBenDrownedDialogueTriggerPos >= 0) &&
+        ((msgCtx->msgMode == MSGMODE_TEXT_DISPLAYING) || (msgCtx->msgMode == MSGMODE_TEXT_AWAIT_INPUT)) &&
+        (msgCtx->textDrawPos >= sBenDrownedDialogueTriggerPos)) {
+        size_t startIndex = GetBenDrownedRandomIndex<BEN_DROWNED_DIALOGUE_PHRASES.size()>();
+
+        sBenDrownedDialogueInjected = true;
+        for (size_t offset = 0; offset < BEN_DROWNED_DIALOGUE_PHRASES.size(); offset++) {
+            if (TryInjectBenDrownedDialoguePhrase(
+                    play, msgCtx,
+                    BEN_DROWNED_DIALOGUE_PHRASES[(startIndex + offset) % BEN_DROWNED_DIALOGUE_PHRASES.size()])) {
+                sBenDrownedDialogueCooldown = BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES;
+                break;
+            }
+        }
     }
 }
 
@@ -554,6 +482,7 @@ void RegisterBenDrowned() {
         }
 
         HandlePlayStateChange(play);
+        UpdateBenDrownedDialogueHaunting(play);
 
         if (!IsNormalGameplayState(play)) {
             return;
@@ -562,7 +491,9 @@ void RegisterBenDrowned() {
         if (IsPlayerGroundedAndDry(player)) {
             RecordBenDrownedHistoryPoint(player);
         }
-        UpdateBenDrownedHaunting(play, player);
+        if (sBenDrownedEffectCooldown > 0) {
+            sBenDrownedEffectCooldown--;
+        }
 
         statue = GetBenDrownedStatue(play);
         if ((statue != nullptr) && CanCameraSeePoint(play, statue->actor.world.pos)) {

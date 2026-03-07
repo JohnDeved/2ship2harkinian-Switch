@@ -21,6 +21,21 @@ struct DebugHistoryEntry {
     bool distantEligible;
 };
 
+struct TuningParams {
+    s32 moveCooldownFrames;
+    s32 respawnCooldownFrames;
+    s32 dialogueCooldownFrames;
+    s32 laughBaseFrames;
+    s32 laughRandomFrames;
+    f32 disappearChance;
+    f32 dialogueChance;
+    f32 minSpawnDist;
+    f32 distantSpawnDist;
+    f32 maxNearbyDist;
+    f32 fallbackStalkDist;
+    f32 proximityRumbleDist;
+};
+
 struct DebugSnapshot {
     bool enabled;
     bool hasPlayState;
@@ -53,5 +68,6 @@ struct DebugSnapshot {
 };
 
 DebugSnapshot GetDebugSnapshot();
+TuningParams& GetTuning();
 
 } // namespace BenDrowned

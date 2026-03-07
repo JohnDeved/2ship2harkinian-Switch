@@ -2,6 +2,7 @@
 #include "UIWidgets.hpp"
 #include "BenPort.h"
 #include "BenInputEditorWindow.h"
+#include "BenDrownedDebugWindow.h"
 #include "2s2h/Enhancements/Player/BenDrowned.h"
 #include "DeveloperTools/SaveEditor.h"
 #include "DeveloperTools/CollisionViewer.h"
@@ -144,8 +145,9 @@ static std::pair<const char*, ImVec4> GetBenDrownedHistoryFlagInfo(const BenDrow
     return { "Too Close", ImVec4(1.0f, 0.75f, 0.35f, 1.0f) };
 }
 
-static void RenderBenDrownedDebugSection() {
+void RenderBenDrownedDebugSection() {
     BenDrowned::DebugSnapshot snapshot = BenDrowned::GetDebugSnapshot();
+    BenDrowned::TuningParams& tuning = BenDrowned::GetTuning();
 
     UIWidgets::CVarCheckbox("World Overlay", "gDeveloperTools.BenDrowned.DebugOverlay");
     ImGui::SeparatorText("Runtime State");
@@ -192,7 +194,7 @@ static void RenderBenDrownedDebugSection() {
                            snapshot.targetPoint.x, snapshot.targetPoint.y, snapshot.targetPoint.z);
     }
 
-    ImGui::SeparatorText("Cooldowns");
+    ImGui::SeparatorText("Active Cooldowns");
     ImGui::BulletText("History count: %d / %zu", snapshot.historyCount, BenDrowned::DEBUG_HISTORY_SIZE);
     ImGui::BulletText("Record timer: %d", snapshot.recordTimer);
     ImGui::BulletText("Move cooldown: %d", snapshot.moveCooldown);
@@ -201,6 +203,24 @@ static void RenderBenDrownedDebugSection() {
     ImGui::BulletText("Color distortion cooldown: %d", snapshot.colorDistortCooldown);
     ImGui::BulletText("Arrival effect cooldown: %d", snapshot.effectCooldown);
     ImGui::BulletText("Dialogue cooldown: %d", snapshot.dialogueCooldown);
+
+    if (ImGui::CollapsingHeader("Cooldown Tuning")) {
+        ImGui::SliderInt("Move cooldown (frames)", &tuning.moveCooldownFrames, 60, 7200);
+        ImGui::SliderInt("Respawn cooldown (frames)", &tuning.respawnCooldownFrames, 60, 7200);
+        ImGui::SliderInt("Dialogue cooldown (frames)", &tuning.dialogueCooldownFrames, 30, 3600);
+        ImGui::SliderInt("Laugh base (frames)", &tuning.laughBaseFrames, 30, 3600);
+        ImGui::SliderInt("Laugh random (frames)", &tuning.laughRandomFrames, 0, 3600);
+        ImGui::SliderFloat("Disappear chance", &tuning.disappearChance, 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Dialogue chance", &tuning.dialogueChance, 0.0f, 1.0f, "%.2f");
+    }
+
+    if (ImGui::CollapsingHeader("Distance Tuning")) {
+        ImGui::SliderFloat("Min spawn dist", &tuning.minSpawnDist, 10.0f, 500.0f, "%.0f");
+        ImGui::SliderFloat("Distant spawn dist", &tuning.distantSpawnDist, 20.0f, 1000.0f, "%.0f");
+        ImGui::SliderFloat("Max nearby dist", &tuning.maxNearbyDist, 50.0f, 1000.0f, "%.0f");
+        ImGui::SliderFloat("Fallback stalk dist", &tuning.fallbackStalkDist, 20.0f, 500.0f, "%.0f");
+        ImGui::SliderFloat("Proximity rumble dist", &tuning.proximityRumbleDist, 10.0f, 500.0f, "%.0f");
+    }
 
     ImGui::SeparatorText("Recorded Locations");
     if (snapshot.historyCount <= 0) {
@@ -2223,6 +2243,10 @@ void BenMenu::AddDevTools() {
 
     path = { "Dev Tools", "Ben Drowned", SECTION_COLUMN_1 };
     AddSidebarEntry("Dev Tools", "Ben Drowned", 1);
+    AddWidget(path, "Popout Ben Drowned Debug", WIDGET_WINDOW_BUTTON)
+        .CVar("gWindows.BenDrownedDebug")
+        .Options(ButtonOptions().Tooltip("Opens the Ben Drowned debug panel in a separate window.").Size(Sizes::Inline))
+        .WindowName("Ben Drowned Debug");
     AddWidget(path, "Ben Drowned Debug", WIDGET_CUSTOM)
         .CustomFunction([](WidgetInfo& info) { RenderBenDrownedDebugSection(); });
 

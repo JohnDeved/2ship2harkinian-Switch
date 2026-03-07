@@ -27,12 +27,13 @@ extern "C" {
 #define RECORD_INTERVAL_FRAMES 20
 #define MIN_HISTORY_POINT_DIST_SQ (20.0f * 20.0f)
 
-// --- Spawn / movement distances ---
-#define MIN_SPAWN_DIST_SQ (50.0f * 50.0f)
-#define DISTANT_SPAWN_DIST_SQ (140.0f * 140.0f)
-#define MAX_NEARBY_DIST_SQ (225.0f * 225.0f)
+// --- Spawn / movement distances (defaults) ---
+#define DEFAULT_MIN_SPAWN_DIST 50.0f
+#define DEFAULT_DISTANT_SPAWN_DIST 140.0f
+#define DEFAULT_MAX_NEARBY_DIST 225.0f
 #define MOVE_DIST_SQ (15.0f * 15.0f)
-#define FALLBACK_STALK_DISTANCE 80.0f
+#define DEFAULT_FALLBACK_STALK_DISTANCE 80.0f
+#define DEFAULT_PROXIMITY_RUMBLE_DIST 100.0f
 
 // --- Visibility ---
 #define VISIBILITY_HEIGHT 40.0f
@@ -42,17 +43,17 @@ extern "C" {
 #define WATCH_MARGIN 1.35f
 
 // --- Cooldown durations ---
-#define MOVE_COOLDOWN_FRAMES 3600
-#define RESPAWN_COOLDOWN_FRAMES 1800
+#define DEFAULT_MOVE_COOLDOWN_FRAMES 3600
 #define EFFECT_COOLDOWN_FRAMES 30
-#define DIALOGUE_COOLDOWN_FRAMES 900
+#define DEFAULT_RESPAWN_COOLDOWN_FRAMES 1800
+#define DEFAULT_DIALOGUE_COOLDOWN_FRAMES 600
 
 // --- Disappearance ---
-#define DISAPPEAR_CHANCE_AFTER_OBSERVED 0.7f
+#define DEFAULT_DISAPPEAR_CHANCE 0.3f
 
 // --- Laugh SFX ---
-#define LAUGH_BASE_FRAMES 600
-#define LAUGH_RANDOM_FRAMES 600
+#define DEFAULT_LAUGH_BASE_FRAMES 300
+#define DEFAULT_LAUGH_RANDOM_FRAMES 300
 #define LAUGH_MIN_PITCH 0.9f
 #define LAUGH_MAX_PITCH 1.1f
 
@@ -63,8 +64,6 @@ extern "C" {
 #define COLOR_DISTORT_INTENSITY 160
 
 // --- Proximity rumble ---
-#define PROXIMITY_RUMBLE_DIST 100.0f
-#define PROXIMITY_RUMBLE_DIST_SQ (PROXIMITY_RUMBLE_DIST * PROXIMITY_RUMBLE_DIST)
 #define PROXIMITY_RUMBLE_MIN_STRENGTH 70
 #define PROXIMITY_RUMBLE_MAX_STRENGTH 255
 #define PROXIMITY_RUMBLE_MIN_DECAY 2
@@ -89,12 +88,12 @@ extern "C" {
 #define RUMBLE_DURATION 70
 
 // --- Dialogue corruption ---
-#define DIALOGUE_SEARCH_WINDOW 48
-#define DIALOGUE_LATE_START_NUMERATOR 2
-#define DIALOGUE_LATE_START_DENOMINATOR 3
+#define DIALOGUE_SEARCH_WINDOW 96
+#define DIALOGUE_LATE_START_NUMERATOR 1
+#define DIALOGUE_LATE_START_DENOMINATOR 4
 #define DIALOGUE_TRIGGER_BASE 8
 #define DIALOGUE_TRIGGER_RANGE 8
-#define DIALOGUE_CHANCE 0.12f
+#define DIALOGUE_CHANCE 0.25f
 
 // --- Debug overlay ---
 #define DEBUG_OVERLAY_CVAR "gDeveloperTools.BenDrowned.DebugOverlay"
@@ -151,6 +150,22 @@ static struct {
     bool spawnedStatue;
 } sState;
 
+// Runtime-adjustable tuning parameters (exposed via debug menu).
+static BenDrowned::TuningParams sTuning = {
+    DEFAULT_MOVE_COOLDOWN_FRAMES,
+    DEFAULT_RESPAWN_COOLDOWN_FRAMES,
+    DEFAULT_DIALOGUE_COOLDOWN_FRAMES,
+    DEFAULT_LAUGH_BASE_FRAMES,
+    DEFAULT_LAUGH_RANDOM_FRAMES,
+    DEFAULT_DISAPPEAR_CHANCE,
+    DIALOGUE_CHANCE,
+    DEFAULT_MIN_SPAWN_DIST,
+    DEFAULT_DISTANT_SPAWN_DIST,
+    DEFAULT_MAX_NEARBY_DIST,
+    DEFAULT_FALLBACK_STALK_DISTANCE,
+    DEFAULT_PROXIMITY_RUMBLE_DIST,
+};
+
 // Constant effect parameters passed by address to C functions.
 static Vec3f sZeroVelocity = { 0.0f, 0.0f, 0.0f };
 static Vec3f sDustAccel = { 0.0f, 0.08f, 0.0f };
@@ -158,7 +173,7 @@ static Color_RGBA8 sDustPrimColor = { 170, 130, 90, 160 };
 static Color_RGBA8 sDustEnvColor = { 100, 60, 20, 110 };
 
 static void ResetLaughCooldown() {
-    sState.laughCooldown = LAUGH_BASE_FRAMES + (s32)(Rand_ZeroOne() * LAUGH_RANDOM_FRAMES);
+    sState.laughCooldown = sTuning.laughBaseFrames + (s32)(Rand_ZeroOne() * sTuning.laughRandomFrames);
 }
 
 static void ResetColorDistortCooldown() {
@@ -308,7 +323,7 @@ static bool FindHiddenHistoryPoint(PlayState* play, Player* player, f32 maxDistS
         Vec3f candidatePoint = sState.history[idx];
         f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
 
-        if (playerDistSq < MIN_SPAWN_DIST_SQ) {
+        if (playerDistSq < SQ(sTuning.minSpawnDist)) {
             continue;
         }
 
@@ -338,12 +353,12 @@ static bool FindDistantSpawnPoint(PlayState* play, Player* player, Vec3f* hidden
         Vec3f candidatePoint = sState.history[idx];
         f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
 
-        if (playerDistSq < MIN_SPAWN_DIST_SQ) {
+        if (playerDistSq < SQ(sTuning.minSpawnDist)) {
             continue;
         }
 
         if (!CanCameraSeePoint(play, candidatePoint)) {
-            if (playerDistSq >= DISTANT_SPAWN_DIST_SQ) {
+            if (playerDistSq >= SQ(sTuning.distantSpawnDist)) {
                 if (!foundDistantPoint || (playerDistSq > bestDistantDistSq)) {
                     bestDistantPoint = candidatePoint;
                     bestDistantDistSq = playerDistSq;
@@ -518,9 +533,9 @@ static bool TryCorruptMessage(std::string* msg) {
 }
 
 static bool ShouldCorruptOpenText(PlayState* play, u16 textId) {
-    return (play != nullptr) && (gSaveContext.options.language != LANGUAGE_JPN) &&
-           (play->msgCtx.talkActor != nullptr) && (textId != 0) && (textId != CUSTOM_MESSAGE_ID) &&
-           (sState.dialogueCooldown <= 0) && (Rand_ZeroOne() < DIALOGUE_CHANCE);
+    return (play != nullptr) && (play->msgCtx.talkActor != nullptr) && (textId != 0) &&
+           (textId != CUSTOM_MESSAGE_ID) && (sState.dialogueCooldown <= 0) &&
+           (Rand_ZeroOne() < sTuning.dialogueChance);
 }
 
 static bool FindFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
@@ -534,8 +549,8 @@ static bool FindFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoin
         Vec3f candidatePoint = player->actor.world.pos;
         s16 stalkYaw = Math_Vec3f_Yaw(&camera->eye, &camera->at) + yawOffset;
 
-        candidatePoint.x += Math_SinS(stalkYaw) * FALLBACK_STALK_DISTANCE;
-        candidatePoint.z += Math_CosS(stalkYaw) * FALLBACK_STALK_DISTANCE;
+        candidatePoint.x += Math_SinS(stalkYaw) * sTuning.fallbackStalkDist;
+        candidatePoint.z += Math_CosS(stalkYaw) * sTuning.fallbackStalkDist;
 
         if (!SnapPointToFloor(play, &candidatePoint)) {
             continue;
@@ -551,7 +566,7 @@ static bool FindFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoin
 }
 
 static bool FindTargetPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
-    return FindHiddenHistoryPoint(play, player, MAX_NEARBY_DIST_SQ, hiddenPoint) ||
+    return FindHiddenHistoryPoint(play, player, SQ(sTuning.maxNearbyDist), hiddenPoint) ||
            FindFallbackPoint(play, player, hiddenPoint) || FindHiddenHistoryPoint(play, player, 0.0f, hiddenPoint);
 }
 
@@ -624,12 +639,12 @@ static void UpdateStatueProximityRumble(Player* player, EnTorch2* statue) {
 
     f32 distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
                                  statue->actor.world.pos.z);
-    if (distSq > PROXIMITY_RUMBLE_DIST_SQ) {
+    if (distSq > SQ(sTuning.proximityRumbleDist)) {
         return;
     }
 
     f32 dist = sqrtf(distSq);
-    f32 proximity = std::clamp(1.0f - (dist / PROXIMITY_RUMBLE_DIST), 0.0f, 1.0f);
+    f32 proximity = std::clamp(1.0f - (dist / sTuning.proximityRumbleDist), 0.0f, 1.0f);
     u8 strength = LerpU8(PROXIMITY_RUMBLE_MIN_STRENGTH, PROXIMITY_RUMBLE_MAX_STRENGTH, proximity);
     u8 decayTimer = LerpU8(PROXIMITY_RUMBLE_MIN_DECAY, PROXIMITY_RUMBLE_MAX_DECAY, proximity);
 
@@ -659,8 +674,8 @@ static void PopulateDebugHistoryEntry(PlayState* play, Player* player, const Vec
     entry->playerDistSq = Math3D_Vec3fDistSq(&pointCopy, &player->actor.world.pos);
     entry->playerDist = sqrtf(entry->playerDistSq);
     entry->visible = CanCameraSeePoint(play, point);
-    entry->spawnEligible = !entry->visible && (entry->playerDistSq >= MIN_SPAWN_DIST_SQ);
-    entry->distantEligible = entry->spawnEligible && (entry->playerDistSq >= DISTANT_SPAWN_DIST_SQ);
+    entry->spawnEligible = !entry->visible && (entry->playerDistSq >= SQ(sTuning.minSpawnDist));
+    entry->distantEligible = entry->spawnEligible && (entry->playerDistSq >= SQ(sTuning.distantSpawnDist));
 }
 
 static void AddDebugObject(PlayState* play, const Vec3f& pos, f32 scale, u8 red, u8 green, u8 blue, u8 alpha,
@@ -789,6 +804,10 @@ DebugSnapshot GetDebugSnapshot() {
     return snapshot;
 }
 
+TuningParams& GetTuning() {
+    return sTuning;
+}
+
 } // namespace BenDrowned
 
 void RegisterBenDrowned() {
@@ -839,7 +858,7 @@ void RegisterBenDrowned() {
             if (statueVisible) {
                 UpdateStatueColorDistortion(statue);
                 if (!sState.statueWasVisible) {
-                    sState.disappearAfterObserved = Rand_ZeroOne() < DISAPPEAR_CHANCE_AFTER_OBSERVED;
+                    sState.disappearAfterObserved = Rand_ZeroOne() < sTuning.disappearChance;
                 }
                 sState.statueObserved = true;
                 sState.statueWasVisible = true;
@@ -848,11 +867,20 @@ void RegisterBenDrowned() {
 
             if (sState.statueWasVisible) {
                 sState.statueWasVisible = false;
-                if (sState.statueObserved && sState.disappearAfterObserved) {
-                    DismissStatue(play, statue);
-                    statue = nullptr;
-                    dismissedThisFrame = true;
-                    sState.respawnCooldown = RESPAWN_COOLDOWN_FRAMES;
+                if (sState.statueObserved) {
+                    if (sState.disappearAfterObserved) {
+                        DismissStatue(play, statue);
+                        statue = nullptr;
+                        dismissedThisFrame = true;
+                        sState.respawnCooldown = sTuning.respawnCooldownFrames;
+                    } else {
+                        Vec3f repositionPoint;
+                        if (FindTargetPoint(play, player, &repositionPoint)) {
+                            MoveStatue(play, player, statue, repositionPoint);
+                            sState.statueObserved = false;
+                            sState.moveCooldown = sTuning.moveCooldownFrames;
+                        }
+                    }
                 }
             }
         }
@@ -867,7 +895,7 @@ void RegisterBenDrowned() {
             spawnedThisFrame = statue != nullptr;
             if (spawnedThisFrame) {
                 ResetColorDistortCooldown();
-                sState.moveCooldown = MOVE_COOLDOWN_FRAMES;
+                sState.moveCooldown = sTuning.moveCooldownFrames;
             }
         }
 
@@ -876,7 +904,7 @@ void RegisterBenDrowned() {
                 (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > MOVE_DIST_SQ)) {
                 MoveStatue(play, player, statue, hiddenPoint);
                 TriggerArrivalEffects(play, player, statue);
-                sState.moveCooldown = MOVE_COOLDOWN_FRAMES;
+                sState.moveCooldown = sTuning.moveCooldownFrames;
             }
         }
 
@@ -903,7 +931,7 @@ void RegisterBenDrowned() {
         entry.autoFormat = false;
         CustomMessage::LoadCustomMessageIntoFont(entry);
         *loadFromMessageTable = false;
-        sState.dialogueCooldown = DIALOGUE_COOLDOWN_FRAMES;
+        sState.dialogueCooldown = sTuning.dialogueCooldownFrames;
     });
 
     COND_HOOK(OnPlayDrawWorldEnd, CVAR, []() { DrawDebugOverlay(); });

@@ -411,11 +411,10 @@ void Rando::MiscBehavior::InitFileSelect() {
 
     GameInteractor::Instance->RegisterGameHook<GameInteractor::OnFileSelectSaveLoad>(
         [](s16 fileNum, bool isOwlSave, SaveContext* saveContext) {
-            isRando[fileNum + (isOwlSave ? FILE_NUM_OWL_SAVE_OFFSET : 0)] =
-                saveContext->save.shipSaveInfo.saveType == SAVETYPE_RANDO;
-            if (isRando[fileNum + (isOwlSave ? FILE_NUM_OWL_SAVE_OFFSET : 0)]) {
-                seedHashes[fileNum + (isOwlSave ? FILE_NUM_OWL_SAVE_OFFSET : 0)] =
-                    gSaveContext.save.shipSaveInfo.rando.finalSeed;
-            }
+            s16 fileIndex = fileNum + (isOwlSave ? FILE_NUM_OWL_SAVE_OFFSET : 0);
+
+            isRando[fileIndex] = saveContext->save.shipSaveInfo.saveType == SAVETYPE_RANDO &&
+                                 saveContext->save.shipSaveInfo.rando.finalSeed != 0;
+            seedHashes[fileIndex] = isRando[fileIndex] ? saveContext->save.shipSaveInfo.rando.finalSeed : 0;
         });
 }

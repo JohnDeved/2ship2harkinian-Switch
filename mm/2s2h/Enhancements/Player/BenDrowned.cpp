@@ -107,12 +107,16 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 #define DUST_SCALE_STEP (-8)
 #define DUST_LIFE 6
 
-// --- Visibility jumpscare ---
+// --- Visibility jumpscare (ReDead-inspired) ---
 #define DEFAULT_JUMPSCARE_TARGET_DIST 60.0f
 #define DEFAULT_JUMPSCARE_TARGET_FOV 40.0f
 #define JUMPSCARE_DIST_STEP_SCALE 0.35f
 #define JUMPSCARE_DIST_MIN_DIFF 0.5f
 #define JUMPSCARE_FOV_MIN_DIFF 0.1f
+#define JUMPSCARE_FREEZE_FRAMES 40
+#define JUMPSCARE_RUMBLE_STRENGTH 255
+#define JUMPSCARE_RUMBLE_DECAY 20
+#define JUMPSCARE_RUMBLE_STEP 150
 
 // --- Dialogue corruption ---
 #define DIALOGUE_SEARCH_WINDOW 96
@@ -1063,10 +1067,8 @@ static void TriggerArrivalEffects(PlayState* play, Player* player, EnTorch2* sta
 }
 
 static void PlayGlobalJumpscareSfx() {
-    Audio_PlaySfx(NA_SE_SY_CAMERA_ZOOM_UP_2);
-    Audio_PlaySfx(NA_SE_OC_OCARINA);
-    Audio_PlaySfx(NA_SE_EV_OCARINA_BOUND_0);
-    Audio_PlaySfx(NA_SE_EV_OCARINA_BOUND_1);
+    Audio_PlaySfx(NA_SE_EN_REDEAD_CRY);
+    Audio_PlaySfx(NA_SE_EN_REDEAD_AIM);
 }
 
 static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2* statue) {
@@ -1095,7 +1097,12 @@ static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2
     sState.jumpscareCooldown = sTuning.jumpscareCooldownFrames;
 
     PlayGlobalJumpscareSfx();
-    Rumble_Override(0.0f, PROXIMITY_RUMBLE_MAX_STRENGTH, PROXIMITY_RUMBLE_MAX_DECAY, PROXIMITY_RUMBLE_STEP);
+
+    // ReDead-style freeze: briefly lock the player in place
+    player->actor.freezeTimer = JUMPSCARE_FREEZE_FRAMES;
+
+    // ReDead-style intense rumble burst
+    Rumble_Override(0.0f, JUMPSCARE_RUMBLE_STRENGTH, JUMPSCARE_RUMBLE_DECAY, JUMPSCARE_RUMBLE_STEP);
 }
 
 static void UpdateVisibilityJumpscareCamera(PlayState* play) {

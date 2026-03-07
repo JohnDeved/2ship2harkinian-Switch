@@ -661,7 +661,7 @@ static void UpdateStatueColorDistortion(EnTorch2* statue) {
     }
 
     const ColorDistortion& distortion = sColorDistortions[RandomIndex(std::size(sColorDistortions))];
-    Actor_SetColorFilter(&statue->actor, distortion.colorFlag, distortion.intensity, COLORFILTER_BUFFLAG_XLU,
+    Actor_SetColorFilter(&statue->actor, distortion.colorFlag, distortion.intensity, COLORFILTER_BUFFLAG_OPA,
                          COLOR_DISTORT_DURATION);
     ResetColorDistortCooldown();
 }

@@ -683,8 +683,8 @@ static void AddDebugHistoryObject(PlayState* play, const BenDrowned::DebugHistor
 
 static void DrawDebugOverlay() {
     PlayState* play = gPlayState;
-    Player* player;
-    EnTorch2* statue;
+    Player* player = nullptr;
+    EnTorch2* statue = nullptr;
     Vec3f spawnPoint = { 0.0f, 0.0f, 0.0f };
     Vec3f targetPoint = { 0.0f, 0.0f, 0.0f };
 
@@ -693,13 +693,12 @@ static void DrawDebugOverlay() {
     }
 
     player = GET_PLAYER(play);
-    statue = play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN];
-
     if ((player == nullptr) || (player->actor.update == NULL)) {
         player = nullptr;
     }
 
-    if ((statue == nullptr) || (statue->actor.update == NULL)) {
+    statue = play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN];
+    if ((statue != nullptr) && (statue->actor.update == NULL)) {
         statue = nullptr;
     }
 

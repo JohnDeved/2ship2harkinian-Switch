@@ -38,6 +38,9 @@ extern "C" {
 #define DEFAULT_FALLBACK_STALK_DISTANCE 80.0f
 #define DEFAULT_PROXIMITY_RUMBLE_DIST 100.0f
 
+// --- Tuning validation ---
+#define TUNING_MIN_DISTANCE 1.0f
+
 // --- Persisted tuning CVars ---
 #define TUNING_CVAR_BASE "gDeveloperTools.BenDrowned.Tuning"
 #define TUNING_CVAR_MOVE_COOLDOWN TUNING_CVAR_BASE ".MoveCooldown"
@@ -61,7 +64,6 @@ extern "C" {
 #define TUNING_CVAR_CLOSE_EFFECT_DIST TUNING_CVAR_BASE ".CloseEffectDist"
 #define TUNING_CVAR_FALLBACK_STALK_DIST TUNING_CVAR_BASE ".FallbackStalkDist"
 #define TUNING_CVAR_PROXIMITY_RUMBLE_DIST TUNING_CVAR_BASE ".ProximityRumbleDist"
-#define TUNING_MIN_DISTANCE 1.0f
 
 // --- Visibility ---
 #define VISIBILITY_HEIGHT 40.0f
@@ -86,8 +88,6 @@ extern "C" {
 #define DEFAULT_LAUGH_RANDOM_FRAMES 300
 #define DEFAULT_LAUGH_MIN_PITCH 0.9f
 #define DEFAULT_LAUGH_MAX_PITCH 1.1f
-#define TUNING_MIN_PITCH 0.1f
-#define TUNING_MAX_PITCH 3.0f
 
 // --- Color distortion ---
 #define DEFAULT_COLOR_DISTORT_BASE_FRAMES 240
@@ -114,9 +114,6 @@ extern "C" {
 #define JUMPSCARE_TARGET_FOV 40.0f
 #define JUMPSCARE_DIST_STEP_SCALE 0.35f
 #define JUMPSCARE_FOV_MIN_DIFF 0.1f
-#define JUMPSCARE_NOTE_LOW_PITCH 0.75f
-#define JUMPSCARE_NOTE_MID_PITCH 1.0f
-#define JUMPSCARE_NOTE_HIGH_PITCH 1.25f
 
 // --- Dialogue corruption ---
 #define DIALOGUE_SEARCH_WINDOW 96
@@ -268,8 +265,8 @@ static void NormalizeTuning() {
     sTuning.closeEffectDist = std::max(sTuning.closeEffectDist, TUNING_MIN_DISTANCE);
     sTuning.fallbackStalkDist = std::max(sTuning.fallbackStalkDist, TUNING_MIN_DISTANCE);
     sTuning.proximityRumbleDist = std::max(sTuning.proximityRumbleDist, TUNING_MIN_DISTANCE);
-    sTuning.laughMinPitch = std::clamp(sTuning.laughMinPitch, TUNING_MIN_PITCH, TUNING_MAX_PITCH);
-    sTuning.laughMaxPitch = std::clamp(sTuning.laughMaxPitch, TUNING_MIN_PITCH, TUNING_MAX_PITCH);
+    sTuning.laughMinPitch = std::clamp(sTuning.laughMinPitch, BenDrowned::MIN_TUNING_PITCH, BenDrowned::MAX_TUNING_PITCH);
+    sTuning.laughMaxPitch = std::clamp(sTuning.laughMaxPitch, BenDrowned::MIN_TUNING_PITCH, BenDrowned::MAX_TUNING_PITCH);
 
     if (sTuning.laughMinPitch > sTuning.laughMaxPitch) {
         std::swap(sTuning.laughMinPitch, sTuning.laughMaxPitch);
@@ -897,9 +894,9 @@ static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2
     sState.jumpscareCooldown = JUMPSCARE_COOLDOWN_FRAMES;
 
     Audio_PlaySfx(NA_SE_SY_CAMERA_ZOOM_UP_2);
-    Audio_PlaySfx_AtPosWithFreq(&statue->actor.projectedPos, NA_SE_OC_OCARINA, JUMPSCARE_NOTE_LOW_PITCH);
-    Audio_PlaySfx_AtPosWithFreq(&statue->actor.projectedPos, NA_SE_EV_OCARINA_BOUND_0, JUMPSCARE_NOTE_MID_PITCH);
-    Audio_PlaySfx_AtPosWithFreq(&statue->actor.projectedPos, NA_SE_EV_OCARINA_BOUND_1, JUMPSCARE_NOTE_HIGH_PITCH);
+    Audio_PlaySfx(NA_SE_OC_OCARINA);
+    Audio_PlaySfx(NA_SE_EV_OCARINA_BOUND_0);
+    Audio_PlaySfx(NA_SE_EV_OCARINA_BOUND_1);
 }
 
 static void UpdateVisibilityJumpscareCamera(PlayState* play) {

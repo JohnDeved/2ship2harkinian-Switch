@@ -217,8 +217,10 @@ void RenderBenDrownedDebugSection() {
     }
 
     if (ImGui::CollapsingHeader("Audio / FX Tuning")) {
-        tuningChanged |= ImGui::SliderFloat("Laugh min pitch", &tuning.laughMinPitch, 0.1f, 3.0f, "%.2f");
-        tuningChanged |= ImGui::SliderFloat("Laugh max pitch", &tuning.laughMaxPitch, 0.1f, 3.0f, "%.2f");
+        tuningChanged |= ImGui::SliderFloat("Laugh min pitch", &tuning.laughMinPitch, BenDrowned::MIN_TUNING_PITCH,
+                                            BenDrowned::MAX_TUNING_PITCH, "%.2f");
+        tuningChanged |= ImGui::SliderFloat("Laugh max pitch", &tuning.laughMaxPitch, BenDrowned::MIN_TUNING_PITCH,
+                                            BenDrowned::MAX_TUNING_PITCH, "%.2f");
         tuningChanged |= ImGui::SliderInt("Color base (frames)", &tuning.colorDistortBaseFrames, 0, 3600);
         tuningChanged |= ImGui::SliderInt("Color random (frames)", &tuning.colorDistortRandomFrames, 0, 3600);
         tuningChanged |= ImGui::SliderInt("Color duration (frames)", &tuning.colorDistortDuration, 1, 120);

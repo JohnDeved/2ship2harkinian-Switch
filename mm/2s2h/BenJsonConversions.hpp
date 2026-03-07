@@ -133,6 +133,8 @@ void to_json(json& j, const ShipSaveInfo& shipSaveInfo) {
 }
 
 void from_json(const json& j, ShipSaveInfo& shipSaveInfo) {
+    memset(&shipSaveInfo.rando, 0, sizeof(shipSaveInfo.rando));
+
     j.at("dpadEquips").get_to(shipSaveInfo.dpadEquips);
     j.at("pauseSaveEntrance").get_to(shipSaveInfo.pauseSaveEntrance);
     j.at("saveType").get_to(shipSaveInfo.saveType);
@@ -142,13 +144,21 @@ void from_json(const json& j, ShipSaveInfo& shipSaveInfo) {
     j.at("respawn").get_to(shipSaveInfo.respawn);
     j.at("commitHash").get_to(shipSaveInfo.commitHash);
 
+    if ((shipSaveInfo.saveType != SAVETYPE_VANILLA) && (shipSaveInfo.saveType != SAVETYPE_RANDO)) {
+        shipSaveInfo.saveType = SAVETYPE_VANILLA;
+    }
+
     if (shipSaveInfo.saveType == SAVETYPE_RANDO) {
         if (strcmp(shipSaveInfo.commitHash, gGitCommitHash) != 0) {
             SPDLOG_WARN("Loading randomizer save across builds (save commit: {}, current commit: {}).",
                         shipSaveInfo.commitHash, gGitCommitHash);
         }
 
-        j.at("rando").get_to(shipSaveInfo.rando);
+        if (j.contains("rando")) {
+            j.at("rando").get_to(shipSaveInfo.rando);
+        } else {
+            shipSaveInfo.saveType = SAVETYPE_VANILLA;
+        }
     }
 }
 

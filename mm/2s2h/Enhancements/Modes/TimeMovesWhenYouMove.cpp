@@ -19,6 +19,15 @@ void RegisterTimeMovesWhenYouMove() {
         sStoredTimeOffset = DEFAULT_TIME_OFFSET;
     }
 
+    COND_HOOK(OnSaveLoad, true, [](s16 fileNum) {
+        sStoredTimeOffset = DEFAULT_TIME_OFFSET;
+
+        // Normalize legacy saves that persisted the temporary "time frozen while standing still" offset.
+        if (gSaveContext.save.timeSpeedOffset == -3) {
+            gSaveContext.save.timeSpeedOffset = 0;
+        }
+    });
+
     // This is WIP code, sort of turns this enhancement into a "Super Hot" mode where
     // actors update functions are also halted when not moving. The problem is this breaks
     // many situations, like opening a chest or talking to actors. So it needs more time in the oven

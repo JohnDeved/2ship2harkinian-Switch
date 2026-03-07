@@ -111,6 +111,8 @@ extern "C" {
 #define DIALOGUE_TRIGGER_BASE 8
 #define DIALOGUE_TRIGGER_RANGE 8
 #define DIALOGUE_CHANCE 0.5f
+#define TEXTBOX_LINE_BREAK 0x11
+#define MESSAGE_TERMINATOR 0xBF
 
 // --- Debug overlay ---
 #define DEBUG_OVERLAY_CVAR "gDeveloperTools.BenDrowned.DebugOverlay"
@@ -138,8 +140,13 @@ struct ColorDistortion {
     u16 intensity;
 };
 
-static const std::string_view sDialoguePhrases[] = {
-    "help me", "look behind", "don't turn", "you saw me", "it sees you", "watching you",
+static const std::string_view sDialogueMessages[] = {
+    "help me",
+    "don't look behind you",
+    "you were not supposed to see me",
+    "it followed you here",
+    "this is not your save file",
+    "it is still watching you",
 };
 
 static const ColorDistortion sColorDistortions[] = {
@@ -618,67 +625,34 @@ static bool IsGlyphChar(char ch) {
     return IsCorruptibleChar(ch) && (ch != ' ');
 }
 
-static bool TryReplaceDialoguePhrase(std::string* msg, std::string_view phrase, size_t searchStart, size_t searchEnd) {
-    if ((searchStart >= msg->size()) || ((msg->size() - searchStart) < phrase.size())) {
-        return false;
-    }
+static bool CanReplaceWholeDialogueMessage(const std::string& msg) {
+    bool hasGlyph = false;
 
-    if (searchEnd > msg->size()) {
-        searchEnd = msg->size();
-    }
-
-    for (size_t startPos = searchStart; (startPos + phrase.size()) <= searchEnd; startPos++) {
-        bool fits = true;
-
-        for (size_t i = 0; i < phrase.size(); i++) {
-            char originalChar = (*msg)[startPos + i];
-
-            if (!IsCorruptibleChar(originalChar)) {
-                fits = false;
-                break;
-            }
-
-            if (IsGlyphChar(phrase[i]) != IsGlyphChar(originalChar)) {
-                fits = false;
-                break;
-            }
+    for (unsigned char ch : msg) {
+        if ((ch == MESSAGE_TERMINATOR) || (ch == TEXTBOX_LINE_BREAK)) {
+            continue;
         }
 
-        if (fits) {
-            msg->replace(startPos, phrase.size(), phrase.data(), phrase.size());
-            return true;
+        if (!IsCorruptibleChar(ch)) {
+            return false;
+        }
+
+        if (!hasGlyph && IsGlyphChar(ch)) {
+            hasGlyph = true;
         }
     }
 
-    return false;
+    return hasGlyph;
 }
 
-static bool TryCorruptMessage(std::string* msg) {
-    size_t phraseCount = std::size(sDialoguePhrases);
-    size_t startIndex = RandomIndex(phraseCount);
-
-    if (msg->empty()) {
+static bool TryCorruptMessage(CustomMessage::Entry* entry) {
+    if ((entry == nullptr) || !CanReplaceWholeDialogueMessage(entry->msg)) {
         return false;
     }
 
-    size_t lateStart = (msg->size() / DIALOGUE_LATE_START_DENOMINATOR) * DIALOGUE_LATE_START_NUMERATOR;
-    s32 triggerStart = DIALOGUE_TRIGGER_BASE + (s32)(Rand_ZeroOne() * DIALOGUE_TRIGGER_RANGE);
-    size_t searchStart = std::max(lateStart, static_cast<size_t>(triggerStart));
-    size_t searchEnd = std::min(msg->size(), searchStart + (size_t)DIALOGUE_SEARCH_WINDOW);
-
-    for (size_t offset = 0; offset < phraseCount; offset++) {
-        std::string_view phrase = sDialoguePhrases[(startIndex + offset) % phraseCount];
-
-        if (TryReplaceDialoguePhrase(msg, phrase, searchStart, searchEnd)) {
-            return true;
-        }
-
-        if (((searchStart > 0) || (searchEnd < msg->size())) && TryReplaceDialoguePhrase(msg, phrase, 0, msg->size())) {
-            return true;
-        }
-    }
-
-    return false;
+    entry->msg = sDialogueMessages[RandomIndex(std::size(sDialogueMessages))];
+    entry->autoFormat = true;
+    return true;
 }
 
 static bool ShouldCorruptOpenText(PlayState* play, u16 textId) {
@@ -1164,11 +1138,9 @@ void RegisterBenDrowned() {
         if (entry.msg.empty()) {
             return;
         }
-        if (!TryCorruptMessage(&entry.msg)) {
+        if (!TryCorruptMessage(&entry)) {
             return;
         }
-
-        entry.autoFormat = false;
         CustomMessage::LoadCustomMessageIntoFont(entry);
         *loadFromMessageTable = false;
         sState.dialogueCooldown = sTuning.dialogueCooldownFrames;

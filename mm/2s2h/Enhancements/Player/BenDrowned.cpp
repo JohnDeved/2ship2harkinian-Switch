@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <string_view>
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "2s2h/Enhancements/Player/BenDrowned.h"
 #include "2s2h/CustomMessage/CustomMessage.h"
@@ -20,232 +21,248 @@ extern "C" {
 #define CVAR_NAME "gEnhancements.Player.BenDrowned"
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
 
-namespace {
-constexpr size_t BEN_DROWNED_HISTORY_SIZE = 48;
-constexpr size_t BEN_DROWNED_HISTORY_DISTINCT_CHECK_WINDOW = 12;
-constexpr s32 BEN_DROWNED_RECORD_INTERVAL_FRAMES = 20;
-constexpr f32 BEN_DROWNED_MIN_HISTORY_POINT_DIST_SQ = 20.0f * 20.0f;
-constexpr f32 BEN_DROWNED_MIN_SPAWN_DIST_SQ = 50.0f * 50.0f;
-constexpr f32 BEN_DROWNED_DISTANT_SPAWN_DIST_SQ = 140.0f * 140.0f;
-constexpr f32 BEN_DROWNED_MAX_NEARBY_DIST_SQ = 225.0f * 225.0f;
-constexpr f32 BEN_DROWNED_MOVE_DIST_SQ = 15.0f * 15.0f;
-constexpr f32 BEN_DROWNED_CLOSE_EFFECT_DIST_SQ = 110.0f * 110.0f;
-constexpr f32 BEN_DROWNED_JUMPSCARE_DIST_SQ = 60.0f * 60.0f;
-constexpr f32 BEN_DROWNED_VISIBILITY_HEIGHT = 40.0f;
-constexpr f32 BEN_DROWNED_VISIBILITY_TOP_HEIGHT = 80.0f;
-constexpr f32 BEN_DROWNED_VISIBILITY_SIDE_OFFSET = 20.0f;
-constexpr f32 BEN_DROWNED_FLOOR_RAYCAST_HEIGHT = 60.0f;
-constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.35f;
-constexpr f32 BEN_DROWNED_FALLBACK_STALK_DISTANCE = 80.0f;
-constexpr f32 BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED = 0.7f;
-constexpr s32 BEN_DROWNED_LAUGH_BASE_FRAMES = 3000;
-constexpr s32 BEN_DROWNED_LAUGH_RANDOM_FRAMES = 1200;
-constexpr f32 BEN_DROWNED_LAUGH_MIN_PITCH = 0.9f;
-constexpr f32 BEN_DROWNED_LAUGH_MAX_PITCH = 1.1f;
-constexpr s32 BEN_DROWNED_MOVE_COOLDOWN_FRAMES = 3600;
-constexpr s32 BEN_DROWNED_RESPAWN_COOLDOWN_FRAMES = 1800;
-constexpr s32 BEN_DROWNED_COLOR_DISTORT_BASE_FRAMES = 240;
-constexpr s32 BEN_DROWNED_COLOR_DISTORT_RANDOM_FRAMES = 360;
-constexpr u16 BEN_DROWNED_COLOR_DISTORT_DURATION = 12;
-constexpr u16 BEN_DROWNED_COLOR_DISTORT_INTENSITY = 160;
-constexpr f32 BEN_DROWNED_PROXIMITY_RUMBLE_DIST = 100.0f;
-constexpr f32 BEN_DROWNED_PROXIMITY_RUMBLE_DIST_SQ = BEN_DROWNED_PROXIMITY_RUMBLE_DIST * BEN_DROWNED_PROXIMITY_RUMBLE_DIST;
-constexpr u8 BEN_DROWNED_PROXIMITY_RUMBLE_MIN_STRENGTH = 70;
-constexpr u8 BEN_DROWNED_PROXIMITY_RUMBLE_MAX_STRENGTH = 255;
-constexpr u8 BEN_DROWNED_PROXIMITY_RUMBLE_MIN_DECAY = 2;
-constexpr u8 BEN_DROWNED_PROXIMITY_RUMBLE_MAX_DECAY = 18;
-constexpr u8 BEN_DROWNED_PROXIMITY_RUMBLE_STEP = 8;
-constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
-constexpr s32 BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES = 900;
-constexpr size_t BEN_DROWNED_DIALOGUE_SEARCH_WINDOW = 48;
-constexpr size_t BEN_DROWNED_DIALOGUE_LATE_START_NUMERATOR = 2;
-constexpr size_t BEN_DROWNED_DIALOGUE_LATE_START_DENOMINATOR = 3;
-constexpr s32 BEN_DROWNED_DIALOGUE_TRIGGER_BASE = 8;
-constexpr s32 BEN_DROWNED_DIALOGUE_TRIGGER_RANGE = 8;
-constexpr f32 BEN_DROWNED_DIALOGUE_CHANCE = 0.12f;
-constexpr const char* BEN_DROWNED_DEBUG_OVERLAY_CVAR = "gDeveloperTools.BenDrowned.DebugOverlay";
-constexpr f32 BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE = 0.12f;
-constexpr f32 BEN_DROWNED_DEBUG_TARGET_MARKER_SCALE = 0.18f;
-constexpr f32 BEN_DROWNED_DEBUG_STATUE_MARKER_SCALE = 0.22f;
-constexpr f32 BEN_DROWNED_DEBUG_MARKER_HEIGHT = 12.0f;
-constexpr s16 BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE = 2;
-constexpr s16 BEN_DROWNED_DEBUG_TARGET_MARKER_TYPE = 1;
-constexpr s16 BEN_DROWNED_DEBUG_STATUE_MARKER_TYPE = 3;
-constexpr u16 BEN_DROWNED_DUST_DRAW_FLAGS = DUST_DRAWFLAG_RAND_COLOR_OFFSET;
-constexpr s16 BEN_DROWNED_DUST_SCALE = 120;
-constexpr s16 BEN_DROWNED_DUST_SCALE_STEP = -8;
-constexpr s16 BEN_DROWNED_DUST_LIFE = 6;
-constexpr s16 BEN_DROWNED_QUAKE_SPEED = 17232;
-constexpr s16 BEN_DROWNED_QUAKE_PERTURB_X = 2;
-constexpr s16 BEN_DROWNED_QUAKE_PERTURB_Y = 0;
-constexpr s16 BEN_DROWNED_QUAKE_PERTURB_Z = 0;
-constexpr s16 BEN_DROWNED_QUAKE_PERTURB_W = 0;
-constexpr s16 BEN_DROWNED_QUAKE_DURATION = 4;
-constexpr u8 BEN_DROWNED_RUMBLE_STRENGTH = 180;
-constexpr u8 BEN_DROWNED_RUMBLE_DECAY = 10;
-constexpr u8 BEN_DROWNED_RUMBLE_DURATION = 70;
-constexpr s16 BEN_DROWNED_FALLBACK_YAW_SIDE_NEAR = 0x5000;
-constexpr s16 BEN_DROWNED_FALLBACK_YAW_SIDE_FAR = 0x7000;
-constexpr s16 BEN_DROWNED_FALLBACK_YAW_BEHIND = (s16)0x8000;
-constexpr std::array<s16, 5> BEN_DROWNED_FALLBACK_YAW_OFFSETS = { BEN_DROWNED_FALLBACK_YAW_SIDE_NEAR,
-                                                                   (s16)-BEN_DROWNED_FALLBACK_YAW_SIDE_NEAR,
-                                                                   BEN_DROWNED_FALLBACK_YAW_SIDE_FAR,
-                                                                   (s16)-BEN_DROWNED_FALLBACK_YAW_SIDE_FAR,
-                                                                   BEN_DROWNED_FALLBACK_YAW_BEHIND };
-struct BenDrownedDialoguePhrase {
-    const char* text;
-    size_t length;
+// --- History recording ---
+#define HISTORY_SIZE 48
+#define HISTORY_DISTINCT_CHECK_WINDOW 12
+#define RECORD_INTERVAL_FRAMES 20
+#define MIN_HISTORY_POINT_DIST_SQ (20.0f * 20.0f)
+
+// --- Spawn / movement distances ---
+#define MIN_SPAWN_DIST_SQ (50.0f * 50.0f)
+#define DISTANT_SPAWN_DIST_SQ (140.0f * 140.0f)
+#define MAX_NEARBY_DIST_SQ (225.0f * 225.0f)
+#define MOVE_DIST_SQ (15.0f * 15.0f)
+#define FALLBACK_STALK_DISTANCE 80.0f
+
+// --- Visibility ---
+#define VISIBILITY_HEIGHT 40.0f
+#define VISIBILITY_TOP_HEIGHT 80.0f
+#define VISIBILITY_SIDE_OFFSET 20.0f
+#define FLOOR_RAYCAST_HEIGHT 60.0f
+#define WATCH_MARGIN 1.35f
+
+// --- Cooldown durations ---
+#define MOVE_COOLDOWN_FRAMES 3600
+#define RESPAWN_COOLDOWN_FRAMES 1800
+#define EFFECT_COOLDOWN_FRAMES 30
+#define DIALOGUE_COOLDOWN_FRAMES 900
+
+// --- Disappearance ---
+#define DISAPPEAR_CHANCE_AFTER_OBSERVED 0.7f
+
+// --- Laugh SFX ---
+#define LAUGH_BASE_FRAMES 3000
+#define LAUGH_RANDOM_FRAMES 1200
+#define LAUGH_MIN_PITCH 0.9f
+#define LAUGH_MAX_PITCH 1.1f
+
+// --- Color distortion ---
+#define COLOR_DISTORT_BASE_FRAMES 240
+#define COLOR_DISTORT_RANDOM_FRAMES 360
+#define COLOR_DISTORT_DURATION 12
+#define COLOR_DISTORT_INTENSITY 160
+
+// --- Proximity rumble ---
+#define PROXIMITY_RUMBLE_DIST 100.0f
+#define PROXIMITY_RUMBLE_DIST_SQ (PROXIMITY_RUMBLE_DIST * PROXIMITY_RUMBLE_DIST)
+#define PROXIMITY_RUMBLE_MIN_STRENGTH 70
+#define PROXIMITY_RUMBLE_MAX_STRENGTH 255
+#define PROXIMITY_RUMBLE_MIN_DECAY 2
+#define PROXIMITY_RUMBLE_MAX_DECAY 18
+#define PROXIMITY_RUMBLE_STEP 8
+
+// --- Arrival effects ---
+#define CLOSE_EFFECT_DIST_SQ (110.0f * 110.0f)
+#define JUMPSCARE_DIST_SQ (60.0f * 60.0f)
+#define DUST_DRAW_FLAGS DUST_DRAWFLAG_RAND_COLOR_OFFSET
+#define DUST_SCALE 120
+#define DUST_SCALE_STEP (-8)
+#define DUST_LIFE 6
+#define QUAKE_SPEED 17232
+#define QUAKE_PERTURB_X 2
+#define QUAKE_PERTURB_Y 0
+#define QUAKE_PERTURB_Z 0
+#define QUAKE_PERTURB_W 0
+#define QUAKE_DURATION 4
+#define RUMBLE_STRENGTH 180
+#define RUMBLE_DECAY 10
+#define RUMBLE_DURATION 70
+
+// --- Dialogue corruption ---
+#define DIALOGUE_SEARCH_WINDOW 48
+#define DIALOGUE_LATE_START_NUMERATOR 2
+#define DIALOGUE_LATE_START_DENOMINATOR 3
+#define DIALOGUE_TRIGGER_BASE 8
+#define DIALOGUE_TRIGGER_RANGE 8
+#define DIALOGUE_CHANCE 0.12f
+
+// --- Debug overlay ---
+#define DEBUG_OVERLAY_CVAR "gDeveloperTools.BenDrowned.DebugOverlay"
+#define DEBUG_HISTORY_MARKER_SCALE 0.12f
+#define DEBUG_TARGET_MARKER_SCALE 0.18f
+#define DEBUG_STATUE_MARKER_SCALE 0.22f
+#define DEBUG_MARKER_HEIGHT 12.0f
+#define DEBUG_HISTORY_MARKER_TYPE 2
+#define DEBUG_TARGET_MARKER_TYPE 1
+#define DEBUG_STATUE_MARKER_TYPE 3
+
+// --- Fallback yaw offsets for off-camera stalking positions ---
+#define FALLBACK_YAW_SIDE_NEAR 0x5000
+#define FALLBACK_YAW_SIDE_FAR 0x7000
+#define FALLBACK_YAW_BEHIND ((s16)0x8000)
+
+static const s16 sFallbackYawOffsets[] = {
+    FALLBACK_YAW_SIDE_NEAR,      (s16)-FALLBACK_YAW_SIDE_NEAR, FALLBACK_YAW_SIDE_FAR,
+    (s16)-FALLBACK_YAW_SIDE_FAR, FALLBACK_YAW_BEHIND,
 };
 
-struct BenDrownedColorDistortion {
+struct ColorDistortion {
     u16 colorFlag;
     u16 intensity;
 };
 
-constexpr std::array<BenDrownedDialoguePhrase, 6> BEN_DROWNED_DIALOGUE_PHRASES = {
-    BenDrownedDialoguePhrase{ "help me", sizeof("help me") - 1 },
-    BenDrownedDialoguePhrase{ "look behind", sizeof("look behind") - 1 },
-    BenDrownedDialoguePhrase{ "don't turn", sizeof("don't turn") - 1 },
-    BenDrownedDialoguePhrase{ "you saw me", sizeof("you saw me") - 1 },
-    BenDrownedDialoguePhrase{ "it sees you", sizeof("it sees you") - 1 },
-    BenDrownedDialoguePhrase{ "watching you", sizeof("watching you") - 1 },
+static const std::string_view sDialoguePhrases[] = {
+    "help me", "look behind", "don't turn", "you saw me", "it sees you", "watching you",
 };
 
-constexpr std::array<BenDrownedColorDistortion, 3> BEN_DROWNED_COLOR_DISTORTIONS = {
-    BenDrownedColorDistortion{ COLORFILTER_COLORFLAG_BLUE, BEN_DROWNED_COLOR_DISTORT_INTENSITY },
-    BenDrownedColorDistortion{ COLORFILTER_COLORFLAG_RED, BEN_DROWNED_COLOR_DISTORT_INTENSITY },
-    BenDrownedColorDistortion{ COLORFILTER_COLORFLAG_GRAY,
-                               (u16)(COLORFILTER_INTENSITY_FLAG | BEN_DROWNED_COLOR_DISTORT_INTENSITY) },
+static const ColorDistortion sColorDistortions[] = {
+    { COLORFILTER_COLORFLAG_BLUE, COLOR_DISTORT_INTENSITY },
+    { COLORFILTER_COLORFLAG_RED, COLOR_DISTORT_INTENSITY },
+    { COLORFILTER_COLORFLAG_GRAY, (u16)(COLORFILTER_INTENSITY_FLAG | COLOR_DISTORT_INTENSITY) },
 };
 
-struct BenDrownedHistoryEntry {
-    Vec3f pos;
-};
+// Consolidated mutable module state.
+static struct {
+    std::array<Vec3f, HISTORY_SIZE> history;
+    size_t historyCount;
+    size_t historyWriteIndex;
+    s32 recordTimer;
+    s32 moveCooldown;
+    s32 respawnCooldown;
+    s32 colorDistortCooldown;
+    s32 effectCooldown;
+    s32 laughCooldown;
+    s32 dialogueCooldown;
+    bool disappearAfterObserved;
+    bool statueObserved;
+    bool statueWasVisible;
+    PlayState* lastPlayState;
+    EnTorch2* ownedStatue;
+    bool spawnedStatue;
+} sState;
 
-std::array<BenDrownedHistoryEntry, BEN_DROWNED_HISTORY_SIZE> sBenDrownedHistory;
-Vec3f sBenDrownedZeroVelocity = { 0.0f, 0.0f, 0.0f };
-Vec3f sBenDrownedDustAccel = { 0.0f, 0.08f, 0.0f };
-Color_RGBA8 sBenDrownedDustPrimColor = { 170, 130, 90, 160 };
-Color_RGBA8 sBenDrownedDustEnvColor = { 100, 60, 20, 110 };
-size_t sBenDrownedHistoryCount = 0;
-size_t sBenDrownedHistoryWriteIndex = 0;
-s32 sBenDrownedRecordTimer = 0;
-s32 sBenDrownedMoveCooldown = 0;
-s32 sBenDrownedRespawnCooldown = 0;
-s32 sBenDrownedColorDistortCooldown = 0;
-s32 sBenDrownedEffectCooldown = 0;
-s32 sBenDrownedLaughCooldown = 0;
-s32 sBenDrownedDialogueCooldown = 0;
-bool sBenDrownedDisappearAfterObserved = false;
-bool sBenDrownedStatueObserved = false;
-bool sBenDrownedStatueWasVisible = false;
-PlayState* sLastPlayState = nullptr;
-EnTorch2* sOwnedBenDrownedStatue = nullptr;
-bool sSpawnedBenDrownedStatue = false;
+// Constant effect parameters passed by address to C functions.
+static Vec3f sZeroVelocity = { 0.0f, 0.0f, 0.0f };
+static Vec3f sDustAccel = { 0.0f, 0.08f, 0.0f };
+static Color_RGBA8 sDustPrimColor = { 170, 130, 90, 160 };
+static Color_RGBA8 sDustEnvColor = { 100, 60, 20, 110 };
 
-void ResetBenDrownedLaughCooldown();
-
-size_t GetBenDrownedHistoryIndexFromEnd(size_t i) {
-    return (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
+static void ResetLaughCooldown() {
+    sState.laughCooldown = LAUGH_BASE_FRAMES + (s32)(Rand_ZeroOne() * LAUGH_RANDOM_FRAMES);
 }
 
-void DecrementBenDrownedCooldown(s32* cooldown) {
+static void ResetColorDistortCooldown() {
+    sState.colorDistortCooldown = COLOR_DISTORT_BASE_FRAMES + (s32)(Rand_ZeroOne() * COLOR_DISTORT_RANDOM_FRAMES);
+}
+
+static size_t HistoryIndexFromEnd(size_t i) {
+    return (sState.historyWriteIndex + HISTORY_SIZE - i - 1) % HISTORY_SIZE;
+}
+
+static void DecrementCooldown(s32* cooldown) {
     if (*cooldown > 0) {
         (*cooldown)--;
     }
 }
 
-void ResetBenDrownedHistory() {
-    sBenDrownedHistoryCount = 0;
-    sBenDrownedHistoryWriteIndex = 0;
-    sBenDrownedRecordTimer = 0;
-    sBenDrownedMoveCooldown = 0;
-    sBenDrownedRespawnCooldown = 0;
-    sBenDrownedColorDistortCooldown = 0;
-    sBenDrownedEffectCooldown = 0;
-    ResetBenDrownedLaughCooldown();
-    sBenDrownedDialogueCooldown = 0;
-    sBenDrownedDisappearAfterObserved = false;
-    sBenDrownedStatueObserved = false;
-    sBenDrownedStatueWasVisible = false;
+static void ResetHistory() {
+    sState.historyCount = 0;
+    sState.historyWriteIndex = 0;
+    sState.recordTimer = 0;
+    sState.moveCooldown = 0;
+    sState.respawnCooldown = 0;
+    sState.colorDistortCooldown = 0;
+    sState.effectCooldown = 0;
+    sState.dialogueCooldown = 0;
+    sState.disappearAfterObserved = false;
+    sState.statueObserved = false;
+    sState.statueWasVisible = false;
+    ResetLaughCooldown();
 }
 
-void ClearBenDrownedStatueTracking() {
-    sOwnedBenDrownedStatue = nullptr;
-    sSpawnedBenDrownedStatue = false;
-    sBenDrownedDisappearAfterObserved = false;
-    sBenDrownedStatueObserved = false;
-    sBenDrownedStatueWasVisible = false;
+static void ClearStatueTracking() {
+    sState.ownedStatue = nullptr;
+    sState.spawnedStatue = false;
+    sState.disappearAfterObserved = false;
+    sState.statueObserved = false;
+    sState.statueWasVisible = false;
 }
 
-void CleanupOwnedBenDrownedStatue() {
-    if (sSpawnedBenDrownedStatue && (sOwnedBenDrownedStatue != nullptr) &&
-        (sOwnedBenDrownedStatue->actor.update != NULL)) {
-        Actor_Kill(&sOwnedBenDrownedStatue->actor);
+static void CleanupOwnedStatue() {
+    if (sState.spawnedStatue && (sState.ownedStatue != nullptr) && (sState.ownedStatue->actor.update != NULL)) {
+        Actor_Kill(&sState.ownedStatue->actor);
     }
 
-    ClearBenDrownedStatueTracking();
+    ClearStatueTracking();
 }
 
-void HandlePlayStateChange(PlayState* play) {
-    if (play != sLastPlayState) {
-        sLastPlayState = play;
-        ResetBenDrownedHistory();
-        ClearBenDrownedStatueTracking();
+static void HandlePlayStateChange(PlayState* play) {
+    if (play != sState.lastPlayState) {
+        sState.lastPlayState = play;
+        ResetHistory();
+        ClearStatueTracking();
     }
 }
 
-bool IsNormalGameplayState(PlayState* play) {
+static bool IsNormalGameplayState(PlayState* play) {
     return (play->pauseCtx.state == PAUSE_STATE_OFF) && (play->pauseCtx.debugEditor == DEBUG_EDITOR_NONE) &&
            (play->msgCtx.msgMode == MSGMODE_NONE) && (play->transitionTrigger == TRANS_TRIGGER_OFF) &&
            (play->transitionMode == TRANS_MODE_OFF) && !Play_InCsMode(play);
 }
 
-bool IsPlayerGroundedAndDry(Player* player) {
+static bool IsPlayerGroundedAndDry(Player* player) {
     return (player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && !(player->actor.bgCheckFlags & BGCHECKFLAG_WATER);
 }
 
-void RecordBenDrownedHistoryPoint(Player* player) {
+static void RecordHistoryPoint(Player* player) {
     Vec3f playerPos = player->actor.world.pos;
     size_t distinctCheckCount;
 
-    if (sBenDrownedRecordTimer > 0) {
-        sBenDrownedRecordTimer--;
+    if (sState.recordTimer > 0) {
+        sState.recordTimer--;
         return;
     }
 
-    distinctCheckCount = std::min(sBenDrownedHistoryCount, BEN_DROWNED_HISTORY_DISTINCT_CHECK_WINDOW);
+    distinctCheckCount = std::min(sState.historyCount, (size_t)HISTORY_DISTINCT_CHECK_WINDOW);
     for (size_t i = 0; i < distinctCheckCount; i++) {
-        size_t historyIndex = GetBenDrownedHistoryIndexFromEnd(i);
+        size_t idx = HistoryIndexFromEnd(i);
 
-        if (Math3D_Vec3fDistSq(&sBenDrownedHistory[historyIndex].pos, &playerPos) <
-            BEN_DROWNED_MIN_HISTORY_POINT_DIST_SQ) {
-            sBenDrownedRecordTimer = BEN_DROWNED_RECORD_INTERVAL_FRAMES;
+        if (Math3D_Vec3fDistSq(&sState.history[idx], &playerPos) < MIN_HISTORY_POINT_DIST_SQ) {
+            sState.recordTimer = RECORD_INTERVAL_FRAMES;
             return;
         }
     }
 
-    sBenDrownedHistory[sBenDrownedHistoryWriteIndex].pos = playerPos;
-    sBenDrownedHistoryWriteIndex = (sBenDrownedHistoryWriteIndex + 1) % BEN_DROWNED_HISTORY_SIZE;
-    if (sBenDrownedHistoryCount < BEN_DROWNED_HISTORY_SIZE) {
-        sBenDrownedHistoryCount++;
+    sState.history[sState.historyWriteIndex] = playerPos;
+    sState.historyWriteIndex = (sState.historyWriteIndex + 1) % HISTORY_SIZE;
+    if (sState.historyCount < HISTORY_SIZE) {
+        sState.historyCount++;
     }
-    sBenDrownedRecordTimer = BEN_DROWNED_RECORD_INTERVAL_FRAMES;
+    sState.recordTimer = RECORD_INTERVAL_FRAMES;
 }
 
-bool IsPointOnScreen(PlayState* play, const Vec3f& worldPos) {
+static bool IsPointOnScreen(PlayState* play, const Vec3f& worldPos) {
     Vec3f projectedPos;
     f32 projectedW;
     Vec3f projectedSource = worldPos;
 
     SkinMatrix_Vec3fMtxFMultXYZW(&play->viewProjectionMtxF, &projectedSource, &projectedPos, &projectedW);
 
-    return (projectedW > 1.0f) && (projectedPos.z > 0.0f) &&
-           (fabsf(projectedPos.x) < (projectedW * BEN_DROWNED_WATCH_MARGIN)) &&
-           (fabsf(projectedPos.y) < (projectedW * BEN_DROWNED_WATCH_MARGIN));
+    return (projectedW > 1.0f) && (projectedPos.z > 0.0f) && (fabsf(projectedPos.x) < (projectedW * WATCH_MARGIN)) &&
+           (fabsf(projectedPos.y) < (projectedW * WATCH_MARGIN));
 }
 
-bool CanCameraSeePoint(PlayState* play, const Vec3f& point) {
+static bool CanCameraSeePoint(PlayState* play, const Vec3f& point) {
     Camera* camera = GET_ACTIVE_CAM(play);
     Vec3f cameraForward;
     Vec3f cameraRight = { 1.0f, 0.0f, 0.0f };
@@ -277,23 +294,21 @@ bool CanCameraSeePoint(PlayState* play, const Vec3f& point) {
         cameraRight.z = -cameraForward.x * invCameraForwardDist;
     }
 
-    return isVisibleSample(point.x, point.y + BEN_DROWNED_VISIBILITY_HEIGHT, point.z) ||
-           isVisibleSample(point.x, point.y + BEN_DROWNED_VISIBILITY_TOP_HEIGHT, point.z) ||
-           isVisibleSample(point.x + (cameraRight.x * BEN_DROWNED_VISIBILITY_SIDE_OFFSET),
-                           point.y + BEN_DROWNED_VISIBILITY_HEIGHT,
-                           point.z + (cameraRight.z * BEN_DROWNED_VISIBILITY_SIDE_OFFSET)) ||
-           isVisibleSample(point.x - (cameraRight.x * BEN_DROWNED_VISIBILITY_SIDE_OFFSET),
-                           point.y + BEN_DROWNED_VISIBILITY_HEIGHT,
-                           point.z - (cameraRight.z * BEN_DROWNED_VISIBILITY_SIDE_OFFSET));
+    return isVisibleSample(point.x, point.y + VISIBILITY_HEIGHT, point.z) ||
+           isVisibleSample(point.x, point.y + VISIBILITY_TOP_HEIGHT, point.z) ||
+           isVisibleSample(point.x + (cameraRight.x * VISIBILITY_SIDE_OFFSET), point.y + VISIBILITY_HEIGHT,
+                           point.z + (cameraRight.z * VISIBILITY_SIDE_OFFSET)) ||
+           isVisibleSample(point.x - (cameraRight.x * VISIBILITY_SIDE_OFFSET), point.y + VISIBILITY_HEIGHT,
+                           point.z - (cameraRight.z * VISIBILITY_SIDE_OFFSET));
 }
 
-bool FindHiddenBenDrownedHistoryPoint(PlayState* play, Player* player, f32 maxDistSq, Vec3f* hiddenPoint) {
-    for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
-        size_t historyIndex = GetBenDrownedHistoryIndexFromEnd(i);
-        Vec3f candidatePoint = sBenDrownedHistory[historyIndex].pos;
+static bool FindHiddenHistoryPoint(PlayState* play, Player* player, f32 maxDistSq, Vec3f* hiddenPoint) {
+    for (size_t i = 0; i < sState.historyCount; i++) {
+        size_t idx = HistoryIndexFromEnd(i);
+        Vec3f candidatePoint = sState.history[idx];
         f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
 
-        if (playerDistSq < BEN_DROWNED_MIN_SPAWN_DIST_SQ) {
+        if (playerDistSq < MIN_SPAWN_DIST_SQ) {
             continue;
         }
 
@@ -310,7 +325,7 @@ bool FindHiddenBenDrownedHistoryPoint(PlayState* play, Player* player, f32 maxDi
     return false;
 }
 
-bool FindDistantBenDrownedSpawnPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
+static bool FindDistantSpawnPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
     Vec3f bestDistantPoint = player->actor.world.pos;
     Vec3f bestFallbackPoint = player->actor.world.pos;
     bool foundDistantPoint = false;
@@ -318,17 +333,17 @@ bool FindDistantBenDrownedSpawnPoint(PlayState* play, Player* player, Vec3f* hid
     f32 bestDistantDistSq = 0.0f;
     f32 bestFallbackDistSq = 0.0f;
 
-    for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
-        size_t historyIndex = GetBenDrownedHistoryIndexFromEnd(i);
-        Vec3f candidatePoint = sBenDrownedHistory[historyIndex].pos;
+    for (size_t i = 0; i < sState.historyCount; i++) {
+        size_t idx = HistoryIndexFromEnd(i);
+        Vec3f candidatePoint = sState.history[idx];
         f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
 
-        if (playerDistSq < BEN_DROWNED_MIN_SPAWN_DIST_SQ) {
+        if (playerDistSq < MIN_SPAWN_DIST_SQ) {
             continue;
         }
 
         if (!CanCameraSeePoint(play, candidatePoint)) {
-            if (playerDistSq >= BEN_DROWNED_DISTANT_SPAWN_DIST_SQ) {
+            if (playerDistSq >= DISTANT_SPAWN_DIST_SQ) {
                 if (!foundDistantPoint || (playerDistSq > bestDistantDistSq)) {
                     bestDistantPoint = candidatePoint;
                     bestDistantDistSq = playerDistSq;
@@ -355,13 +370,13 @@ bool FindDistantBenDrownedSpawnPoint(PlayState* play, Player* player, Vec3f* hid
     return false;
 }
 
-bool SnapBenDrownedPointToFloor(PlayState* play, Vec3f* point) {
+static bool SnapPointToFloor(PlayState* play, Vec3f* point) {
     Vec3f raycastPos = *point;
     CollisionPoly* floorPoly = nullptr;
     s32 bgId;
     f32 floorHeight;
 
-    raycastPos.y += BEN_DROWNED_FLOOR_RAYCAST_HEIGHT;
+    raycastPos.y += FLOOR_RAYCAST_HEIGHT;
     floorHeight = BgCheck_EntityRaycastFloor3(&play->colCtx, &floorPoly, &bgId, &raycastPos);
 
     if (floorHeight != BGCHECK_Y_MIN) {
@@ -372,43 +387,43 @@ bool SnapBenDrownedPointToFloor(PlayState* play, Vec3f* point) {
     return false;
 }
 
-bool IsBenDrownedStatueAlive(EnTorch2* statue) {
+static bool IsStatueAlive(EnTorch2* statue) {
     return (statue != nullptr) && (statue->actor.update != NULL);
 }
 
-EnTorch2* GetBenDrownedStatue(PlayState* play) {
+static EnTorch2* GetStatue(PlayState* play) {
     EnTorch2* statue = play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN];
 
-    if (!IsBenDrownedStatueAlive(sOwnedBenDrownedStatue)) {
-        ClearBenDrownedStatueTracking();
+    if (!IsStatueAlive(sState.ownedStatue)) {
+        ClearStatueTracking();
     }
 
-    if (!IsBenDrownedStatueAlive(statue)) {
+    if (!IsStatueAlive(statue)) {
         statue = nullptr;
         play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN] = nullptr;
     }
 
     if (statue != nullptr) {
-        sOwnedBenDrownedStatue = statue;
+        sState.ownedStatue = statue;
     }
 
     return statue;
 }
 
-EnTorch2* SpawnBenDrownedStatue(PlayState* play, const Vec3f& spawnPos) {
-    EnTorch2* statue = (EnTorch2*)Actor_Spawn(&play->actorCtx, play, ACTOR_EN_TORCH2, spawnPos.x, spawnPos.y, spawnPos.z,
-                                              0, 0, 0, TORCH2_PARAM_HUMAN);
+static EnTorch2* SpawnStatue(PlayState* play, const Vec3f& spawnPos) {
+    EnTorch2* statue = (EnTorch2*)Actor_Spawn(&play->actorCtx, play, ACTOR_EN_TORCH2, spawnPos.x, spawnPos.y,
+                                              spawnPos.z, 0, 0, 0, TORCH2_PARAM_HUMAN);
 
     if (statue != nullptr) {
         play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN] = statue;
-        sOwnedBenDrownedStatue = statue;
-        sSpawnedBenDrownedStatue = true;
+        sState.ownedStatue = statue;
+        sState.spawnedStatue = true;
     }
 
     return statue;
 }
 
-void DismissBenDrownedStatue(PlayState* play, EnTorch2* statue) {
+static void DismissStatue(PlayState* play, EnTorch2* statue) {
     if ((statue != nullptr) && (play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN] == statue)) {
         play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN] = nullptr;
     }
@@ -417,10 +432,10 @@ void DismissBenDrownedStatue(PlayState* play, EnTorch2* statue) {
         Actor_Kill(&statue->actor);
     }
 
-    ClearBenDrownedStatueTracking();
+    ClearStatueTracking();
 }
 
-void SetBenDrownedStatueRotation(EnTorch2* statue, Player* player) {
+static void SetStatueRotation(EnTorch2* statue, Player* player) {
     s16 targetYaw = Math_Vec3f_Yaw(&statue->actor.world.pos, &player->actor.world.pos);
 
     statue->actor.world.rot.y = targetYaw;
@@ -428,37 +443,24 @@ void SetBenDrownedStatueRotation(EnTorch2* statue, Player* player) {
     statue->actor.home.rot.y = targetYaw;
 }
 
-void ResetBenDrownedLaughCooldown() {
-    sBenDrownedLaughCooldown = BEN_DROWNED_LAUGH_BASE_FRAMES + (s32)(Rand_ZeroOne() * BEN_DROWNED_LAUGH_RANDOM_FRAMES);
+static size_t RandomIndex(size_t count) {
+    return static_cast<size_t>(fminf(Rand_ZeroOne() * count, static_cast<f32>(count - 1)));
 }
 
-void ResetBenDrownedColorDistortCooldown() {
-    sBenDrownedColorDistortCooldown =
-        BEN_DROWNED_COLOR_DISTORT_BASE_FRAMES + (s32)(Rand_ZeroOne() * BEN_DROWNED_COLOR_DISTORT_RANDOM_FRAMES);
-}
-
-template <size_t N> size_t GetBenDrownedRandomIndex() {
-    return static_cast<size_t>(fminf(Rand_ZeroOne() * N, static_cast<f32>(N - 1)));
-}
-
-u8 LerpBenDrownedU8(u8 min, u8 max, f32 t) {
+static u8 LerpU8(u8 min, u8 max, f32 t) {
     return static_cast<u8>(std::clamp<f32>(min + (t * (max - min)), min, max));
 }
 
-bool IsBenDrownedCorruptibleChar(char ch) {
+static bool IsCorruptibleChar(char ch) {
     return (ch >= ' ') && (ch <= '~');
 }
 
-bool IsBenDrownedGlyphChar(char ch) {
-    return IsBenDrownedCorruptibleChar(ch) && (ch != ' ');
+static bool IsGlyphChar(char ch) {
+    return IsCorruptibleChar(ch) && (ch != ' ');
 }
 
-bool TryReplaceBenDrownedDialoguePhrase(std::string* msg, const BenDrownedDialoguePhrase& phrase, size_t searchStart,
-                                        size_t searchEnd) {
-    size_t startPos;
-    size_t i;
-
-    if ((searchStart >= msg->size()) || ((msg->size() - searchStart) < phrase.length)) {
+static bool TryReplaceDialoguePhrase(std::string* msg, std::string_view phrase, size_t searchStart, size_t searchEnd) {
+    if ((searchStart >= msg->size()) || ((msg->size() - searchStart) < phrase.size())) {
         return false;
     }
 
@@ -466,56 +468,20 @@ bool TryReplaceBenDrownedDialoguePhrase(std::string* msg, const BenDrownedDialog
         searchEnd = msg->size();
     }
 
-    for (startPos = searchStart; (startPos + phrase.length) <= searchEnd; startPos++) {
+    for (size_t startPos = searchStart; (startPos + phrase.size()) <= searchEnd; startPos++) {
         bool fits = true;
 
-        for (i = 0; i < phrase.length; i++) {
+        for (size_t i = 0; i < phrase.size(); i++) {
             char originalChar = (*msg)[startPos + i];
-            bool phraseCharIsGlyph = IsBenDrownedGlyphChar(phrase.text[i]);
-            bool originalCharIsGlyph = IsBenDrownedGlyphChar(originalChar);
 
-            if (!IsBenDrownedCorruptibleChar(originalChar)) {
-                fits = false;
-                break;
-            }
-
-            if (phraseCharIsGlyph != originalCharIsGlyph) {
+            if (!IsCorruptibleChar(originalChar) || (IsGlyphChar(phrase[i]) != IsGlyphChar(originalChar))) {
                 fits = false;
                 break;
             }
         }
 
-        if (!fits) {
-            continue;
-        }
-
-        msg->replace(startPos, phrase.length, phrase.text, phrase.length);
-        return true;
-    }
-
-    return false;
-}
-
-bool TryCorruptBenDrownedMessage(std::string* msg) {
-    size_t startIndex = GetBenDrownedRandomIndex<BEN_DROWNED_DIALOGUE_PHRASES.size()>();
-    size_t lateStart;
-    s32 triggerStart;
-    size_t searchStart;
-    size_t searchEnd;
-
-    if (msg->empty()) {
-        return false;
-    }
-
-    lateStart = (msg->size() / BEN_DROWNED_DIALOGUE_LATE_START_DENOMINATOR) * BEN_DROWNED_DIALOGUE_LATE_START_NUMERATOR;
-    triggerStart = BEN_DROWNED_DIALOGUE_TRIGGER_BASE + (s32)(Rand_ZeroOne() * BEN_DROWNED_DIALOGUE_TRIGGER_RANGE);
-    searchStart = std::max(lateStart, static_cast<size_t>(triggerStart));
-    searchEnd = std::min(msg->size(), searchStart + BEN_DROWNED_DIALOGUE_SEARCH_WINDOW);
-
-    for (size_t offset = 0; offset < BEN_DROWNED_DIALOGUE_PHRASES.size(); offset++) {
-        if (TryReplaceBenDrownedDialoguePhrase(
-                msg, BEN_DROWNED_DIALOGUE_PHRASES[(startIndex + offset) % BEN_DROWNED_DIALOGUE_PHRASES.size()],
-                searchStart, searchEnd)) {
+        if (fits) {
+            msg->replace(startPos, phrase.size(), phrase.data(), phrase.size());
             return true;
         }
     }
@@ -523,27 +489,50 @@ bool TryCorruptBenDrownedMessage(std::string* msg) {
     return false;
 }
 
-bool ShouldBenDrownedCorruptOpenText(PlayState* play, u16 textId) {
-    return (play != nullptr) && (gSaveContext.options.language != LANGUAGE_JPN) && (play->msgCtx.talkActor != nullptr) &&
-           (textId != 0) && (textId != CUSTOM_MESSAGE_ID) && (sBenDrownedDialogueCooldown <= 0) &&
-           (Rand_ZeroOne() < BEN_DROWNED_DIALOGUE_CHANCE);
+static bool TryCorruptMessage(std::string* msg) {
+    size_t phraseCount = std::size(sDialoguePhrases);
+    size_t startIndex = RandomIndex(phraseCount);
+
+    if (msg->empty()) {
+        return false;
+    }
+
+    size_t lateStart = (msg->size() / DIALOGUE_LATE_START_DENOMINATOR) * DIALOGUE_LATE_START_NUMERATOR;
+    s32 triggerStart = DIALOGUE_TRIGGER_BASE + (s32)(Rand_ZeroOne() * DIALOGUE_TRIGGER_RANGE);
+    size_t searchStart = std::max(lateStart, static_cast<size_t>(triggerStart));
+    size_t searchEnd = std::min(msg->size(), searchStart + (size_t)DIALOGUE_SEARCH_WINDOW);
+
+    for (size_t offset = 0; offset < phraseCount; offset++) {
+        if (TryReplaceDialoguePhrase(msg, sDialoguePhrases[(startIndex + offset) % phraseCount], searchStart,
+                                     searchEnd)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
-bool FindBenDrownedFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
+static bool ShouldCorruptOpenText(PlayState* play, u16 textId) {
+    return (play != nullptr) && (gSaveContext.options.language != LANGUAGE_JPN) &&
+           (play->msgCtx.talkActor != nullptr) && (textId != 0) && (textId != CUSTOM_MESSAGE_ID) &&
+           (sState.dialogueCooldown <= 0) && (Rand_ZeroOne() < DIALOGUE_CHANCE);
+}
+
+static bool FindFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
     Camera* camera = GET_ACTIVE_CAM(play);
 
     if (camera == nullptr) {
         return false;
     }
 
-    for (s16 yawOffset : BEN_DROWNED_FALLBACK_YAW_OFFSETS) {
+    for (size_t i = 0; i < std::size(sFallbackYawOffsets); i++) {
         Vec3f candidatePoint = player->actor.world.pos;
-        s16 stalkYaw = Math_Vec3f_Yaw(&camera->eye, &camera->at) + yawOffset;
+        s16 stalkYaw = Math_Vec3f_Yaw(&camera->eye, &camera->at) + sFallbackYawOffsets[i];
 
-        candidatePoint.x += Math_SinS(stalkYaw) * BEN_DROWNED_FALLBACK_STALK_DISTANCE;
-        candidatePoint.z += Math_CosS(stalkYaw) * BEN_DROWNED_FALLBACK_STALK_DISTANCE;
+        candidatePoint.x += Math_SinS(stalkYaw) * FALLBACK_STALK_DISTANCE;
+        candidatePoint.z += Math_CosS(stalkYaw) * FALLBACK_STALK_DISTANCE;
 
-        if (!SnapBenDrownedPointToFloor(play, &candidatePoint)) {
+        if (!SnapPointToFloor(play, &candidatePoint)) {
             continue;
         }
 
@@ -556,22 +545,21 @@ bool FindBenDrownedFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenP
     return false;
 }
 
-bool FindBenDrownedTargetPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
-    return FindHiddenBenDrownedHistoryPoint(play, player, BEN_DROWNED_MAX_NEARBY_DIST_SQ, hiddenPoint) ||
-           FindBenDrownedFallbackPoint(play, player, hiddenPoint) ||
-           FindHiddenBenDrownedHistoryPoint(play, player, 0.0f, hiddenPoint);
+static bool FindTargetPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
+    return FindHiddenHistoryPoint(play, player, MAX_NEARBY_DIST_SQ, hiddenPoint) ||
+           FindFallbackPoint(play, player, hiddenPoint) || FindHiddenHistoryPoint(play, player, 0.0f, hiddenPoint);
 }
 
-void MoveBenDrownedStatue(PlayState* play, Player* player, EnTorch2* statue, const Vec3f& targetPoint) {
+static void MoveStatue(PlayState* play, Player* player, EnTorch2* statue, const Vec3f& targetPoint) {
     Vec3f snappedPoint = targetPoint;
 
-    SnapBenDrownedPointToFloor(play, &snappedPoint);
+    SnapPointToFloor(play, &snappedPoint);
     Math_Vec3f_Copy(&statue->actor.world.pos, &snappedPoint);
     Math_Vec3f_Copy(&statue->actor.home.pos, &snappedPoint);
     Math_Vec3f_Copy(&statue->actor.prevPos, &snappedPoint);
     Math_Vec3f_Copy(&statue->actor.focus.pos, &snappedPoint);
 
-    Math_Vec3f_Copy(&statue->actor.velocity, &sBenDrownedZeroVelocity);
+    Math_Vec3f_Copy(&statue->actor.velocity, &sZeroVelocity);
     statue->actor.speed = 0.0f;
     statue->actor.floorHeight = snappedPoint.y;
     statue->actor.bgCheckFlags |= BGCHECKFLAG_GROUND;
@@ -579,178 +567,147 @@ void MoveBenDrownedStatue(PlayState* play, Player* player, EnTorch2* statue, con
     statue->framesUntilNextState = 0;
     statue->alpha = 255;
 
-    SetBenDrownedStatueRotation(statue, player);
+    SetStatueRotation(statue, player);
 }
 
-void TriggerBenDrownedArrivalEffects(PlayState* play, Player* player, EnTorch2* statue) {
+static void TriggerArrivalEffects(PlayState* play, Player* player, EnTorch2* statue) {
     f32 distSq;
     s16 quakeIndex;
 
-    if (sBenDrownedEffectCooldown > 0) {
+    if (sState.effectCooldown > 0) {
         return;
     }
 
     distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
                              statue->actor.world.pos.z);
-    if (distSq > BEN_DROWNED_CLOSE_EFFECT_DIST_SQ) {
+    if (distSq > CLOSE_EFFECT_DIST_SQ) {
         return;
     }
 
-    EffectSsDust_Spawn(play, BEN_DROWNED_DUST_DRAW_FLAGS, &statue->actor.world.pos,
-                       &sBenDrownedZeroVelocity, &sBenDrownedDustAccel, &sBenDrownedDustPrimColor,
-                       &sBenDrownedDustEnvColor, BEN_DROWNED_DUST_SCALE, BEN_DROWNED_DUST_SCALE_STEP,
-                       BEN_DROWNED_DUST_LIFE, DUST_UPDATE_NORMAL);
+    EffectSsDust_Spawn(play, DUST_DRAW_FLAGS, &statue->actor.world.pos, &sZeroVelocity, &sDustAccel, &sDustPrimColor,
+                       &sDustEnvColor, DUST_SCALE, DUST_SCALE_STEP, DUST_LIFE, DUST_UPDATE_NORMAL);
 
-    if (distSq < BEN_DROWNED_JUMPSCARE_DIST_SQ) {
+    if (distSq < JUMPSCARE_DIST_SQ) {
         quakeIndex = Quake_Request(GET_ACTIVE_CAM(play), QUAKE_TYPE_3);
 
         if (quakeIndex >= 0) {
-            Quake_SetSpeed(quakeIndex, BEN_DROWNED_QUAKE_SPEED);
-            Quake_SetPerturbations(quakeIndex, BEN_DROWNED_QUAKE_PERTURB_X, BEN_DROWNED_QUAKE_PERTURB_Y,
-                                   BEN_DROWNED_QUAKE_PERTURB_Z, BEN_DROWNED_QUAKE_PERTURB_W);
-            Quake_SetDuration(quakeIndex, BEN_DROWNED_QUAKE_DURATION);
+            Quake_SetSpeed(quakeIndex, QUAKE_SPEED);
+            Quake_SetPerturbations(quakeIndex, QUAKE_PERTURB_X, QUAKE_PERTURB_Y, QUAKE_PERTURB_Z, QUAKE_PERTURB_W);
+            Quake_SetDuration(quakeIndex, QUAKE_DURATION);
         }
 
-        // Rumble_Request expects squared distance so the engine can handle attenuation internally.
-        Rumble_Request(distSq, BEN_DROWNED_RUMBLE_STRENGTH, BEN_DROWNED_RUMBLE_DECAY, BEN_DROWNED_RUMBLE_DURATION);
+        Rumble_Request(distSq, RUMBLE_STRENGTH, RUMBLE_DECAY, RUMBLE_DURATION);
     }
 
-    sBenDrownedEffectCooldown = BEN_DROWNED_EFFECT_COOLDOWN_FRAMES;
+    sState.effectCooldown = EFFECT_COOLDOWN_FRAMES;
 }
 
-void UpdateBenDrownedStatueLaugh(EnTorch2* statue) {
-    f32 laughPitch;
-
-    if ((statue == nullptr) || (sBenDrownedLaughCooldown > 0)) {
+static void UpdateStatueLaugh(EnTorch2* statue) {
+    if ((statue == nullptr) || (sState.laughCooldown > 0)) {
         return;
     }
 
-    laughPitch = BEN_DROWNED_LAUGH_MIN_PITCH +
-                 (Rand_ZeroOne() * (BEN_DROWNED_LAUGH_MAX_PITCH - BEN_DROWNED_LAUGH_MIN_PITCH));
+    f32 laughPitch = LAUGH_MIN_PITCH + (Rand_ZeroOne() * (LAUGH_MAX_PITCH - LAUGH_MIN_PITCH));
     Audio_PlaySfx_AtPosWithFreq(&statue->actor.projectedPos, NA_SE_VO_OMVO00, laughPitch);
-    ResetBenDrownedLaughCooldown();
+    ResetLaughCooldown();
 }
 
-void UpdateBenDrownedStatueProximityRumble(Player* player, EnTorch2* statue) {
-    f32 distSq;
-    f32 proximity;
-    f32 dist;
-    u8 strength;
-    u8 decayTimer;
-
+static void UpdateStatueProximityRumble(Player* player, EnTorch2* statue) {
     if ((player == nullptr) || (statue == nullptr)) {
         return;
     }
 
-    distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
-                             statue->actor.world.pos.z);
-    if (distSq > BEN_DROWNED_PROXIMITY_RUMBLE_DIST_SQ) {
+    f32 distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
+                                 statue->actor.world.pos.z);
+    if (distSq > PROXIMITY_RUMBLE_DIST_SQ) {
         return;
     }
 
-    dist = sqrtf(distSq);
-    proximity = std::clamp(1.0f - (dist / BEN_DROWNED_PROXIMITY_RUMBLE_DIST), 0.0f, 1.0f);
+    f32 dist = sqrtf(distSq);
+    f32 proximity = std::clamp(1.0f - (dist / PROXIMITY_RUMBLE_DIST), 0.0f, 1.0f);
+    u8 strength = LerpU8(PROXIMITY_RUMBLE_MIN_STRENGTH, PROXIMITY_RUMBLE_MAX_STRENGTH, proximity);
+    u8 decayTimer = LerpU8(PROXIMITY_RUMBLE_MIN_DECAY, PROXIMITY_RUMBLE_MAX_DECAY, proximity);
 
-    strength = LerpBenDrownedU8(BEN_DROWNED_PROXIMITY_RUMBLE_MIN_STRENGTH, BEN_DROWNED_PROXIMITY_RUMBLE_MAX_STRENGTH,
-                                proximity);
-    decayTimer = LerpBenDrownedU8(BEN_DROWNED_PROXIMITY_RUMBLE_MIN_DECAY, BEN_DROWNED_PROXIMITY_RUMBLE_MAX_DECAY,
-                                  proximity);
-
-    // Use the override channel for a continuous near-statue pulse while the one-shot request above remains reserved for
-    // off-camera arrival jolts.
-    Rumble_Override(distSq, strength, decayTimer, BEN_DROWNED_PROXIMITY_RUMBLE_STEP);
+    Rumble_Override(distSq, strength, decayTimer, PROXIMITY_RUMBLE_STEP);
 }
 
-void UpdateBenDrownedStatueColorDistortion(EnTorch2* statue) {
+static void UpdateStatueColorDistortion(EnTorch2* statue) {
     if (statue == nullptr) {
         return;
     }
 
-    const BenDrownedColorDistortion& distortion =
-        BEN_DROWNED_COLOR_DISTORTIONS[GetBenDrownedRandomIndex<BEN_DROWNED_COLOR_DISTORTIONS.size()>()];
-
-    if ((sBenDrownedColorDistortCooldown > 0) || (statue->actor.colorFilterTimer != 0)) {
+    if ((sState.colorDistortCooldown > 0) || (statue->actor.colorFilterTimer != 0)) {
         return;
     }
 
+    const ColorDistortion& distortion = sColorDistortions[RandomIndex(std::size(sColorDistortions))];
     Actor_SetColorFilter(&statue->actor, distortion.colorFlag, distortion.intensity, COLORFILTER_BUFFLAG_XLU,
-                         BEN_DROWNED_COLOR_DISTORT_DURATION);
-    ResetBenDrownedColorDistortCooldown();
+                         COLOR_DISTORT_DURATION);
+    ResetColorDistortCooldown();
 }
 
-f32 GetBenDrownedPointDistSq(Player* player, const Vec3f& point) {
+static void PopulateDebugHistoryEntry(PlayState* play, Player* player, const Vec3f& point,
+                                      BenDrowned::DebugHistoryEntry* entry) {
     Vec3f pointCopy = point;
 
-    return Math3D_Vec3fDistSq(&pointCopy, &player->actor.world.pos);
-}
-
-void PopulateBenDrownedDebugHistoryEntry(PlayState* play, Player* player, const Vec3f& point,
-                                         BenDrowned::DebugHistoryEntry* entry) {
     entry->pos = point;
-    entry->playerDistSq = GetBenDrownedPointDistSq(player, point);
+    entry->playerDistSq = Math3D_Vec3fDistSq(&pointCopy, &player->actor.world.pos);
     entry->playerDist = sqrtf(entry->playerDistSq);
     entry->visible = CanCameraSeePoint(play, point);
-    entry->spawnEligible = !entry->visible && (entry->playerDistSq >= BEN_DROWNED_MIN_SPAWN_DIST_SQ);
-    entry->distantEligible = entry->spawnEligible && (entry->playerDistSq >= BEN_DROWNED_DISTANT_SPAWN_DIST_SQ);
+    entry->spawnEligible = !entry->visible && (entry->playerDistSq >= MIN_SPAWN_DIST_SQ);
+    entry->distantEligible = entry->spawnEligible && (entry->playerDistSq >= DISTANT_SPAWN_DIST_SQ);
 }
 
-void AddBenDrownedDebugObject(PlayState* play, const Vec3f& pos, f32 scale, u8 red, u8 green, u8 blue, u8 alpha,
-                              s16 type) {
-    DebugDisplay_AddObject(pos.x, pos.y + BEN_DROWNED_DEBUG_MARKER_HEIGHT, pos.z, 0, 0, 0, scale, scale, scale, red,
-                           green, blue, alpha, type, play->state.gfxCtx);
+static void AddDebugObject(PlayState* play, const Vec3f& pos, f32 scale, u8 red, u8 green, u8 blue, u8 alpha,
+                           s16 type) {
+    DebugDisplay_AddObject(pos.x, pos.y + DEBUG_MARKER_HEIGHT, pos.z, 0, 0, 0, scale, scale, scale, red, green, blue,
+                           alpha, type, play->state.gfxCtx);
 }
 
-void AddBenDrownedDebugHistoryObject(PlayState* play, const BenDrowned::DebugHistoryEntry& entry) {
+static void AddDebugHistoryObject(PlayState* play, const BenDrowned::DebugHistoryEntry& entry) {
     if (entry.distantEligible) {
-        AddBenDrownedDebugObject(play, entry.pos, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 80, 180, 255, 220,
-                                 BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+        AddDebugObject(play, entry.pos, DEBUG_HISTORY_MARKER_SCALE, 80, 180, 255, 220, DEBUG_HISTORY_MARKER_TYPE);
     } else if (entry.spawnEligible) {
-        AddBenDrownedDebugObject(play, entry.pos, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 80, 255, 120, 200,
-                                 BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+        AddDebugObject(play, entry.pos, DEBUG_HISTORY_MARKER_SCALE, 80, 255, 120, 200, DEBUG_HISTORY_MARKER_TYPE);
     } else if (entry.visible) {
-        AddBenDrownedDebugObject(play, entry.pos, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 255, 90, 90, 180,
-                                 BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+        AddDebugObject(play, entry.pos, DEBUG_HISTORY_MARKER_SCALE, 255, 90, 90, 180, DEBUG_HISTORY_MARKER_TYPE);
     } else {
-        AddBenDrownedDebugObject(play, entry.pos, BEN_DROWNED_DEBUG_HISTORY_MARKER_SCALE, 255, 190, 70, 160,
-                                 BEN_DROWNED_DEBUG_HISTORY_MARKER_TYPE);
+        AddDebugObject(play, entry.pos, DEBUG_HISTORY_MARKER_SCALE, 255, 190, 70, 160, DEBUG_HISTORY_MARKER_TYPE);
     }
 }
 
-void UpdateBenDrownedDebugOverlay(PlayState* play, Player* player, EnTorch2* statue) {
+static void UpdateDebugOverlay(PlayState* play, Player* player, EnTorch2* statue) {
     Vec3f spawnPoint = { 0.0f, 0.0f, 0.0f };
     Vec3f targetPoint = { 0.0f, 0.0f, 0.0f };
 
-    if ((play == nullptr) || !CVarGetInteger(BEN_DROWNED_DEBUG_OVERLAY_CVAR, 0)) {
+    if ((play == nullptr) || !CVarGetInteger(DEBUG_OVERLAY_CVAR, 0)) {
         return;
     }
 
-    for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
-        size_t historyIndex = GetBenDrownedHistoryIndexFromEnd(i);
+    for (size_t i = 0; i < sState.historyCount; i++) {
+        size_t idx = HistoryIndexFromEnd(i);
         BenDrowned::DebugHistoryEntry entry = {};
 
-        entry.pos = sBenDrownedHistory[historyIndex].pos;
+        entry.pos = sState.history[idx];
         if (player != nullptr) {
-            PopulateBenDrownedDebugHistoryEntry(play, player, entry.pos, &entry);
+            PopulateDebugHistoryEntry(play, player, entry.pos, &entry);
         }
-        AddBenDrownedDebugHistoryObject(play, entry);
+        AddDebugHistoryObject(play, entry);
     }
 
-    if ((player != nullptr) && FindDistantBenDrownedSpawnPoint(play, player, &spawnPoint)) {
-        AddBenDrownedDebugObject(play, spawnPoint, BEN_DROWNED_DEBUG_TARGET_MARKER_SCALE, 80, 220, 255, 255,
-                                 BEN_DROWNED_DEBUG_TARGET_MARKER_TYPE);
+    if ((player != nullptr) && FindDistantSpawnPoint(play, player, &spawnPoint)) {
+        AddDebugObject(play, spawnPoint, DEBUG_TARGET_MARKER_SCALE, 80, 220, 255, 255, DEBUG_TARGET_MARKER_TYPE);
     }
 
-    if ((player != nullptr) && FindBenDrownedTargetPoint(play, player, &targetPoint)) {
-        AddBenDrownedDebugObject(play, targetPoint, BEN_DROWNED_DEBUG_TARGET_MARKER_SCALE, 255, 220, 80, 255,
-                                 BEN_DROWNED_DEBUG_TARGET_MARKER_TYPE);
+    if ((player != nullptr) && FindTargetPoint(play, player, &targetPoint)) {
+        AddDebugObject(play, targetPoint, DEBUG_TARGET_MARKER_SCALE, 255, 220, 80, 255, DEBUG_TARGET_MARKER_TYPE);
     }
 
     if (statue != nullptr) {
-        AddBenDrownedDebugObject(play, statue->actor.world.pos, BEN_DROWNED_DEBUG_STATUE_MARKER_SCALE, 220, 80, 255,
-                                 255, BEN_DROWNED_DEBUG_STATUE_MARKER_TYPE);
+        AddDebugObject(play, statue->actor.world.pos, DEBUG_STATUE_MARKER_SCALE, 220, 80, 255, 255,
+                       DEBUG_STATUE_MARKER_TYPE);
     }
 }
-} // namespace
 
 namespace BenDrowned {
 
@@ -767,26 +724,26 @@ DebugSnapshot GetDebugSnapshot() {
     }
 
     player = GET_PLAYER(play);
-    statue = GetBenDrownedStatue(play);
+    statue = GetStatue(play);
 
     snapshot.normalGameplayState = IsNormalGameplayState(play);
     snapshot.playerValid = (player != nullptr) && (player->actor.update != NULL);
     snapshot.playerGroundedAndDry = snapshot.playerValid && IsPlayerGroundedAndDry(player);
     snapshot.statueAlive = statue != nullptr;
-    snapshot.statueManaged = sSpawnedBenDrownedStatue;
-    snapshot.statueObserved = sBenDrownedStatueObserved;
-    snapshot.statueWasVisible = sBenDrownedStatueWasVisible;
-    snapshot.disappearAfterObserved = sBenDrownedDisappearAfterObserved;
-    snapshot.respawnReady = sBenDrownedRespawnCooldown <= 0;
-    snapshot.moveReady = sBenDrownedMoveCooldown <= 0;
-    snapshot.historyCount = static_cast<s32>(sBenDrownedHistoryCount);
-    snapshot.recordTimer = sBenDrownedRecordTimer;
-    snapshot.moveCooldown = sBenDrownedMoveCooldown;
-    snapshot.respawnCooldown = sBenDrownedRespawnCooldown;
-    snapshot.colorDistortCooldown = sBenDrownedColorDistortCooldown;
-    snapshot.effectCooldown = sBenDrownedEffectCooldown;
-    snapshot.laughCooldown = sBenDrownedLaughCooldown;
-    snapshot.dialogueCooldown = sBenDrownedDialogueCooldown;
+    snapshot.statueManaged = sState.spawnedStatue;
+    snapshot.statueObserved = sState.statueObserved;
+    snapshot.statueWasVisible = sState.statueWasVisible;
+    snapshot.disappearAfterObserved = sState.disappearAfterObserved;
+    snapshot.respawnReady = sState.respawnCooldown <= 0;
+    snapshot.moveReady = sState.moveCooldown <= 0;
+    snapshot.historyCount = static_cast<s32>(sState.historyCount);
+    snapshot.recordTimer = sState.recordTimer;
+    snapshot.moveCooldown = sState.moveCooldown;
+    snapshot.respawnCooldown = sState.respawnCooldown;
+    snapshot.colorDistortCooldown = sState.colorDistortCooldown;
+    snapshot.effectCooldown = sState.effectCooldown;
+    snapshot.laughCooldown = sState.laughCooldown;
+    snapshot.dialogueCooldown = sState.dialogueCooldown;
 
     if (snapshot.playerValid) {
         snapshot.playerPos = player->actor.world.pos;
@@ -798,16 +755,16 @@ DebugSnapshot GetDebugSnapshot() {
     }
 
     if (snapshot.playerValid) {
-        snapshot.hasDistantSpawnPoint = FindDistantBenDrownedSpawnPoint(play, player, &snapshot.distantSpawnPoint);
-        snapshot.hasTargetPoint = FindBenDrownedTargetPoint(play, player, &snapshot.targetPoint);
+        snapshot.hasDistantSpawnPoint = FindDistantSpawnPoint(play, player, &snapshot.distantSpawnPoint);
+        snapshot.hasTargetPoint = FindTargetPoint(play, player, &snapshot.targetPoint);
     }
 
-    for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
-        size_t historyIndex = GetBenDrownedHistoryIndexFromEnd(i);
+    for (size_t i = 0; i < sState.historyCount; i++) {
+        size_t idx = HistoryIndexFromEnd(i);
         DebugHistoryEntry& entry = snapshot.history[i];
-        entry.pos = sBenDrownedHistory[historyIndex].pos;
+        entry.pos = sState.history[idx];
         if (snapshot.playerValid) {
-            PopulateBenDrownedDebugHistoryEntry(play, player, entry.pos, &entry);
+            PopulateDebugHistoryEntry(play, player, entry.pos, &entry);
         }
     }
 
@@ -818,8 +775,8 @@ DebugSnapshot GetDebugSnapshot() {
 
 void RegisterBenDrowned() {
     if (!CVAR && (gPlayState != nullptr)) {
-        CleanupOwnedBenDrownedStatue();
-        ResetBenDrownedHistory();
+        CleanupOwnedStatue();
+        ResetHistory();
     }
 
     COND_ID_HOOK(OnActorUpdate, ACTOR_PLAYER, CVAR, [](Actor*) {
@@ -827,8 +784,8 @@ void RegisterBenDrowned() {
         Vec3f hiddenPoint;
         EnTorch2* statue;
         Player* player;
-        bool spawnedStatueThisFrame = false;
-        bool dismissedStatueThisFrame = false;
+        bool spawnedThisFrame = false;
+        bool dismissedThisFrame = false;
         bool statueVisible = false;
 
         if (play == nullptr) {
@@ -841,86 +798,83 @@ void RegisterBenDrowned() {
         }
 
         HandlePlayStateChange(play);
-        DecrementBenDrownedCooldown(&sBenDrownedDialogueCooldown);
+        DecrementCooldown(&sState.dialogueCooldown);
 
         if (!IsNormalGameplayState(play)) {
             return;
         }
 
         if (IsPlayerGroundedAndDry(player)) {
-            RecordBenDrownedHistoryPoint(player);
+            RecordHistoryPoint(player);
         }
-        DecrementBenDrownedCooldown(&sBenDrownedEffectCooldown);
-        DecrementBenDrownedCooldown(&sBenDrownedRespawnCooldown);
-        DecrementBenDrownedCooldown(&sBenDrownedColorDistortCooldown);
-        DecrementBenDrownedCooldown(&sBenDrownedLaughCooldown);
-        DecrementBenDrownedCooldown(&sBenDrownedMoveCooldown);
+        DecrementCooldown(&sState.effectCooldown);
+        DecrementCooldown(&sState.respawnCooldown);
+        DecrementCooldown(&sState.colorDistortCooldown);
+        DecrementCooldown(&sState.laughCooldown);
+        DecrementCooldown(&sState.moveCooldown);
 
-        statue = GetBenDrownedStatue(play);
+        statue = GetStatue(play);
         if (statue != nullptr) {
-            UpdateBenDrownedStatueLaugh(statue);
-            UpdateBenDrownedStatueProximityRumble(player, statue);
+            UpdateStatueLaugh(statue);
+            UpdateStatueProximityRumble(player, statue);
             statueVisible = CanCameraSeePoint(play, statue->actor.world.pos);
             if (statueVisible) {
-                UpdateBenDrownedStatueColorDistortion(statue);
-                if (!sBenDrownedStatueWasVisible) {
-                    sBenDrownedDisappearAfterObserved =
-                        Rand_ZeroOne() < BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED;
+                UpdateStatueColorDistortion(statue);
+                if (!sState.statueWasVisible) {
+                    sState.disappearAfterObserved = Rand_ZeroOne() < DISAPPEAR_CHANCE_AFTER_OBSERVED;
                 }
-                sBenDrownedStatueObserved = true;
-                sBenDrownedStatueWasVisible = true;
-                UpdateBenDrownedDebugOverlay(play, player, statue);
+                sState.statueObserved = true;
+                sState.statueWasVisible = true;
+                UpdateDebugOverlay(play, player, statue);
                 return;
             }
 
-            if (sBenDrownedStatueWasVisible) {
-                sBenDrownedStatueWasVisible = false;
-                if (sBenDrownedStatueObserved && sBenDrownedDisappearAfterObserved) {
-                    DismissBenDrownedStatue(play, statue);
+            if (sState.statueWasVisible) {
+                sState.statueWasVisible = false;
+                if (sState.statueObserved && sState.disappearAfterObserved) {
+                    DismissStatue(play, statue);
                     statue = nullptr;
-                    dismissedStatueThisFrame = true;
-                    sBenDrownedRespawnCooldown = BEN_DROWNED_RESPAWN_COOLDOWN_FRAMES;
+                    dismissedThisFrame = true;
+                    sState.respawnCooldown = RESPAWN_COOLDOWN_FRAMES;
                 }
             }
         }
 
-        if (dismissedStatueThisFrame) {
-            UpdateBenDrownedDebugOverlay(play, player, nullptr);
+        if (dismissedThisFrame) {
+            UpdateDebugOverlay(play, player, nullptr);
             return;
         }
 
-        if ((statue == nullptr) && (sBenDrownedRespawnCooldown <= 0) &&
-            FindDistantBenDrownedSpawnPoint(play, player, &hiddenPoint)) {
-            SnapBenDrownedPointToFloor(play, &hiddenPoint);
-            statue = SpawnBenDrownedStatue(play, hiddenPoint);
-            spawnedStatueThisFrame = statue != nullptr;
-            if (spawnedStatueThisFrame) {
-                ResetBenDrownedColorDistortCooldown();
-                sBenDrownedMoveCooldown = BEN_DROWNED_MOVE_COOLDOWN_FRAMES;
+        if ((statue == nullptr) && (sState.respawnCooldown <= 0) && FindDistantSpawnPoint(play, player, &hiddenPoint)) {
+            SnapPointToFloor(play, &hiddenPoint);
+            statue = SpawnStatue(play, hiddenPoint);
+            spawnedThisFrame = statue != nullptr;
+            if (spawnedThisFrame) {
+                ResetColorDistortCooldown();
+                sState.moveCooldown = MOVE_COOLDOWN_FRAMES;
             }
         }
 
-        if ((statue != nullptr) && FindBenDrownedTargetPoint(play, player, &hiddenPoint)) {
-            if (!spawnedStatueThisFrame && (sBenDrownedMoveCooldown <= 0) &&
-                (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > BEN_DROWNED_MOVE_DIST_SQ)) {
-                MoveBenDrownedStatue(play, player, statue, hiddenPoint);
-                TriggerBenDrownedArrivalEffects(play, player, statue);
-                sBenDrownedMoveCooldown = BEN_DROWNED_MOVE_COOLDOWN_FRAMES;
+        if ((statue != nullptr) && FindTargetPoint(play, player, &hiddenPoint)) {
+            if (!spawnedThisFrame && (sState.moveCooldown <= 0) &&
+                (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > MOVE_DIST_SQ)) {
+                MoveStatue(play, player, statue, hiddenPoint);
+                TriggerArrivalEffects(play, player, statue);
+                sState.moveCooldown = MOVE_COOLDOWN_FRAMES;
             }
         }
 
         if (statue != nullptr) {
-            // Keep the statue re-facing Link whenever it is off-camera, even if it is not ready to move again yet.
-            SetBenDrownedStatueRotation(statue, player);
+            SetStatueRotation(statue, player);
         }
 
-        UpdateBenDrownedDebugOverlay(play, player, statue);
+        UpdateDebugOverlay(play, player, statue);
     });
 
     COND_HOOK(OnOpenText, CVAR, [](u16* textId, bool* loadFromMessageTable) {
         PlayState* play = gPlayState;
 
-        if (!ShouldBenDrownedCorruptOpenText(play, *textId)) {
+        if (!ShouldCorruptOpenText(play, *textId)) {
             return;
         }
 
@@ -928,14 +882,14 @@ void RegisterBenDrowned() {
         if (entry.msg.empty()) {
             return;
         }
-        if (!TryCorruptBenDrownedMessage(&entry.msg)) {
+        if (!TryCorruptMessage(&entry.msg)) {
             return;
         }
 
         entry.autoFormat = false;
         CustomMessage::LoadCustomMessageIntoFont(entry);
         *loadFromMessageTable = false;
-        sBenDrownedDialogueCooldown = BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES;
+        sState.dialogueCooldown = DIALOGUE_COOLDOWN_FRAMES;
     });
 }
 

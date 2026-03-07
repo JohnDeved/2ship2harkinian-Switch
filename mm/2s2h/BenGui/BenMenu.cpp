@@ -206,8 +206,8 @@ void RenderBenDrownedDebugSection() {
     bool tuningChanged = false;
 
     if (ImGui::CollapsingHeader("Cooldown Tuning")) {
-        tuningChanged |= ImGui::SliderInt("Move cooldown (frames)", &tuning.moveCooldownFrames, 60, 7200);
-        tuningChanged |= ImGui::SliderInt("Respawn cooldown (frames)", &tuning.respawnCooldownFrames, 60, 7200);
+        tuningChanged |= ImGui::SliderInt("Move cooldown (frames)", &tuning.moveCooldownFrames, 60, 7200 * 100);
+        tuningChanged |= ImGui::SliderInt("Respawn cooldown (frames)", &tuning.respawnCooldownFrames, 60, 7200 * 100);
         tuningChanged |= ImGui::SliderInt("Dialogue cooldown (frames)", &tuning.dialogueCooldownFrames, 30, 3600);
         tuningChanged |= ImGui::SliderInt("Laugh base (frames)", &tuning.laughBaseFrames, 30, 3600);
         tuningChanged |= ImGui::SliderInt("Laugh random (frames)", &tuning.laughRandomFrames, 0, 3600);

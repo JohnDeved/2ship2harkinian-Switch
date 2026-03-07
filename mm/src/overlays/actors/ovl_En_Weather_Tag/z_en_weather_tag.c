@@ -494,9 +494,11 @@ void EnWeatherTag_Update(Actor* thisx, PlayState* play) {
         (play->transitionTrigger == TRANS_TRIGGER_OFF) && (CutsceneManager_GetCurrentCsId() == CS_ID_NONE) &&
         (play->csCtx.state == CS_STATE_IDLE)) {
 
-        gSaveContext.save.time = CURRENT_TIME + (u16)R_TIME_SPEED;
         if (R_TIME_SPEED != 0) {
-            gSaveContext.save.time = CURRENT_TIME + (u16)((void)0, gSaveContext.save.timeSpeedOffset);
+            gSaveContext.save.time =
+                CURRENT_TIME + (u16)(R_TIME_SPEED + ((void)0, gSaveContext.save.timeSpeedOffset));
+        } else {
+            gSaveContext.save.time = CURRENT_TIME + (u16)R_TIME_SPEED;
         }
     }
 }

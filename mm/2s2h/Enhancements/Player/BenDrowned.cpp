@@ -51,8 +51,8 @@ extern "C" {
 #define DISAPPEAR_CHANCE_AFTER_OBSERVED 0.7f
 
 // --- Laugh SFX ---
-#define LAUGH_BASE_FRAMES 3000
-#define LAUGH_RANDOM_FRAMES 1200
+#define LAUGH_BASE_FRAMES 600
+#define LAUGH_RANDOM_FRAMES 600
 #define LAUGH_MIN_PITCH 0.9f
 #define LAUGH_MAX_PITCH 1.1f
 
@@ -601,7 +601,7 @@ static void TriggerArrivalEffects(PlayState* play, Player* player, EnTorch2* sta
             Quake_SetDuration(quakeIndex, QUAKE_DURATION);
         }
 
-        Rumble_Request(distSq, RUMBLE_STRENGTH, RUMBLE_DECAY, RUMBLE_DURATION);
+        Rumble_Request(0.0f, RUMBLE_STRENGTH, RUMBLE_DECAY, RUMBLE_DURATION);
     }
 
     sState.effectCooldown = EFFECT_COOLDOWN_FRAMES;
@@ -633,7 +633,7 @@ static void UpdateStatueProximityRumble(Player* player, EnTorch2* statue) {
     u8 strength = LerpU8(PROXIMITY_RUMBLE_MIN_STRENGTH, PROXIMITY_RUMBLE_MAX_STRENGTH, proximity);
     u8 decayTimer = LerpU8(PROXIMITY_RUMBLE_MIN_DECAY, PROXIMITY_RUMBLE_MAX_DECAY, proximity);
 
-    Rumble_Override(distSq, strength, decayTimer, PROXIMITY_RUMBLE_STEP);
+    Rumble_Override(0.0f, strength, decayTimer, PROXIMITY_RUMBLE_STEP);
 }
 
 static void UpdateStatueColorDistortion(EnTorch2* statue) {
@@ -681,12 +681,26 @@ static void AddDebugHistoryObject(PlayState* play, const BenDrowned::DebugHistor
     }
 }
 
-static void UpdateDebugOverlay(PlayState* play, Player* player, EnTorch2* statue) {
+static void DrawDebugOverlay() {
+    PlayState* play = gPlayState;
+    Player* player;
+    EnTorch2* statue;
     Vec3f spawnPoint = { 0.0f, 0.0f, 0.0f };
     Vec3f targetPoint = { 0.0f, 0.0f, 0.0f };
 
     if ((play == nullptr) || !CVarGetInteger(DEBUG_OVERLAY_CVAR, 0)) {
         return;
+    }
+
+    player = GET_PLAYER(play);
+    statue = play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN];
+
+    if ((player == nullptr) || (player->actor.update == NULL)) {
+        player = nullptr;
+    }
+
+    if ((statue == nullptr) || (statue->actor.update == NULL)) {
+        statue = nullptr;
     }
 
     for (size_t i = 0; i < sState.historyCount; i++) {
@@ -830,7 +844,6 @@ void RegisterBenDrowned() {
                 }
                 sState.statueObserved = true;
                 sState.statueWasVisible = true;
-                UpdateDebugOverlay(play, player, statue);
                 return;
             }
 
@@ -846,7 +859,6 @@ void RegisterBenDrowned() {
         }
 
         if (dismissedThisFrame) {
-            UpdateDebugOverlay(play, player, nullptr);
             return;
         }
 
@@ -872,8 +884,6 @@ void RegisterBenDrowned() {
         if (statue != nullptr) {
             SetStatueRotation(statue, player);
         }
-
-        UpdateDebugOverlay(play, player, statue);
     });
 
     COND_HOOK(OnOpenText, CVAR, [](u16* textId, bool* loadFromMessageTable) {
@@ -896,6 +906,8 @@ void RegisterBenDrowned() {
         *loadFromMessageTable = false;
         sState.dialogueCooldown = DIALOGUE_COOLDOWN_FRAMES;
     });
+
+    COND_HOOK(OnPlayDrawWorldEnd, CVAR, []() { DrawDebugOverlay(); });
 }
 
-static RegisterShipInitFunc initFunc(RegisterBenDrowned, { CVAR_NAME });
+static RegisterShipInitFunc initFunc(RegisterBenDrowned, { CVAR_NAME, DEBUG_OVERLAY_CVAR });

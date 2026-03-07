@@ -1229,10 +1229,15 @@ void Environment_UpdateTime(PlayState* play, EnvironmentContext* envCtx, PauseCo
                 ((play->transitionMode == TRANS_MODE_OFF) || (gSaveContext.gameMode != GAMEMODE_NORMAL))) {
                 if (play->transitionTrigger == TRANS_TRIGGER_OFF) {
                     if ((CutsceneManager_GetCurrentCsId() == CS_ID_NONE) && !Play_InCsMode(play)) {
-                        gSaveContext.save.time = CURRENT_TIME + (u16)R_TIME_SPEED;
+                        // 2S2H [Port] Include timeSpeedOffset when R_TIME_SPEED is active.
+                        // The original decomp only had: time = CURRENT_TIME + R_TIME_SPEED;
+                        // We use if/else to avoid reading CURRENT_TIME after it's already been
+                        // modified, which would cause double advancement.
                         if (R_TIME_SPEED != 0) {
                             gSaveContext.save.time =
                                 CURRENT_TIME + (u16)(R_TIME_SPEED + ((void)0, gSaveContext.save.timeSpeedOffset));
+                        } else {
+                            gSaveContext.save.time = CURRENT_TIME + (u16)R_TIME_SPEED;
                         }
                     }
                 }

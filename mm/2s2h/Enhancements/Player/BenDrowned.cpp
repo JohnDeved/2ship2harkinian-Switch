@@ -26,14 +26,14 @@ extern "C" {
 #define HISTORY_SIZE 48
 #define HISTORY_DISTINCT_CHECK_WINDOW 12
 #define RECORD_INTERVAL_FRAMES 20
-#define MIN_HISTORY_POINT_DIST_SQ (20.0f * 20.0f)
+#define DEFAULT_HISTORY_POINT_MIN_DIST 20.0f
 
 // --- Spawn / movement distances (defaults) ---
 #define DEFAULT_MIN_SPAWN_DIST 50.0f
 #define DEFAULT_DISTANT_SPAWN_DIST 140.0f
 #define DEFAULT_MAX_NEARBY_DIST 225.0f
-#define MOVE_DIST_SQ (15.0f * 15.0f)
-#define MIN_REPOSITION_DISTANCE 30.0f
+#define DEFAULT_MOVE_THRESHOLD_DIST 15.0f
+#define DEFAULT_MIN_REPOSITION_DISTANCE 30.0f
 #define DEFAULT_FALLBACK_STALK_DISTANCE 80.0f
 #define DEFAULT_PROXIMITY_RUMBLE_DIST 100.0f
 
@@ -44,11 +44,21 @@ extern "C" {
 #define TUNING_CVAR_DIALOGUE_COOLDOWN TUNING_CVAR_BASE ".DialogueCooldown"
 #define TUNING_CVAR_LAUGH_BASE TUNING_CVAR_BASE ".LaughBase"
 #define TUNING_CVAR_LAUGH_RANDOM TUNING_CVAR_BASE ".LaughRandom"
+#define TUNING_CVAR_COLOR_DISTORT_BASE TUNING_CVAR_BASE ".ColorDistortBase"
+#define TUNING_CVAR_COLOR_DISTORT_RANDOM TUNING_CVAR_BASE ".ColorDistortRandom"
+#define TUNING_CVAR_COLOR_DISTORT_DURATION TUNING_CVAR_BASE ".ColorDistortDuration"
 #define TUNING_CVAR_DISAPPEAR_CHANCE TUNING_CVAR_BASE ".DisappearChance"
 #define TUNING_CVAR_DIALOGUE_CHANCE TUNING_CVAR_BASE ".DialogueChance"
+#define TUNING_CVAR_LAUGH_MIN_PITCH TUNING_CVAR_BASE ".LaughMinPitch"
+#define TUNING_CVAR_LAUGH_MAX_PITCH TUNING_CVAR_BASE ".LaughMaxPitch"
+#define TUNING_CVAR_HISTORY_POINT_MIN_DIST TUNING_CVAR_BASE ".HistoryPointMinDist"
 #define TUNING_CVAR_MIN_SPAWN_DIST TUNING_CVAR_BASE ".MinSpawnDist"
 #define TUNING_CVAR_DISTANT_SPAWN_DIST TUNING_CVAR_BASE ".DistantSpawnDist"
 #define TUNING_CVAR_MAX_NEARBY_DIST TUNING_CVAR_BASE ".MaxNearbyDist"
+#define TUNING_CVAR_MIN_REPOSITION_DIST TUNING_CVAR_BASE ".MinRepositionDist"
+#define TUNING_CVAR_MOVE_THRESHOLD_DIST TUNING_CVAR_BASE ".MoveThresholdDist"
+#define TUNING_CVAR_CLOSE_EFFECT_DIST TUNING_CVAR_BASE ".CloseEffectDist"
+#define TUNING_CVAR_JUMPSCARE_DIST TUNING_CVAR_BASE ".JumpscareDist"
 #define TUNING_CVAR_FALLBACK_STALK_DIST TUNING_CVAR_BASE ".FallbackStalkDist"
 #define TUNING_CVAR_PROXIMITY_RUMBLE_DIST TUNING_CVAR_BASE ".ProximityRumbleDist"
 
@@ -71,13 +81,13 @@ extern "C" {
 // --- Laugh SFX ---
 #define DEFAULT_LAUGH_BASE_FRAMES 300
 #define DEFAULT_LAUGH_RANDOM_FRAMES 300
-#define LAUGH_MIN_PITCH 0.9f
-#define LAUGH_MAX_PITCH 1.1f
+#define DEFAULT_LAUGH_MIN_PITCH 0.9f
+#define DEFAULT_LAUGH_MAX_PITCH 1.1f
 
 // --- Color distortion ---
-#define COLOR_DISTORT_BASE_FRAMES 240
-#define COLOR_DISTORT_RANDOM_FRAMES 360
-#define COLOR_DISTORT_DURATION 12
+#define DEFAULT_COLOR_DISTORT_BASE_FRAMES 240
+#define DEFAULT_COLOR_DISTORT_RANDOM_FRAMES 360
+#define DEFAULT_COLOR_DISTORT_DURATION 12
 #define COLOR_DISTORT_INTENSITY 160
 
 // --- Proximity rumble ---
@@ -88,8 +98,8 @@ extern "C" {
 #define PROXIMITY_RUMBLE_STEP 8
 
 // --- Arrival effects ---
-#define CLOSE_EFFECT_DIST_SQ (110.0f * 110.0f)
-#define JUMPSCARE_DIST_SQ (60.0f * 60.0f)
+#define DEFAULT_CLOSE_EFFECT_DIST 110.0f
+#define DEFAULT_JUMPSCARE_DIST 60.0f
 #define DUST_DRAW_FLAGS DUST_DRAWFLAG_RAND_COLOR_OFFSET
 #define DUST_SCALE 120
 #define DUST_SCALE_STEP (-8)
@@ -197,11 +207,21 @@ static BenDrowned::TuningParams sTuning = {
     DEFAULT_DIALOGUE_COOLDOWN_FRAMES,
     DEFAULT_LAUGH_BASE_FRAMES,
     DEFAULT_LAUGH_RANDOM_FRAMES,
+    DEFAULT_COLOR_DISTORT_BASE_FRAMES,
+    DEFAULT_COLOR_DISTORT_RANDOM_FRAMES,
+    DEFAULT_COLOR_DISTORT_DURATION,
     DEFAULT_DISAPPEAR_CHANCE,
     DIALOGUE_CHANCE,
+    DEFAULT_LAUGH_MIN_PITCH,
+    DEFAULT_LAUGH_MAX_PITCH,
+    DEFAULT_HISTORY_POINT_MIN_DIST,
     DEFAULT_MIN_SPAWN_DIST,
     DEFAULT_DISTANT_SPAWN_DIST,
     DEFAULT_MAX_NEARBY_DIST,
+    DEFAULT_MIN_REPOSITION_DISTANCE,
+    DEFAULT_MOVE_THRESHOLD_DIST,
+    DEFAULT_CLOSE_EFFECT_DIST,
+    DEFAULT_JUMPSCARE_DIST,
     DEFAULT_FALLBACK_STALK_DISTANCE,
     DEFAULT_PROXIMITY_RUMBLE_DIST,
 };
@@ -217,7 +237,25 @@ static void ResetLaughCooldown() {
 }
 
 static void ResetColorDistortCooldown() {
-    sState.colorDistortCooldown = COLOR_DISTORT_BASE_FRAMES + (s32)(Rand_ZeroOne() * COLOR_DISTORT_RANDOM_FRAMES);
+    sState.colorDistortCooldown =
+        sTuning.colorDistortBaseFrames + (s32)(Rand_ZeroOne() * sTuning.colorDistortRandomFrames);
+}
+
+static void NormalizeTuning() {
+    sTuning.colorDistortBaseFrames = std::max(sTuning.colorDistortBaseFrames, 0);
+    sTuning.colorDistortRandomFrames = std::max(sTuning.colorDistortRandomFrames, 0);
+    sTuning.colorDistortDuration = std::max(sTuning.colorDistortDuration, 1);
+    sTuning.historyPointMinDist = std::max(sTuning.historyPointMinDist, 1.0f);
+    sTuning.minRepositionDist = std::max(sTuning.minRepositionDist, 1.0f);
+    sTuning.moveThresholdDist = std::max(sTuning.moveThresholdDist, 1.0f);
+    sTuning.closeEffectDist = std::max(sTuning.closeEffectDist, 1.0f);
+    sTuning.jumpscareDist = std::max(sTuning.jumpscareDist, 1.0f);
+    sTuning.laughMinPitch = std::clamp(sTuning.laughMinPitch, 0.1f, 3.0f);
+    sTuning.laughMaxPitch = std::clamp(sTuning.laughMaxPitch, 0.1f, 3.0f);
+
+    if (sTuning.laughMinPitch > sTuning.laughMaxPitch) {
+        std::swap(sTuning.laughMinPitch, sTuning.laughMaxPitch);
+    }
 }
 
 static size_t HistoryIndexFromEnd(size_t i) {
@@ -360,13 +398,27 @@ static void LoadTuning() {
     sTuning.dialogueCooldownFrames = CVarGetInteger(TUNING_CVAR_DIALOGUE_COOLDOWN, DEFAULT_DIALOGUE_COOLDOWN_FRAMES);
     sTuning.laughBaseFrames = CVarGetInteger(TUNING_CVAR_LAUGH_BASE, DEFAULT_LAUGH_BASE_FRAMES);
     sTuning.laughRandomFrames = CVarGetInteger(TUNING_CVAR_LAUGH_RANDOM, DEFAULT_LAUGH_RANDOM_FRAMES);
+    sTuning.colorDistortBaseFrames =
+        CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_BASE, DEFAULT_COLOR_DISTORT_BASE_FRAMES);
+    sTuning.colorDistortRandomFrames =
+        CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_RANDOM, DEFAULT_COLOR_DISTORT_RANDOM_FRAMES);
+    sTuning.colorDistortDuration =
+        CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_DURATION, DEFAULT_COLOR_DISTORT_DURATION);
     sTuning.disappearChance = CVarGetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, DEFAULT_DISAPPEAR_CHANCE);
     sTuning.dialogueChance = CVarGetFloat(TUNING_CVAR_DIALOGUE_CHANCE, DIALOGUE_CHANCE);
+    sTuning.laughMinPitch = CVarGetFloat(TUNING_CVAR_LAUGH_MIN_PITCH, DEFAULT_LAUGH_MIN_PITCH);
+    sTuning.laughMaxPitch = CVarGetFloat(TUNING_CVAR_LAUGH_MAX_PITCH, DEFAULT_LAUGH_MAX_PITCH);
+    sTuning.historyPointMinDist = CVarGetFloat(TUNING_CVAR_HISTORY_POINT_MIN_DIST, DEFAULT_HISTORY_POINT_MIN_DIST);
     sTuning.minSpawnDist = CVarGetFloat(TUNING_CVAR_MIN_SPAWN_DIST, DEFAULT_MIN_SPAWN_DIST);
     sTuning.distantSpawnDist = CVarGetFloat(TUNING_CVAR_DISTANT_SPAWN_DIST, DEFAULT_DISTANT_SPAWN_DIST);
     sTuning.maxNearbyDist = CVarGetFloat(TUNING_CVAR_MAX_NEARBY_DIST, DEFAULT_MAX_NEARBY_DIST);
+    sTuning.minRepositionDist = CVarGetFloat(TUNING_CVAR_MIN_REPOSITION_DIST, DEFAULT_MIN_REPOSITION_DISTANCE);
+    sTuning.moveThresholdDist = CVarGetFloat(TUNING_CVAR_MOVE_THRESHOLD_DIST, DEFAULT_MOVE_THRESHOLD_DIST);
+    sTuning.closeEffectDist = CVarGetFloat(TUNING_CVAR_CLOSE_EFFECT_DIST, DEFAULT_CLOSE_EFFECT_DIST);
+    sTuning.jumpscareDist = CVarGetFloat(TUNING_CVAR_JUMPSCARE_DIST, DEFAULT_JUMPSCARE_DIST);
     sTuning.fallbackStalkDist = CVarGetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, DEFAULT_FALLBACK_STALK_DISTANCE);
     sTuning.proximityRumbleDist = CVarGetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, DEFAULT_PROXIMITY_RUMBLE_DIST);
+    NormalizeTuning();
 }
 
 static void HandlePlayStateChange(PlayState* play) {
@@ -403,7 +455,7 @@ static void RecordHistoryPoint(Player* player) {
     for (size_t i = 0; i < distinctCheckCount; i++) {
         size_t idx = HistoryIndexFromEnd(i);
 
-        if (Math3D_Vec3fDistSq(&sState.history[idx], &playerPos) < MIN_HISTORY_POINT_DIST_SQ) {
+        if (Math3D_Vec3fDistSq(&sState.history[idx], &playerPos) < SQ(sTuning.historyPointMinDist)) {
             sState.recordTimer = RECORD_INTERVAL_FRAMES;
             return;
         }
@@ -719,7 +771,7 @@ static bool FindTargetPointFarFromCurrent(PlayState* play, Player* player, const
     Vec3f currentPointCopy = currentPoint;
     bool foundHistoryPoint = false;
     f32 bestHistoryDistSq = 0.0f;
-    f32 minMoveDistSq = SQ(std::max(MIN_REPOSITION_DISTANCE, sTuning.minSpawnDist));
+    f32 minMoveDistSq = SQ(std::max(sTuning.minRepositionDist, sTuning.minSpawnDist));
 
     for (size_t i = 0; i < sState.historyCount; i++) {
         size_t idx = HistoryIndexFromEnd(i);
@@ -790,14 +842,14 @@ static void TriggerArrivalEffects(PlayState* play, Player* player, EnTorch2* sta
 
     distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
                              statue->actor.world.pos.z);
-    if (distSq > CLOSE_EFFECT_DIST_SQ) {
+    if (distSq > SQ(sTuning.closeEffectDist)) {
         return;
     }
 
     EffectSsDust_Spawn(play, DUST_DRAW_FLAGS, &statue->actor.world.pos, &sZeroVelocity, &sDustAccel, &sDustPrimColor,
                        &sDustEnvColor, DUST_SCALE, DUST_SCALE_STEP, DUST_LIFE, DUST_UPDATE_NORMAL);
 
-    if (distSq < JUMPSCARE_DIST_SQ) {
+    if (distSq < SQ(sTuning.jumpscareDist)) {
         quakeIndex = Quake_Request(GET_ACTIVE_CAM(play), QUAKE_TYPE_3);
 
         if (quakeIndex >= 0) {
@@ -817,7 +869,7 @@ static void UpdateStatueLaugh(EnTorch2* statue) {
         return;
     }
 
-    f32 laughPitch = LAUGH_MIN_PITCH + (Rand_ZeroOne() * (LAUGH_MAX_PITCH - LAUGH_MIN_PITCH));
+    f32 laughPitch = sTuning.laughMinPitch + (Rand_ZeroOne() * (sTuning.laughMaxPitch - sTuning.laughMinPitch));
     Audio_PlaySfx_AtPosWithFreq(&statue->actor.projectedPos, NA_SE_VO_OMVO00, laughPitch);
     ResetLaughCooldown();
 }
@@ -852,7 +904,7 @@ static void UpdateStatueColorDistortion(EnTorch2* statue) {
 
     const ColorDistortion& distortion = sColorDistortions[RandomIndex(std::size(sColorDistortions))];
     Actor_SetColorFilter(&statue->actor, distortion.colorFlag, distortion.intensity, COLORFILTER_BUFFLAG_OPA,
-                         COLOR_DISTORT_DURATION);
+                         sTuning.colorDistortDuration);
     ResetColorDistortCooldown();
 }
 
@@ -1004,16 +1056,27 @@ TuningParams& GetTuning() {
 }
 
 void SaveTuning() {
+    NormalizeTuning();
     CVarSetInteger(TUNING_CVAR_MOVE_COOLDOWN, sTuning.moveCooldownFrames);
     CVarSetInteger(TUNING_CVAR_RESPAWN_COOLDOWN, sTuning.respawnCooldownFrames);
     CVarSetInteger(TUNING_CVAR_DIALOGUE_COOLDOWN, sTuning.dialogueCooldownFrames);
     CVarSetInteger(TUNING_CVAR_LAUGH_BASE, sTuning.laughBaseFrames);
     CVarSetInteger(TUNING_CVAR_LAUGH_RANDOM, sTuning.laughRandomFrames);
+    CVarSetInteger(TUNING_CVAR_COLOR_DISTORT_BASE, sTuning.colorDistortBaseFrames);
+    CVarSetInteger(TUNING_CVAR_COLOR_DISTORT_RANDOM, sTuning.colorDistortRandomFrames);
+    CVarSetInteger(TUNING_CVAR_COLOR_DISTORT_DURATION, sTuning.colorDistortDuration);
     CVarSetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, sTuning.disappearChance);
     CVarSetFloat(TUNING_CVAR_DIALOGUE_CHANCE, sTuning.dialogueChance);
+    CVarSetFloat(TUNING_CVAR_LAUGH_MIN_PITCH, sTuning.laughMinPitch);
+    CVarSetFloat(TUNING_CVAR_LAUGH_MAX_PITCH, sTuning.laughMaxPitch);
+    CVarSetFloat(TUNING_CVAR_HISTORY_POINT_MIN_DIST, sTuning.historyPointMinDist);
     CVarSetFloat(TUNING_CVAR_MIN_SPAWN_DIST, sTuning.minSpawnDist);
     CVarSetFloat(TUNING_CVAR_DISTANT_SPAWN_DIST, sTuning.distantSpawnDist);
     CVarSetFloat(TUNING_CVAR_MAX_NEARBY_DIST, sTuning.maxNearbyDist);
+    CVarSetFloat(TUNING_CVAR_MIN_REPOSITION_DIST, sTuning.minRepositionDist);
+    CVarSetFloat(TUNING_CVAR_MOVE_THRESHOLD_DIST, sTuning.moveThresholdDist);
+    CVarSetFloat(TUNING_CVAR_CLOSE_EFFECT_DIST, sTuning.closeEffectDist);
+    CVarSetFloat(TUNING_CVAR_JUMPSCARE_DIST, sTuning.jumpscareDist);
     CVarSetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, sTuning.fallbackStalkDist);
     CVarSetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, sTuning.proximityRumbleDist);
     CVarSave();
@@ -1115,7 +1178,7 @@ void RegisterBenDrowned() {
 
         if ((statue != nullptr) && FindTargetPointFarFromCurrent(play, player, statue->actor.world.pos, &hiddenPoint)) {
             if (!spawnedThisFrame && (sState.moveCooldown <= 0) &&
-                (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > MOVE_DIST_SQ)) {
+                (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > SQ(sTuning.moveThresholdDist))) {
                 MoveStatue(play, player, statue, hiddenPoint);
                 TriggerArrivalEffects(play, player, statue);
                 sState.moveCooldown = sTuning.moveCooldownFrames;
@@ -1164,11 +1227,21 @@ static RegisterShipInitFunc initFunc(RegisterBenDrowned, {
                                                              TUNING_CVAR_DIALOGUE_COOLDOWN,
                                                              TUNING_CVAR_LAUGH_BASE,
                                                              TUNING_CVAR_LAUGH_RANDOM,
+                                                             TUNING_CVAR_COLOR_DISTORT_BASE,
+                                                             TUNING_CVAR_COLOR_DISTORT_RANDOM,
+                                                             TUNING_CVAR_COLOR_DISTORT_DURATION,
                                                              TUNING_CVAR_DISAPPEAR_CHANCE,
                                                              TUNING_CVAR_DIALOGUE_CHANCE,
+                                                             TUNING_CVAR_LAUGH_MIN_PITCH,
+                                                             TUNING_CVAR_LAUGH_MAX_PITCH,
+                                                             TUNING_CVAR_HISTORY_POINT_MIN_DIST,
                                                              TUNING_CVAR_MIN_SPAWN_DIST,
                                                              TUNING_CVAR_DISTANT_SPAWN_DIST,
                                                              TUNING_CVAR_MAX_NEARBY_DIST,
+                                                             TUNING_CVAR_MIN_REPOSITION_DIST,
+                                                             TUNING_CVAR_MOVE_THRESHOLD_DIST,
+                                                             TUNING_CVAR_CLOSE_EFFECT_DIST,
+                                                             TUNING_CVAR_JUMPSCARE_DIST,
                                                              TUNING_CVAR_FALLBACK_STALK_DIST,
                                                              TUNING_CVAR_PROXIMITY_RUMBLE_DIST,
                                                          });

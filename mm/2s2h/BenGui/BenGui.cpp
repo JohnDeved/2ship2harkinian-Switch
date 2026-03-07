@@ -163,7 +163,7 @@ void SetupGuiElements() {
     gui->AddGuiWindow(mAudioEditorWindow);
 
     mBenDrownedDebugWindow = std::make_shared<BenDrownedDebugWindow>("gWindows.BenDrownedDebug",
-                                                                     "Ben Drowned Debug", ImVec2(480, 600));
+                                                                     "Spooky Mode Debug", ImVec2(480, 600));
     gui->AddGuiWindow(mBenDrownedDebugWindow);
 
     mItemTrackerWindow = std::make_shared<ItemTrackerWindow>("gWindows.ItemTracker", "Item Tracker");

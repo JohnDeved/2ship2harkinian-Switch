@@ -153,7 +153,7 @@ void RenderBenDrownedDebugSection() {
     ImGui::SeparatorText("Runtime State");
 
     if (!snapshot.enabled) {
-        ImGui::TextColored(UIWidgets::ColorValues.at(UIWidgets::Colors::Gray), "Ben Drowned mode is disabled.");
+        ImGui::TextColored(UIWidgets::ColorValues.at(UIWidgets::Colors::Gray), "Spooky Mode is disabled.");
         return;
     }
 
@@ -216,10 +216,23 @@ void RenderBenDrownedDebugSection() {
         tuningChanged |= ImGui::SliderFloat("Dialogue chance", &tuning.dialogueChance, 0.0f, 1.0f, "%.2f");
     }
 
+    if (ImGui::CollapsingHeader("Audio / FX Tuning")) {
+        tuningChanged |= ImGui::SliderFloat("Laugh min pitch", &tuning.laughMinPitch, 0.1f, 3.0f, "%.2f");
+        tuningChanged |= ImGui::SliderFloat("Laugh max pitch", &tuning.laughMaxPitch, 0.1f, 3.0f, "%.2f");
+        tuningChanged |= ImGui::SliderInt("Color base (frames)", &tuning.colorDistortBaseFrames, 0, 3600);
+        tuningChanged |= ImGui::SliderInt("Color random (frames)", &tuning.colorDistortRandomFrames, 0, 3600);
+        tuningChanged |= ImGui::SliderInt("Color duration (frames)", &tuning.colorDistortDuration, 1, 120);
+    }
+
     if (ImGui::CollapsingHeader("Distance Tuning")) {
+        tuningChanged |= ImGui::SliderFloat("History point spacing", &tuning.historyPointMinDist, 1.0f, 200.0f, "%.0f");
         tuningChanged |= ImGui::SliderFloat("Min spawn dist", &tuning.minSpawnDist, 10.0f, 500.0f, "%.0f");
         tuningChanged |= ImGui::SliderFloat("Distant spawn dist", &tuning.distantSpawnDist, 20.0f, 1000.0f, "%.0f");
         tuningChanged |= ImGui::SliderFloat("Max nearby dist", &tuning.maxNearbyDist, 50.0f, 1000.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Min reposition dist", &tuning.minRepositionDist, 1.0f, 300.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Move threshold dist", &tuning.moveThresholdDist, 1.0f, 200.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Close effect dist", &tuning.closeEffectDist, 1.0f, 300.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Jumpscare dist", &tuning.jumpscareDist, 1.0f, 300.0f, "%.0f");
         tuningChanged |= ImGui::SliderFloat("Fallback stalk dist", &tuning.fallbackStalkDist, 20.0f, 500.0f, "%.0f");
         tuningChanged |=
             ImGui::SliderFloat("Proximity rumble dist", &tuning.proximityRumbleDist, 10.0f, 500.0f, "%.0f");
@@ -1229,10 +1242,6 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Fierce Deity Putaway", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.FierceDeityPutaway")
         .Options(CheckboxOptions().Tooltip("Allows Fierce Deity Link to put away his sword."));
-    AddWidget(path, "Ben Drowned Mode", WIDGET_CVAR_CHECKBOX)
-        .CVar("gEnhancements.Player.BenDrowned")
-        .Options(CheckboxOptions().Tooltip("Turns the human Elegy statue into a weeping angel that stalks Link from "
-                                           "recent hidden positions and only moves while off-camera."));
     AddWidget(path, "Climb speed", WIDGET_CVAR_SLIDER_INT)
         .CVar("gEnhancements.Player.ClimbSpeed")
         .Options(IntSliderOptions()
@@ -2248,13 +2257,17 @@ void BenMenu::AddDevTools() {
         .Options(ButtonOptions().Tooltip("Makes collision visible on screen.").Size(Sizes::Inline))
         .WindowName("Collision Viewer");
 
-    path = { "Dev Tools", "Ben Drowned", SECTION_COLUMN_1 };
-    AddSidebarEntry("Dev Tools", "Ben Drowned", 1);
-    AddWidget(path, "Popout Ben Drowned Debug", WIDGET_WINDOW_BUTTON)
+    path = { "Dev Tools", "Spooky Mode", SECTION_COLUMN_1 };
+    AddSidebarEntry("Dev Tools", "Spooky Mode", 1);
+    AddWidget(path, "Spooky Mode", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.BenDrowned")
+        .Options(CheckboxOptions().Tooltip("Turns the human Elegy statue into a weeping angel that stalks Link from "
+                                           "recent hidden positions and only moves while off-camera."));
+    AddWidget(path, "Popout Spooky Mode Debug", WIDGET_WINDOW_BUTTON)
         .CVar("gWindows.BenDrownedDebug")
-        .Options(ButtonOptions().Tooltip("Opens the Ben Drowned debug panel in a separate window.").Size(Sizes::Inline))
-        .WindowName("Ben Drowned Debug");
-    AddWidget(path, "Ben Drowned Debug", WIDGET_CUSTOM)
+        .Options(ButtonOptions().Tooltip("Opens the Spooky Mode debug panel in a separate window.").Size(Sizes::Inline))
+        .WindowName("Spooky Mode Debug");
+    AddWidget(path, "Spooky Mode Debug", WIDGET_CUSTOM)
         .CustomFunction([](WidgetInfo& info) {
             ImGui::PushID("BenDrownedDebugInline");
             RenderBenDrownedDebugSection();

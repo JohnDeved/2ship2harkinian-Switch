@@ -20,6 +20,7 @@ extern "C" {
 
 static s32 sSwitchCooldown = 0;
 static bool sStickReleased = true;
+static s32 sPrevRightStickX = 0;
 
 static bool IsActorTargetable(PlayState* play, Player* player, Actor* actor) {
     if (actor == NULL || actor->update == NULL) {
@@ -64,11 +65,14 @@ void RegisterModernZTargeting() {
         PlayState* play = gPlayState;
         Player* player = GET_PLAYER(play);
 
+        s32 rightStickX = play->state.input[0].cur.right_stick_x;
+
         // Not active during cutscenes or special states
         if ((play->csCtx.state != CS_STATE_IDLE) || (player->csAction != PLAYER_CSACTION_NONE) ||
             (player->stateFlags1 & (PLAYER_STATE1_DEAD | PLAYER_STATE1_20000000))) {
             sSwitchCooldown = 0;
             sStickReleased = true;
+            sPrevRightStickX = rightStickX;
             return;
         }
 
@@ -76,10 +80,9 @@ void RegisterModernZTargeting() {
         if (player->focusActor == NULL) {
             sSwitchCooldown = 0;
             sStickReleased = true;
+            sPrevRightStickX = rightStickX;
             return;
         }
-
-        s32 rightStickX = play->state.input[0].cur.right_stick_x;
 
         if (sSwitchCooldown > 0) {
             sSwitchCooldown--;
@@ -90,12 +93,20 @@ void RegisterModernZTargeting() {
             sStickReleased = true;
         }
 
-        if (!sStickReleased || sSwitchCooldown > 0 ||
-            (rightStickX > -STICK_THRESHOLD && rightStickX < STICK_THRESHOLD)) {
+        bool wasNeutral = (sPrevRightStickX > -STICK_THRESHOLD) && (sPrevRightStickX < STICK_THRESHOLD);
+        bool crossedRight = wasNeutral && (rightStickX >= STICK_THRESHOLD);
+        bool crossedLeft = wasNeutral && (rightStickX <= -STICK_THRESHOLD);
+        bool hasFlick = crossedRight || crossedLeft;
+
+        if (!sStickReleased || sSwitchCooldown > 0 || !hasFlick) {
+            sPrevRightStickX = rightStickX;
             return;
         }
 
-        bool switchRight = rightStickX > 0;
+        // Consume this as a single flick attempt; require returning to neutral before trying again.
+        sStickReleased = false;
+
+        bool switchRight = crossedRight;
 
         // Use camera yaw to determine screen-space left/right
         Camera* cam = play->cameraPtrs[play->activeCamId];
@@ -176,9 +187,10 @@ void RegisterModernZTargeting() {
             player->zTargetActiveTimer = 15;
             player->stateFlags2 &= ~(PLAYER_STATE2_CAN_ACCEPT_TALK_OFFER | PLAYER_STATE2_200000);
 
-            sStickReleased = false;
             sSwitchCooldown = SWITCH_COOLDOWN;
         }
+
+        sPrevRightStickX = rightStickX;
     });
 }
 

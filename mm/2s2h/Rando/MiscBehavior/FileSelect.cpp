@@ -148,6 +148,18 @@ Vtx sRandVtxData[20 * FILE_NUM_MAX];
 constexpr s16 RAND_ICON_HEIGHT = 16;
 constexpr s16 RAND_ICON_WIDTH = 32;
 
+static bool IsValidRandoSaveForFileSelect(const SaveContext* saveContext) {
+    const ShipSaveInfo* shipSaveInfo = &saveContext->save.shipSaveInfo;
+    const RandoSaveInfo* randoSaveInfo = &shipSaveInfo->rando;
+
+    static_assert(RO_LOGIC < RO_MAX);
+    static_assert(RC_UNKNOWN < RC_MAX);
+
+    return shipSaveInfo->saveType == SAVETYPE_RANDO && randoSaveInfo->finalSeed != 0 &&
+           randoSaveInfo->randoSaveOptions[RO_LOGIC] <= RO_LOGIC_VANILLA &&
+           randoSaveInfo->randoSaveChecks[RC_UNKNOWN].randoItemId == RI_UNKNOWN;
+}
+
 // Initialize all vtx data with dummy/default values
 void CreateRandSaveTypeVtxData() {
     for (int vtxId = 0; vtxId < ARRAY_COUNT(sRandVtxData); vtxId += 4) {
@@ -411,11 +423,9 @@ void Rando::MiscBehavior::InitFileSelect() {
 
     GameInteractor::Instance->RegisterGameHook<GameInteractor::OnFileSelectSaveLoad>(
         [](s16 fileNum, bool isOwlSave, SaveContext* saveContext) {
-            isRando[fileNum + (isOwlSave ? FILE_NUM_OWL_SAVE_OFFSET : 0)] =
-                saveContext->save.shipSaveInfo.saveType == SAVETYPE_RANDO;
-            if (isRando[fileNum + (isOwlSave ? FILE_NUM_OWL_SAVE_OFFSET : 0)]) {
-                seedHashes[fileNum + (isOwlSave ? FILE_NUM_OWL_SAVE_OFFSET : 0)] =
-                    gSaveContext.save.shipSaveInfo.rando.finalSeed;
-            }
+            s16 fileIndex = fileNum + (isOwlSave ? FILE_NUM_OWL_SAVE_OFFSET : 0);
+
+            isRando[fileIndex] = IsValidRandoSaveForFileSelect(saveContext);
+            seedHashes[fileIndex] = isRando[fileIndex] ? saveContext->save.shipSaveInfo.rando.finalSeed : 0;
         });
 }

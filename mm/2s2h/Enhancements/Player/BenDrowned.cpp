@@ -7,7 +7,9 @@
 extern "C" {
 #include "functions.h"
 #include "variables.h"
+#include "z64quake.h"
 #include "overlays/actors/ovl_En_Torch2/z_en_torch2.h"
+#include "overlays/effects/ovl_Effect_Ss_Dust/z_eff_ss_dust.h"
 }
 
 #define CVAR_NAME "gEnhancements.Player.BenDrowned"
@@ -19,10 +21,26 @@ constexpr s32 BEN_DROWNED_RECORD_INTERVAL_FRAMES = 20;
 constexpr f32 BEN_DROWNED_MIN_SPAWN_DIST_SQ = 100.0f * 100.0f;
 constexpr f32 BEN_DROWNED_MAX_NEARBY_DIST_SQ = 450.0f * 450.0f;
 constexpr f32 BEN_DROWNED_MOVE_DIST_SQ = 30.0f * 30.0f;
+constexpr f32 BEN_DROWNED_CLOSE_EFFECT_DIST_SQ = 220.0f * 220.0f;
+constexpr f32 BEN_DROWNED_JUMPSCARE_DIST_SQ = 120.0f * 120.0f;
 constexpr f32 BEN_DROWNED_VISIBILITY_HEIGHT = 40.0f;
 constexpr f32 BEN_DROWNED_FLOOR_RAYCAST_HEIGHT = 60.0f;
 constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.15f;
 constexpr f32 BEN_DROWNED_FALLBACK_STALK_DISTANCE = 160.0f;
+constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
+constexpr u16 BEN_DROWNED_DUST_DRAW_FLAGS = DUST_DRAWFLAG_RAND_COLOR_OFFSET;
+constexpr s16 BEN_DROWNED_DUST_SCALE = 120;
+constexpr s16 BEN_DROWNED_DUST_SCALE_STEP = -8;
+constexpr s16 BEN_DROWNED_DUST_LIFE = 6;
+constexpr s16 BEN_DROWNED_QUAKE_SPEED = 17232;
+constexpr s16 BEN_DROWNED_QUAKE_PERTURB_X = 2;
+constexpr s16 BEN_DROWNED_QUAKE_PERTURB_Y = 0;
+constexpr s16 BEN_DROWNED_QUAKE_PERTURB_Z = 0;
+constexpr s16 BEN_DROWNED_QUAKE_PERTURB_W = 0;
+constexpr s16 BEN_DROWNED_QUAKE_DURATION = 4;
+constexpr u8 BEN_DROWNED_RUMBLE_STRENGTH = 180;
+constexpr u8 BEN_DROWNED_RUMBLE_DECAY = 10;
+constexpr u8 BEN_DROWNED_RUMBLE_DURATION = 70;
 constexpr s16 BEN_DROWNED_FALLBACK_YAW_SIDE_NEAR = 0x5000;
 constexpr s16 BEN_DROWNED_FALLBACK_YAW_SIDE_FAR = 0x7000;
 constexpr s16 BEN_DROWNED_FALLBACK_YAW_BEHIND = (s16)0x8000;
@@ -38,9 +56,13 @@ struct BenDrownedHistoryEntry {
 
 std::array<BenDrownedHistoryEntry, BEN_DROWNED_HISTORY_SIZE> sBenDrownedHistory;
 Vec3f sBenDrownedZeroVelocity = { 0.0f, 0.0f, 0.0f };
+Vec3f sBenDrownedDustAccel = { 0.0f, 0.08f, 0.0f };
+Color_RGBA8 sBenDrownedDustPrimColor = { 170, 130, 90, 160 };
+Color_RGBA8 sBenDrownedDustEnvColor = { 100, 60, 20, 110 };
 size_t sBenDrownedHistoryCount = 0;
 size_t sBenDrownedHistoryWriteIndex = 0;
 s32 sBenDrownedRecordTimer = 0;
+s32 sBenDrownedEffectCooldown = 0;
 PlayState* sLastPlayState = nullptr;
 EnTorch2* sOwnedBenDrownedStatue = nullptr;
 bool sSpawnedBenDrownedStatue = false;
@@ -49,6 +71,7 @@ void ResetBenDrownedHistory() {
     sBenDrownedHistoryCount = 0;
     sBenDrownedHistoryWriteIndex = 0;
     sBenDrownedRecordTimer = 0;
+    sBenDrownedEffectCooldown = 0;
 }
 
 void ClearBenDrownedStatueTracking() {
@@ -264,6 +287,46 @@ void MoveBenDrownedStatue(PlayState* play, Player* player, EnTorch2* statue, con
 
     SetBenDrownedStatueRotation(statue, player);
 }
+
+void TriggerBenDrownedArrivalEffects(PlayState* play, Player* player, EnTorch2* statue) {
+    f32 distSq;
+    f32 dist;
+    s16 quakeIndex;
+
+    if (sBenDrownedEffectCooldown > 0) {
+        return;
+    }
+
+    distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
+                             statue->actor.world.pos.z);
+    if (distSq > BEN_DROWNED_CLOSE_EFFECT_DIST_SQ) {
+        return;
+    }
+
+    EffectSsDust_Spawn(play, BEN_DROWNED_DUST_DRAW_FLAGS, &statue->actor.world.pos,
+                       &sBenDrownedZeroVelocity, &sBenDrownedDustAccel, &sBenDrownedDustPrimColor,
+                       &sBenDrownedDustEnvColor, BEN_DROWNED_DUST_SCALE, BEN_DROWNED_DUST_SCALE_STEP,
+                       BEN_DROWNED_DUST_LIFE, DUST_UPDATE_NORMAL);
+
+    Actor_PlaySfx(&statue->actor, (distSq < BEN_DROWNED_JUMPSCARE_DIST_SQ) ? NA_SE_EV_STONEDOOR_STOP
+                                                                            : NA_SE_EV_STONE_STATUE_OPEN);
+
+    if (distSq < BEN_DROWNED_JUMPSCARE_DIST_SQ) {
+        dist = sqrtf(distSq);
+        quakeIndex = Quake_Request(GET_ACTIVE_CAM(play), QUAKE_TYPE_3);
+
+        if (quakeIndex >= 0) {
+            Quake_SetSpeed(quakeIndex, BEN_DROWNED_QUAKE_SPEED);
+            Quake_SetPerturbations(quakeIndex, BEN_DROWNED_QUAKE_PERTURB_X, BEN_DROWNED_QUAKE_PERTURB_Y,
+                                   BEN_DROWNED_QUAKE_PERTURB_Z, BEN_DROWNED_QUAKE_PERTURB_W);
+            Quake_SetDuration(quakeIndex, BEN_DROWNED_QUAKE_DURATION);
+        }
+
+        Rumble_Request(dist, BEN_DROWNED_RUMBLE_STRENGTH, BEN_DROWNED_RUMBLE_DECAY, BEN_DROWNED_RUMBLE_DURATION);
+    }
+
+    sBenDrownedEffectCooldown = BEN_DROWNED_EFFECT_COOLDOWN_FRAMES;
+}
 } // namespace
 
 void RegisterBenDrowned() {
@@ -297,6 +360,9 @@ void RegisterBenDrowned() {
         if (IsPlayerGroundedAndDry(player)) {
             RecordBenDrownedHistoryPoint(player);
         }
+        if (sBenDrownedEffectCooldown > 0) {
+            sBenDrownedEffectCooldown--;
+        }
 
         statue = GetBenDrownedStatue(play);
         if ((statue != nullptr) && CanCameraSeePoint(play, statue->actor.world.pos)) {
@@ -314,6 +380,7 @@ void RegisterBenDrowned() {
                 (spawnedStatueThisFrame ||
                  (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > BEN_DROWNED_MOVE_DIST_SQ))) {
                 MoveBenDrownedStatue(play, player, statue, hiddenPoint);
+                TriggerBenDrownedArrivalEffects(play, player, statue);
             }
         }
 

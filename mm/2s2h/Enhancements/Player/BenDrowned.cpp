@@ -17,15 +17,27 @@ namespace {
 constexpr size_t BEN_DROWNED_HISTORY_SIZE = 24;
 constexpr s32 BEN_DROWNED_RECORD_INTERVAL_FRAMES = 20;
 constexpr f32 BEN_DROWNED_MIN_SPAWN_DIST_SQ = 100.0f * 100.0f;
+constexpr f32 BEN_DROWNED_MAX_NEARBY_DIST_SQ = 450.0f * 450.0f;
 constexpr f32 BEN_DROWNED_MOVE_DIST_SQ = 30.0f * 30.0f;
 constexpr f32 BEN_DROWNED_VISIBILITY_HEIGHT = 40.0f;
 constexpr f32 BEN_DROWNED_FLOOR_RAYCAST_HEIGHT = 60.0f;
+constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.15f;
+constexpr f32 BEN_DROWNED_FALLBACK_STALK_DISTANCE = 160.0f;
+constexpr s16 BEN_DROWNED_FALLBACK_YAW_SIDE_NEAR = 0x5000;
+constexpr s16 BEN_DROWNED_FALLBACK_YAW_SIDE_FAR = 0x7000;
+constexpr s16 BEN_DROWNED_FALLBACK_YAW_BEHIND = (s16)0x8000;
+constexpr std::array<s16, 5> BEN_DROWNED_FALLBACK_YAW_OFFSETS = { BEN_DROWNED_FALLBACK_YAW_SIDE_NEAR,
+                                                                   (s16)-BEN_DROWNED_FALLBACK_YAW_SIDE_NEAR,
+                                                                   BEN_DROWNED_FALLBACK_YAW_SIDE_FAR,
+                                                                   (s16)-BEN_DROWNED_FALLBACK_YAW_SIDE_FAR,
+                                                                   BEN_DROWNED_FALLBACK_YAW_BEHIND };
 
 struct BenDrownedHistoryEntry {
     Vec3f pos;
 };
 
 std::array<BenDrownedHistoryEntry, BEN_DROWNED_HISTORY_SIZE> sBenDrownedHistory;
+Vec3f sBenDrownedZeroVelocity = { 0.0f, 0.0f, 0.0f };
 size_t sBenDrownedHistoryCount = 0;
 size_t sBenDrownedHistoryWriteIndex = 0;
 s32 sBenDrownedRecordTimer = 0;
@@ -45,7 +57,8 @@ void ClearBenDrownedStatueTracking() {
 }
 
 void CleanupOwnedBenDrownedStatue() {
-    if (sSpawnedBenDrownedStatue && (sOwnedBenDrownedStatue != nullptr) && (sOwnedBenDrownedStatue->actor.update != NULL)) {
+    if (sSpawnedBenDrownedStatue && (sOwnedBenDrownedStatue != nullptr) &&
+        (sOwnedBenDrownedStatue->actor.update != NULL)) {
         Actor_Kill(&sOwnedBenDrownedStatue->actor);
     }
 
@@ -64,6 +77,10 @@ bool IsNormalGameplayState(PlayState* play) {
     return (play->pauseCtx.state == PAUSE_STATE_OFF) && (play->pauseCtx.debugEditor == DEBUG_EDITOR_NONE) &&
            (play->msgCtx.msgMode == MSGMODE_NONE) && (play->transitionTrigger == TRANS_TRIGGER_OFF) &&
            (play->transitionMode == TRANS_MODE_OFF) && !Play_InCsMode(play);
+}
+
+bool IsPlayerGroundedAndDry(Player* player) {
+    return (player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && !(player->actor.bgCheckFlags & BGCHECKFLAG_WATER);
 }
 
 void RecordBenDrownedHistoryPoint(Player* player) {
@@ -87,8 +104,9 @@ bool IsPointOnScreen(PlayState* play, const Vec3f& worldPos) {
 
     SkinMatrix_Vec3fMtxFMultXYZW(&play->viewProjectionMtxF, &projectedSource, &projectedPos, &projectedW);
 
-    return (projectedW > 1.0f) && (projectedPos.z > 0.0f) && (fabsf(projectedPos.x) < projectedW) &&
-           (fabsf(projectedPos.y) < projectedW);
+    return (projectedW > 1.0f) && (projectedPos.z > 0.0f) &&
+           (fabsf(projectedPos.x) < (projectedW * BEN_DROWNED_WATCH_MARGIN)) &&
+           (fabsf(projectedPos.y) < (projectedW * BEN_DROWNED_WATCH_MARGIN));
 }
 
 bool CanCameraSeePoint(PlayState* play, const Vec3f& point) {
@@ -109,13 +127,18 @@ bool CanCameraSeePoint(PlayState* play, const Vec3f& point) {
     return !BgCheck_AnyLineTest1(&play->colCtx, &camera->eye, &watchPoint, &hitPos, &hitPoly, false);
 }
 
-bool FindHiddenBenDrownedPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
+bool FindHiddenBenDrownedHistoryPoint(PlayState* play, Player* player, f32 maxDistSq, Vec3f* hiddenPoint) {
     for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
         size_t historyIndex =
             (sBenDrownedHistoryWriteIndex + BEN_DROWNED_HISTORY_SIZE - i - 1) % BEN_DROWNED_HISTORY_SIZE;
         Vec3f candidatePoint = sBenDrownedHistory[historyIndex].pos;
+        f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
 
-        if (Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos) < BEN_DROWNED_MIN_SPAWN_DIST_SQ) {
+        if (playerDistSq < BEN_DROWNED_MIN_SPAWN_DIST_SQ) {
+            continue;
+        }
+
+        if ((maxDistSq > 0.0f) && (playerDistSq > maxDistSq)) {
             continue;
         }
 
@@ -128,7 +151,7 @@ bool FindHiddenBenDrownedPoint(PlayState* play, Player* player, Vec3f* hiddenPoi
     return false;
 }
 
-void SnapBenDrownedPointToFloor(PlayState* play, Vec3f* point) {
+bool SnapBenDrownedPointToFloor(PlayState* play, Vec3f* point) {
     Vec3f raycastPos = *point;
     CollisionPoly* floorPoly = nullptr;
     s32 bgId;
@@ -139,17 +162,24 @@ void SnapBenDrownedPointToFloor(PlayState* play, Vec3f* point) {
 
     if (floorHeight != BGCHECK_Y_MIN) {
         point->y = floorHeight;
+        return true;
     }
+
+    return false;
+}
+
+bool IsBenDrownedStatueAlive(EnTorch2* statue) {
+    return (statue != nullptr) && (statue->actor.update != NULL);
 }
 
 EnTorch2* GetBenDrownedStatue(PlayState* play) {
     EnTorch2* statue = play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN];
 
-    if ((sOwnedBenDrownedStatue != nullptr) && (sOwnedBenDrownedStatue->actor.update == NULL)) {
+    if (!IsBenDrownedStatueAlive(sOwnedBenDrownedStatue)) {
         ClearBenDrownedStatueTracking();
     }
 
-    if ((statue != nullptr) && (statue->actor.update == NULL)) {
+    if (!IsBenDrownedStatueAlive(statue)) {
         statue = nullptr;
         play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN] = nullptr;
     }
@@ -182,6 +212,39 @@ void SetBenDrownedStatueRotation(EnTorch2* statue, Player* player) {
     statue->actor.home.rot.y = targetYaw;
 }
 
+bool FindBenDrownedFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
+    Camera* camera = GET_ACTIVE_CAM(play);
+
+    if (camera == nullptr) {
+        return false;
+    }
+
+    for (s16 yawOffset : BEN_DROWNED_FALLBACK_YAW_OFFSETS) {
+        Vec3f candidatePoint = player->actor.world.pos;
+        s16 stalkYaw = Math_Vec3f_Yaw(&camera->eye, &camera->at) + yawOffset;
+
+        candidatePoint.x += Math_SinS(stalkYaw) * BEN_DROWNED_FALLBACK_STALK_DISTANCE;
+        candidatePoint.z += Math_CosS(stalkYaw) * BEN_DROWNED_FALLBACK_STALK_DISTANCE;
+
+        if (!SnapBenDrownedPointToFloor(play, &candidatePoint)) {
+            continue;
+        }
+
+        if (!CanCameraSeePoint(play, candidatePoint)) {
+            *hiddenPoint = candidatePoint;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool FindBenDrownedTargetPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
+    return FindHiddenBenDrownedHistoryPoint(play, player, BEN_DROWNED_MAX_NEARBY_DIST_SQ, hiddenPoint) ||
+           FindBenDrownedFallbackPoint(play, player, hiddenPoint) ||
+           FindHiddenBenDrownedHistoryPoint(play, player, 0.0f, hiddenPoint);
+}
+
 void MoveBenDrownedStatue(PlayState* play, Player* player, EnTorch2* statue, const Vec3f& targetPoint) {
     Vec3f snappedPoint = targetPoint;
 
@@ -191,9 +254,7 @@ void MoveBenDrownedStatue(PlayState* play, Player* player, EnTorch2* statue, con
     Math_Vec3f_Copy(&statue->actor.prevPos, &snappedPoint);
     Math_Vec3f_Copy(&statue->actor.focus.pos, &snappedPoint);
 
-    statue->actor.velocity.x = 0.0f;
-    statue->actor.velocity.y = 0.0f;
-    statue->actor.velocity.z = 0.0f;
+    Math_Vec3f_Copy(&statue->actor.velocity, &sBenDrownedZeroVelocity);
     statue->actor.speed = 0.0f;
     statue->actor.floorHeight = snappedPoint.y;
     statue->actor.bgCheckFlags |= BGCHECKFLAG_GROUND;
@@ -233,7 +294,7 @@ void RegisterBenDrowned() {
             return;
         }
 
-        if ((player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && !(player->actor.bgCheckFlags & BGCHECKFLAG_WATER)) {
+        if (IsPlayerGroundedAndDry(player)) {
             RecordBenDrownedHistoryPoint(player);
         }
 
@@ -242,7 +303,7 @@ void RegisterBenDrowned() {
             return;
         }
 
-        if (FindHiddenBenDrownedPoint(play, player, &hiddenPoint)) {
+        if (FindBenDrownedTargetPoint(play, player, &hiddenPoint)) {
             if (statue == nullptr) {
                 SnapBenDrownedPointToFloor(play, &hiddenPoint);
                 statue = SpawnBenDrownedStatue(play, hiddenPoint);

@@ -1067,8 +1067,10 @@ static void TriggerArrivalEffects(PlayState* play, Player* player, EnTorch2* sta
 }
 
 static void PlayGlobalJumpscareSfx() {
-    Audio_PlaySfx(NA_SE_EN_REDEAD_CRY);
-    Audio_PlaySfx(NA_SE_EN_REDEAD_AIM);
+    Audio_PlaySfx(NA_SE_SY_CAMERA_ZOOM_UP_2);
+    Audio_PlaySfx(NA_SE_OC_OCARINA);
+    Audio_PlaySfx(NA_SE_EV_OCARINA_BOUND_0);
+    Audio_PlaySfx(NA_SE_EV_OCARINA_BOUND_1);
 }
 
 static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2* statue) {
@@ -1101,6 +1103,9 @@ static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2
     // ReDead-style freeze: briefly lock the player in place
     player->actor.freezeTimer = JUMPSCARE_FREEZE_FRAMES;
 
+    // Force camera to lock onto the statue (same mechanism the ReDead uses)
+    Player_SetAutoLockOnActor(play, &statue->actor);
+
     // ReDead-style intense rumble burst
     Rumble_Override(0.0f, JUMPSCARE_RUMBLE_STRENGTH, JUMPSCARE_RUMBLE_DECAY, JUMPSCARE_RUMBLE_STEP);
 }
@@ -1123,6 +1128,14 @@ static void UpdateVisibilityJumpscareCamera(PlayState* play) {
         camera->fov = Camera_ScaledStepToCeilF(sTuning.jumpscareTargetFov, camera->fov, camera->fovUpdateRate,
                                                JUMPSCARE_FOV_MIN_DIFF);
         DecrementCooldown(&sState.jumpscareTimer);
+
+        // Release camera lock when zoom-in phase ends so camera can return to normal
+        if (sState.jumpscareTimer == 0) {
+            Player* player = GET_PLAYER(play);
+            player->autoLockOnActor = NULL;
+            player->focusActor = NULL;
+            player->stateFlags1 &= ~PLAYER_STATE1_FRIENDLY_ACTOR_FOCUS;
+        }
         return;
     }
 

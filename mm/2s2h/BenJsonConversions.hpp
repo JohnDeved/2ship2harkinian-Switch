@@ -144,8 +144,8 @@ void from_json(const json& j, ShipSaveInfo& shipSaveInfo) {
 
     if (shipSaveInfo.saveType == SAVETYPE_RANDO) {
         if (strcmp(shipSaveInfo.commitHash, gGitCommitHash) != 0) {
-            SPDLOG_ERROR("Randomizer saves cannot be loaded from a different version.");
-            throw new std::runtime_error("Randomizer saves cannot be loaded from a different version.");
+            SPDLOG_WARN("Loading randomizer save across builds (save commit: {}, current commit: {}).",
+                        shipSaveInfo.commitHash, gGitCommitHash);
         }
 
         j.at("rando").get_to(shipSaveInfo.rando);

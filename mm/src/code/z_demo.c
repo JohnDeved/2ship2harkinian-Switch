@@ -385,8 +385,8 @@ void CutsceneCmd_Misc(PlayState* play, CutsceneContext* csCtx, CsCmdMisc* cmd) {
                 D_801BB15C = csCtx->curFrame;
 
                 if (R_TIME_SPEED != 0) {
-                    gSaveContext.save.time = CURRENT_TIME + (u16)R_TIME_SPEED;
-                    gSaveContext.save.time = CURRENT_TIME + (u16)((void)0, gSaveContext.save.timeSpeedOffset);
+                    gSaveContext.save.time =
+                        CURRENT_TIME + (u16)(R_TIME_SPEED + ((void)0, gSaveContext.save.timeSpeedOffset));
                 }
             }
             break;

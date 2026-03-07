@@ -122,8 +122,12 @@ void EnAob01_Blink(EnAob01* this, s32 maxEyeIndex) {
  * Called every frame during the race in order to make in-game time pass.
  */
 void EnAob01_AdvanceTime(void) {
-    gSaveContext.save.time = CURRENT_TIME + (u16)R_TIME_SPEED;
-    gSaveContext.save.time = CURRENT_TIME + (u16)((void)0, gSaveContext.save.timeSpeedOffset);
+    if (R_TIME_SPEED != 0) {
+        gSaveContext.save.time =
+            CURRENT_TIME + (u16)(R_TIME_SPEED + ((void)0, gSaveContext.save.timeSpeedOffset));
+    } else {
+        gSaveContext.save.time = CURRENT_TIME + (u16)R_TIME_SPEED;
+    }
 }
 
 /**

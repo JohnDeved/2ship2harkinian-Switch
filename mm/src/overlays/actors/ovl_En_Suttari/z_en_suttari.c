@@ -246,8 +246,12 @@ void EnSuttari_TriggerTransition(PlayState* play, u16 entrance) {
 }
 
 void EnSuttari_AdvanceTime(void) {
-    gSaveContext.save.time = CURRENT_TIME + (u16)R_TIME_SPEED;
-    gSaveContext.save.time = CURRENT_TIME + (u16)((void)0, gSaveContext.save.timeSpeedOffset);
+    if (R_TIME_SPEED != 0) {
+        gSaveContext.save.time =
+            CURRENT_TIME + (u16)(R_TIME_SPEED + ((void)0, gSaveContext.save.timeSpeedOffset));
+    } else {
+        gSaveContext.save.time = CURRENT_TIME + (u16)R_TIME_SPEED;
+    }
 }
 
 s32 func_80BAA904(EnSuttari* this, PlayState* play) {

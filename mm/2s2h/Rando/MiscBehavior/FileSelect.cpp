@@ -152,6 +152,9 @@ static bool IsValidRandoSaveForFileSelect(const SaveContext* saveContext) {
     const ShipSaveInfo* shipSaveInfo = &saveContext->save.shipSaveInfo;
     const RandoSaveInfo* randoSaveInfo = &shipSaveInfo->rando;
 
+    static_assert(RO_LOGIC < RO_MAX);
+    static_assert(RC_UNKNOWN < RC_MAX);
+
     return shipSaveInfo->saveType == SAVETYPE_RANDO && randoSaveInfo->finalSeed != 0 &&
            randoSaveInfo->randoSaveOptions[RO_LOGIC] <= RO_LOGIC_VANILLA &&
            randoSaveInfo->randoSaveChecks[RC_UNKNOWN].randoItemId == RI_UNKNOWN;

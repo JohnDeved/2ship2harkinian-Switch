@@ -21,7 +21,7 @@ void ArmsHook_Wait(ArmsHook* this, PlayState* play);
 void ArmsHook_Shoot(ArmsHook* this, PlayState* play);
 
 static f32 ArmsHook_GetSpeedMultiplier(void) {
-    return CLAMP_MIN(CVarGetInteger(CVAR_HOOKSHOT_SPEED, 1), 1);
+    return (f32)CLAMP_MIN(CVarGetInteger(CVAR_HOOKSHOT_SPEED, 1), 1);
 }
 
 ActorProfile Arms_Hook_Profile = {

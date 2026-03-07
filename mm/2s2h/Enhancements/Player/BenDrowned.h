@@ -27,6 +27,8 @@ struct TuningParams {
     s32 moveCooldownFrames;
     s32 respawnCooldownFrames;
     s32 dialogueCooldownFrames;
+    s32 jumpscareZoomFrames;
+    s32 jumpscareCooldownFrames;
     s32 laughBaseFrames;
     s32 laughRandomFrames;
     s32 colorDistortBaseFrames;
@@ -43,6 +45,9 @@ struct TuningParams {
     f32 minRepositionDist;
     f32 moveThresholdDist;
     f32 closeEffectDist;
+    f32 jumpscareTriggerDist;
+    f32 jumpscareTargetDist;
+    f32 jumpscareTargetFov;
     f32 fallbackStalkDist;
     f32 proximityRumbleDist;
 };

@@ -48,7 +48,6 @@ static const std::unordered_map<int32_t, const char*> menuThemeOptions = {
     { UIWidgets::Colors::DarkGray, "Dark Gray" },
 };
 
-
 static const std::unordered_map<int32_t, const char*> SwitchOCProfiles = {
     { Ship::MAXIMUM, "MAXIMUM" },
     { Ship::HIGH, "HIGH" },
@@ -150,6 +149,8 @@ void RenderBenDrownedDebugSection() {
     BenDrowned::TuningParams& tuning = BenDrowned::GetTuning();
 
     UIWidgets::CVarCheckbox("World Overlay", "gDeveloperTools.BenDrowned.DebugOverlay");
+    UIWidgets::CVarInputString("Player name override", "gDeveloperTools.BenDrowned.PlayerNameOverride",
+                               UIWidgets::InputOptions().PlaceholderText("Uses save file name if empty"));
     ImGui::SeparatorText("Runtime State");
 
     if (!snapshot.enabled) {
@@ -237,6 +238,14 @@ void RenderBenDrownedDebugSection() {
         tuningChanged |= ImGui::SliderFloat("Fallback stalk dist", &tuning.fallbackStalkDist, 20.0f, 500.0f, "%.0f");
         tuningChanged |=
             ImGui::SliderFloat("Proximity rumble dist", &tuning.proximityRumbleDist, 10.0f, 500.0f, "%.0f");
+    }
+
+    if (ImGui::CollapsingHeader("Jumpscare Tuning")) {
+        tuningChanged |= ImGui::SliderInt("Zoom (frames)", &tuning.jumpscareZoomFrames, 1, 120);
+        tuningChanged |= ImGui::SliderInt("Cooldown (frames)", &tuning.jumpscareCooldownFrames, 0, 600);
+        tuningChanged |= ImGui::SliderFloat("Trigger dist", &tuning.jumpscareTriggerDist, 1.0f, 300.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Target dist", &tuning.jumpscareTargetDist, 1.0f, 200.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Target FOV", &tuning.jumpscareTargetFov, 1.0f, 120.0f, "%.1f");
     }
 
     if (tuningChanged) {
@@ -710,12 +719,14 @@ void BenMenu::AddSettings() {
     AddWidget(path, "Switch performance mode", WIDGET_CVAR_COMBOBOX)
         .CVar("gSwitchPerfMode")
         .Callback([](WidgetInfo& info) {
-            Ship::Switch::ApplyOverclock();;
+            Ship::Switch::ApplyOverclock();
         })
-        .Options(ComboboxOptions().Tooltip("Sets the Switch performance mode.")
+        .Options(ComboboxOptions()
+                     .Tooltip("Sets the Switch performance mode.")
                      .DefaultIndex(Ship::SwitchProfiles::STOCK)
                      .ComboMap(&SwitchOCProfiles));
-    SPDLOG_INFO("Profile:: %s", SWITCH_CPU_PROFILES[CVarGetInteger("gSwitchPerfMode", (int)Ship::SwitchProfiles::STOCK)]);
+    SPDLOG_INFO("Profile:: %s",
+                SWITCH_CPU_PROFILES[CVarGetInteger("gSwitchPerfMode", (int)Ship::SwitchProfiles::STOCK)]);
 #endif
 
     AddWidget(path, "Current FPS: %d", WIDGET_CVAR_SLIDER_INT)
@@ -1274,33 +1285,33 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions().Tooltip("Z + A to Jump and B while midair to Jump Attack."));
     AddWidget(path, "Modern Z-Targeting", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting")
-        .Options(CheckboxOptions().Tooltip(
-            "Enables modern Zelda-style targeting enhancements (BotW/TotK). "
-            "Toggle the individual features below."));
+        .Options(CheckboxOptions().Tooltip("Enables modern Zelda-style targeting enhancements (BotW/TotK). "
+                                           "Toggle the individual features below."));
     AddWidget(path, "  Camera-Based Lock-On", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting.CameraBasedLock")
         .PreFunc([](WidgetInfo& info) {
             info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
         })
-        .Options(CheckboxOptions().Tooltip(
-            "Initial lock-on picks the target closest to the camera center instead of the player's facing direction.")
-            .DefaultValue(true));
+        .Options(CheckboxOptions()
+                     .Tooltip("Initial lock-on picks the target closest to the camera center instead of the player's "
+                              "facing direction.")
+                     .DefaultValue(true));
     AddWidget(path, "  Right Stick Target Switch", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting.RightStickSwitch")
         .PreFunc([](WidgetInfo& info) {
             info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
         })
-        .Options(CheckboxOptions().Tooltip(
-            "Push the right stick left/right while locked on to switch between nearby targets.")
-            .DefaultValue(true));
+        .Options(CheckboxOptions()
+                     .Tooltip("Push the right stick left/right while locked on to switch between nearby targets.")
+                     .DefaultValue(true));
     AddWidget(path, "  Z-Toggle Release", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting.ZToggleRelease")
         .PreFunc([](WidgetInfo& info) {
             info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
         })
-        .Options(CheckboxOptions().Tooltip(
-            "Pressing Z while locked on releases the lock instead of switching targets.")
-            .DefaultValue(true));
+        .Options(CheckboxOptions()
+                     .Tooltip("Pressing Z while locked on releases the lock instead of switching targets.")
+                     .DefaultValue(true));
     AddWidget(path, "Dpad Equips", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Dpad.DpadEquips")
         .Options(CheckboxOptions().Tooltip("Allows you to equip items to your D-pad."));
@@ -1329,12 +1340,9 @@ void BenMenu::AddEnhancements() {
             "While aiming the bow, use R to cycle between Normal, Fire, Ice and Light arrows."));
     AddWidget(path, "  D-Pad Arrow Cycling", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.PlayerActions.ArrowCycleDpad")
-        .PreFunc([](WidgetInfo& info) {
-            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_ARROW_CYCLE_OFF).active;
-        })
-        .Options(CheckboxOptions().Tooltip(
-            "While aiming the bow, use D-Pad Left/Right to cycle between arrow types. "
-            "Disables R-based arrow cycling; R will shield/exit as normal."));
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_ARROW_CYCLE_OFF).active; })
+        .Options(CheckboxOptions().Tooltip("While aiming the bow, use D-Pad Left/Right to cycle between arrow types. "
+                                           "Disables R-based arrow cycling; R will shield/exit as normal."));
     AddWidget(path, "Remote Bombchu Control", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.PlayerActions.RemoteBombchu")
         .Options(CheckboxOptions().Tooltip(
@@ -2268,12 +2276,11 @@ void BenMenu::AddDevTools() {
         .CVar("gWindows.BenDrownedDebug")
         .Options(ButtonOptions().Tooltip("Opens the Spooky Mode debug panel in a separate window.").Size(Sizes::Inline))
         .WindowName("Spooky Mode Debug");
-    AddWidget(path, "Spooky Mode Debug", WIDGET_CUSTOM)
-        .CustomFunction([](WidgetInfo& info) {
-            ImGui::PushID("BenDrownedDebugInline");
-            RenderBenDrownedDebugSection();
-            ImGui::PopID();
-        });
+    AddWidget(path, "Spooky Mode Debug", WIDGET_CUSTOM).CustomFunction([](WidgetInfo& info) {
+        ImGui::PushID("BenDrownedDebugInline");
+        RenderBenDrownedDebugSection();
+        ImGui::PopID();
+    });
 
     path = { "Dev Tools", "Stats", SECTION_COLUMN_1 };
     AddSidebarEntry("Dev Tools", "Stats", 1);
@@ -2490,14 +2497,10 @@ void BenMenu::InitElement() {
            },
             "Koume is Invincible" } },
         { DISABLE_FOR_MODERN_ZTARGETING_OFF,
-          { [](disabledInfo& info) -> bool {
-               return !CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0);
-           },
+          { [](disabledInfo& info) -> bool { return !CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0); },
             "Modern Z-Targeting is Disabled" } },
         { DISABLE_FOR_ARROW_CYCLE_OFF,
-          { [](disabledInfo& info) -> bool {
-               return !CVarGetInteger("gEnhancements.PlayerActions.ArrowCycle", 0);
-           },
+          { [](disabledInfo& info) -> bool { return !CVarGetInteger("gEnhancements.PlayerActions.ArrowCycle", 0); },
             "Arrow Type Cycling is Disabled" } },
     };
 }

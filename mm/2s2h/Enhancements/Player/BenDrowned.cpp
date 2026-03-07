@@ -9,9 +9,6 @@
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
 
-// Engine camera helper used to smoothly interpolate gameplay camera values during the visibility jumpscare zoom.
-extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minDiff);
-
 extern "C" {
 #include "functions.h"
 #include "sfx.h"
@@ -19,6 +16,8 @@ extern "C" {
 #include "z64debug_display.h"
 #include "overlays/actors/ovl_En_Torch2/z_en_torch2.h"
 #include "overlays/effects/ovl_Effect_Ss_Dust/z_eff_ss_dust.h"
+// Engine camera helper used to smoothly interpolate gameplay camera values during the visibility jumpscare zoom.
+extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minDiff);
 }
 
 #define CVAR_NAME "gEnhancements.Player.BenDrowned"
@@ -47,6 +46,8 @@ extern "C" {
 #define TUNING_CVAR_MOVE_COOLDOWN TUNING_CVAR_BASE ".MoveCooldown"
 #define TUNING_CVAR_RESPAWN_COOLDOWN TUNING_CVAR_BASE ".RespawnCooldown"
 #define TUNING_CVAR_DIALOGUE_COOLDOWN TUNING_CVAR_BASE ".DialogueCooldown"
+#define TUNING_CVAR_JUMPSCARE_ZOOM_FRAMES TUNING_CVAR_BASE ".JumpscareZoomFrames"
+#define TUNING_CVAR_JUMPSCARE_COOLDOWN TUNING_CVAR_BASE ".JumpscareCooldown"
 #define TUNING_CVAR_LAUGH_BASE TUNING_CVAR_BASE ".LaughBase"
 #define TUNING_CVAR_LAUGH_RANDOM TUNING_CVAR_BASE ".LaughRandom"
 #define TUNING_CVAR_COLOR_DISTORT_BASE TUNING_CVAR_BASE ".ColorDistortBase"
@@ -63,8 +64,12 @@ extern "C" {
 #define TUNING_CVAR_MIN_REPOSITION_DIST TUNING_CVAR_BASE ".MinRepositionDist"
 #define TUNING_CVAR_MOVE_THRESHOLD_DIST TUNING_CVAR_BASE ".MoveThresholdDist"
 #define TUNING_CVAR_CLOSE_EFFECT_DIST TUNING_CVAR_BASE ".CloseEffectDist"
+#define TUNING_CVAR_JUMPSCARE_TRIGGER_DIST TUNING_CVAR_BASE ".JumpscareTriggerDist"
+#define TUNING_CVAR_JUMPSCARE_TARGET_DIST TUNING_CVAR_BASE ".JumpscareTargetDist"
+#define TUNING_CVAR_JUMPSCARE_TARGET_FOV TUNING_CVAR_BASE ".JumpscareTargetFov"
 #define TUNING_CVAR_FALLBACK_STALK_DIST TUNING_CVAR_BASE ".FallbackStalkDist"
 #define TUNING_CVAR_PROXIMITY_RUMBLE_DIST TUNING_CVAR_BASE ".ProximityRumbleDist"
+#define PLAYER_NAME_OVERRIDE_CVAR "gDeveloperTools.BenDrowned.PlayerNameOverride"
 
 // --- Visibility ---
 #define VISIBILITY_HEIGHT 40.0f
@@ -76,10 +81,10 @@ extern "C" {
 // --- Cooldown durations ---
 #define DEFAULT_MOVE_COOLDOWN_FRAMES 3600
 #define EFFECT_COOLDOWN_FRAMES 30
-#define JUMPSCARE_ZOOM_FRAMES 20
-#define JUMPSCARE_COOLDOWN_FRAMES 90
 #define DEFAULT_RESPAWN_COOLDOWN_FRAMES 1800
 #define DEFAULT_DIALOGUE_COOLDOWN_FRAMES 600
+#define DEFAULT_JUMPSCARE_ZOOM_FRAMES 20
+#define DEFAULT_JUMPSCARE_COOLDOWN_FRAMES 90
 
 // --- Disappearance ---
 #define DEFAULT_DISAPPEAR_CHANCE 0.3f
@@ -105,14 +110,15 @@ extern "C" {
 
 // --- Arrival effects ---
 #define DEFAULT_CLOSE_EFFECT_DIST 110.0f
+#define DEFAULT_JUMPSCARE_TRIGGER_DIST 110.0f
 #define DUST_DRAW_FLAGS DUST_DRAWFLAG_RAND_COLOR_OFFSET
 #define DUST_SCALE 120
 #define DUST_SCALE_STEP (-8)
 #define DUST_LIFE 6
 
 // --- Visibility jumpscare ---
-#define JUMPSCARE_TARGET_DIST 60.0f
-#define JUMPSCARE_TARGET_FOV 40.0f
+#define DEFAULT_JUMPSCARE_TARGET_DIST 60.0f
+#define DEFAULT_JUMPSCARE_TARGET_FOV 40.0f
 #define JUMPSCARE_DIST_STEP_SCALE 0.35f
 #define JUMPSCARE_DIST_MIN_DIFF 0.5f
 #define JUMPSCARE_FOV_MIN_DIFF 0.1f
@@ -154,19 +160,19 @@ struct ColorDistortion {
 };
 
 static const std::string_view sDialogueMessages[] = {
-    "turn arround",
-    "god please help",
-    "help me",
-    "don't look behind you",
-    "it is right behind you",
-    "you were not supposed to see me",
-    "it followed you here",
-    "this is not your save file",
-    "it is still watching you",
-    "please wake up",
-    "you need to leave",
-    "it knows your name",
-    "your god has left you to die",
+    "{name}, turn around",
+    "{name}, god please help",
+    "{name}, help me",
+    "{name}, don't look behind you",
+    "{name}, it is right behind you",
+    "{name}, you were not supposed to see me",
+    "{name}, it followed you here",
+    "{name}, this is not your save file",
+    "{name}, it is still watching you",
+    "{name}, please wake up",
+    "{name}, you need to leave",
+    "{name}, it knows your name",
+    "{name}, your god has left you to die",
 };
 
 static const ColorDistortion sColorDistortions[] = {
@@ -217,27 +223,15 @@ static size_t sNextZoneHistoryCacheReplacementIndex = 0;
 
 // Runtime-adjustable tuning parameters (exposed via debug menu).
 static BenDrowned::TuningParams sTuning = {
-    DEFAULT_MOVE_COOLDOWN_FRAMES,
-    DEFAULT_RESPAWN_COOLDOWN_FRAMES,
-    DEFAULT_DIALOGUE_COOLDOWN_FRAMES,
-    DEFAULT_LAUGH_BASE_FRAMES,
-    DEFAULT_LAUGH_RANDOM_FRAMES,
-    DEFAULT_COLOR_DISTORT_BASE_FRAMES,
-    DEFAULT_COLOR_DISTORT_RANDOM_FRAMES,
-    DEFAULT_COLOR_DISTORT_DURATION,
-    DEFAULT_DISAPPEAR_CHANCE,
-    DIALOGUE_CHANCE,
-    DEFAULT_LAUGH_MIN_PITCH,
-    DEFAULT_LAUGH_MAX_PITCH,
-    DEFAULT_HISTORY_POINT_MIN_DIST,
-    DEFAULT_MIN_SPAWN_DIST,
-    DEFAULT_DISTANT_SPAWN_DIST,
-    DEFAULT_MAX_NEARBY_DIST,
-    DEFAULT_MIN_REPOSITION_DISTANCE,
-    DEFAULT_MOVE_THRESHOLD_DIST,
-    DEFAULT_CLOSE_EFFECT_DIST,
-    DEFAULT_FALLBACK_STALK_DISTANCE,
-    DEFAULT_PROXIMITY_RUMBLE_DIST,
+    DEFAULT_MOVE_COOLDOWN_FRAMES,    DEFAULT_RESPAWN_COOLDOWN_FRAMES,   DEFAULT_DIALOGUE_COOLDOWN_FRAMES,
+    DEFAULT_JUMPSCARE_ZOOM_FRAMES,   DEFAULT_JUMPSCARE_COOLDOWN_FRAMES, DEFAULT_LAUGH_BASE_FRAMES,
+    DEFAULT_LAUGH_RANDOM_FRAMES,     DEFAULT_COLOR_DISTORT_BASE_FRAMES, DEFAULT_COLOR_DISTORT_RANDOM_FRAMES,
+    DEFAULT_COLOR_DISTORT_DURATION,  DEFAULT_DISAPPEAR_CHANCE,          DIALOGUE_CHANCE,
+    DEFAULT_LAUGH_MIN_PITCH,         DEFAULT_LAUGH_MAX_PITCH,           DEFAULT_HISTORY_POINT_MIN_DIST,
+    DEFAULT_MIN_SPAWN_DIST,          DEFAULT_DISTANT_SPAWN_DIST,        DEFAULT_MAX_NEARBY_DIST,
+    DEFAULT_MIN_REPOSITION_DISTANCE, DEFAULT_MOVE_THRESHOLD_DIST,       DEFAULT_CLOSE_EFFECT_DIST,
+    DEFAULT_JUMPSCARE_TRIGGER_DIST,  DEFAULT_JUMPSCARE_TARGET_DIST,     DEFAULT_JUMPSCARE_TARGET_FOV,
+    DEFAULT_FALLBACK_STALK_DISTANCE, DEFAULT_PROXIMITY_RUMBLE_DIST,
 };
 
 // Constant effect parameters passed by address to C functions.
@@ -259,6 +253,8 @@ static void NormalizeTuning() {
     sTuning.moveCooldownFrames = std::max(sTuning.moveCooldownFrames, 0);
     sTuning.respawnCooldownFrames = std::max(sTuning.respawnCooldownFrames, 0);
     sTuning.dialogueCooldownFrames = std::max(sTuning.dialogueCooldownFrames, 0);
+    sTuning.jumpscareZoomFrames = std::max(sTuning.jumpscareZoomFrames, 1);
+    sTuning.jumpscareCooldownFrames = std::max(sTuning.jumpscareCooldownFrames, 0);
     sTuning.laughBaseFrames = std::max(sTuning.laughBaseFrames, 0);
     sTuning.laughRandomFrames = std::max(sTuning.laughRandomFrames, 0);
     sTuning.colorDistortBaseFrames = std::max(sTuning.colorDistortBaseFrames, 0);
@@ -273,10 +269,15 @@ static void NormalizeTuning() {
     sTuning.minRepositionDist = std::max(sTuning.minRepositionDist, TUNING_MIN_DISTANCE);
     sTuning.moveThresholdDist = std::max(sTuning.moveThresholdDist, TUNING_MIN_DISTANCE);
     sTuning.closeEffectDist = std::max(sTuning.closeEffectDist, TUNING_MIN_DISTANCE);
+    sTuning.jumpscareTriggerDist = std::max(sTuning.jumpscareTriggerDist, TUNING_MIN_DISTANCE);
+    sTuning.jumpscareTargetDist = std::max(sTuning.jumpscareTargetDist, TUNING_MIN_DISTANCE);
+    sTuning.jumpscareTargetFov = std::max(sTuning.jumpscareTargetFov, TUNING_MIN_DISTANCE);
     sTuning.fallbackStalkDist = std::max(sTuning.fallbackStalkDist, TUNING_MIN_DISTANCE);
     sTuning.proximityRumbleDist = std::max(sTuning.proximityRumbleDist, TUNING_MIN_DISTANCE);
-    sTuning.laughMinPitch = std::clamp(sTuning.laughMinPitch, BenDrowned::MIN_TUNING_PITCH, BenDrowned::MAX_TUNING_PITCH);
-    sTuning.laughMaxPitch = std::clamp(sTuning.laughMaxPitch, BenDrowned::MIN_TUNING_PITCH, BenDrowned::MAX_TUNING_PITCH);
+    sTuning.laughMinPitch =
+        std::clamp(sTuning.laughMinPitch, BenDrowned::MIN_TUNING_PITCH, BenDrowned::MAX_TUNING_PITCH);
+    sTuning.laughMaxPitch =
+        std::clamp(sTuning.laughMaxPitch, BenDrowned::MIN_TUNING_PITCH, BenDrowned::MAX_TUNING_PITCH);
 
     if (sTuning.laughMinPitch > sTuning.laughMaxPitch) {
         std::swap(sTuning.laughMinPitch, sTuning.laughMaxPitch);
@@ -426,14 +427,14 @@ static void LoadTuning() {
     sTuning.moveCooldownFrames = CVarGetInteger(TUNING_CVAR_MOVE_COOLDOWN, DEFAULT_MOVE_COOLDOWN_FRAMES);
     sTuning.respawnCooldownFrames = CVarGetInteger(TUNING_CVAR_RESPAWN_COOLDOWN, DEFAULT_RESPAWN_COOLDOWN_FRAMES);
     sTuning.dialogueCooldownFrames = CVarGetInteger(TUNING_CVAR_DIALOGUE_COOLDOWN, DEFAULT_DIALOGUE_COOLDOWN_FRAMES);
+    sTuning.jumpscareZoomFrames = CVarGetInteger(TUNING_CVAR_JUMPSCARE_ZOOM_FRAMES, DEFAULT_JUMPSCARE_ZOOM_FRAMES);
+    sTuning.jumpscareCooldownFrames = CVarGetInteger(TUNING_CVAR_JUMPSCARE_COOLDOWN, DEFAULT_JUMPSCARE_COOLDOWN_FRAMES);
     sTuning.laughBaseFrames = CVarGetInteger(TUNING_CVAR_LAUGH_BASE, DEFAULT_LAUGH_BASE_FRAMES);
     sTuning.laughRandomFrames = CVarGetInteger(TUNING_CVAR_LAUGH_RANDOM, DEFAULT_LAUGH_RANDOM_FRAMES);
-    sTuning.colorDistortBaseFrames =
-        CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_BASE, DEFAULT_COLOR_DISTORT_BASE_FRAMES);
+    sTuning.colorDistortBaseFrames = CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_BASE, DEFAULT_COLOR_DISTORT_BASE_FRAMES);
     sTuning.colorDistortRandomFrames =
         CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_RANDOM, DEFAULT_COLOR_DISTORT_RANDOM_FRAMES);
-    sTuning.colorDistortDuration =
-        CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_DURATION, DEFAULT_COLOR_DISTORT_DURATION);
+    sTuning.colorDistortDuration = CVarGetInteger(TUNING_CVAR_COLOR_DISTORT_DURATION, DEFAULT_COLOR_DISTORT_DURATION);
     sTuning.disappearChance = CVarGetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, DEFAULT_DISAPPEAR_CHANCE);
     sTuning.dialogueChance = CVarGetFloat(TUNING_CVAR_DIALOGUE_CHANCE, DIALOGUE_CHANCE);
     sTuning.laughMinPitch = CVarGetFloat(TUNING_CVAR_LAUGH_MIN_PITCH, DEFAULT_LAUGH_MIN_PITCH);
@@ -445,6 +446,9 @@ static void LoadTuning() {
     sTuning.minRepositionDist = CVarGetFloat(TUNING_CVAR_MIN_REPOSITION_DIST, DEFAULT_MIN_REPOSITION_DISTANCE);
     sTuning.moveThresholdDist = CVarGetFloat(TUNING_CVAR_MOVE_THRESHOLD_DIST, DEFAULT_MOVE_THRESHOLD_DIST);
     sTuning.closeEffectDist = CVarGetFloat(TUNING_CVAR_CLOSE_EFFECT_DIST, DEFAULT_CLOSE_EFFECT_DIST);
+    sTuning.jumpscareTriggerDist = CVarGetFloat(TUNING_CVAR_JUMPSCARE_TRIGGER_DIST, DEFAULT_JUMPSCARE_TRIGGER_DIST);
+    sTuning.jumpscareTargetDist = CVarGetFloat(TUNING_CVAR_JUMPSCARE_TARGET_DIST, DEFAULT_JUMPSCARE_TARGET_DIST);
+    sTuning.jumpscareTargetFov = CVarGetFloat(TUNING_CVAR_JUMPSCARE_TARGET_FOV, DEFAULT_JUMPSCARE_TARGET_FOV);
     sTuning.fallbackStalkDist = CVarGetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, DEFAULT_FALLBACK_STALK_DISTANCE);
     sTuning.proximityRumbleDist = CVarGetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, DEFAULT_PROXIMITY_RUMBLE_DIST);
     NormalizeTuning();
@@ -731,7 +735,34 @@ static bool TryCorruptMessage(CustomMessage::Entry* entry) {
         return false;
     }
 
-    entry->msg = sDialogueMessages[RandomIndex(std::size(sDialogueMessages))];
+    std::string playerName = CVarGetString(PLAYER_NAME_OVERRIDE_CVAR, "");
+
+    if (playerName.empty()) {
+        playerName.reserve(8);
+        for (char ch : gSaveContext.save.saveInfo.playerData.playerName) {
+            if (ch == 62) {
+                continue;
+            }
+            if (ch < 10) {
+                playerName.push_back(static_cast<char>(ch + '0'));
+            } else if (ch < 36) {
+                playerName.push_back(static_cast<char>(ch + 55));
+            } else if (ch < 62) {
+                playerName.push_back(static_cast<char>(ch + 61));
+            } else if (ch == 63) {
+                playerName.push_back('_');
+            } else if (ch == 64) {
+                playerName.push_back('.');
+            }
+        }
+    }
+
+    if (playerName.empty()) {
+        playerName = "Link";
+    }
+
+    entry->msg = std::string(sDialogueMessages[RandomIndex(std::size(sDialogueMessages))]);
+    CustomMessage::Replace(&entry->msg, "{name}", playerName);
     entry->autoFormat = true;
     return true;
 }
@@ -902,8 +933,8 @@ static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2
     sState.jumpscareOriginalDist = camera->dist;
     sState.jumpscareOriginalFov = camera->fov;
     sState.jumpscareCameraActive = true;
-    sState.jumpscareTimer = JUMPSCARE_ZOOM_FRAMES;
-    sState.jumpscareCooldown = JUMPSCARE_COOLDOWN_FRAMES;
+    sState.jumpscareTimer = sTuning.jumpscareZoomFrames;
+    sState.jumpscareCooldown = sTuning.jumpscareCooldownFrames;
 
     Audio_PlaySfx(NA_SE_SY_CAMERA_ZOOM_UP_2);
     Audio_PlaySfx(NA_SE_OC_OCARINA);
@@ -924,9 +955,9 @@ static void UpdateVisibilityJumpscareCamera(PlayState* play) {
     }
 
     if (sState.jumpscareTimer > 0) {
-        camera->dist = Camera_ScaledStepToCeilF(JUMPSCARE_TARGET_DIST, camera->dist, JUMPSCARE_DIST_STEP_SCALE,
-                                               JUMPSCARE_DIST_MIN_DIFF);
-        camera->fov = Camera_ScaledStepToCeilF(JUMPSCARE_TARGET_FOV, camera->fov, camera->fovUpdateRate,
+        camera->dist = Camera_ScaledStepToCeilF(sTuning.jumpscareTargetDist, camera->dist, JUMPSCARE_DIST_STEP_SCALE,
+                                                JUMPSCARE_DIST_MIN_DIFF);
+        camera->fov = Camera_ScaledStepToCeilF(sTuning.jumpscareTargetFov, camera->fov, camera->fovUpdateRate,
                                                JUMPSCARE_FOV_MIN_DIFF);
         DecrementCooldown(&sState.jumpscareTimer);
         return;
@@ -1145,6 +1176,8 @@ void SaveTuning() {
     CVarSetInteger(TUNING_CVAR_MOVE_COOLDOWN, sTuning.moveCooldownFrames);
     CVarSetInteger(TUNING_CVAR_RESPAWN_COOLDOWN, sTuning.respawnCooldownFrames);
     CVarSetInteger(TUNING_CVAR_DIALOGUE_COOLDOWN, sTuning.dialogueCooldownFrames);
+    CVarSetInteger(TUNING_CVAR_JUMPSCARE_ZOOM_FRAMES, sTuning.jumpscareZoomFrames);
+    CVarSetInteger(TUNING_CVAR_JUMPSCARE_COOLDOWN, sTuning.jumpscareCooldownFrames);
     CVarSetInteger(TUNING_CVAR_LAUGH_BASE, sTuning.laughBaseFrames);
     CVarSetInteger(TUNING_CVAR_LAUGH_RANDOM, sTuning.laughRandomFrames);
     CVarSetInteger(TUNING_CVAR_COLOR_DISTORT_BASE, sTuning.colorDistortBaseFrames);
@@ -1161,6 +1194,9 @@ void SaveTuning() {
     CVarSetFloat(TUNING_CVAR_MIN_REPOSITION_DIST, sTuning.minRepositionDist);
     CVarSetFloat(TUNING_CVAR_MOVE_THRESHOLD_DIST, sTuning.moveThresholdDist);
     CVarSetFloat(TUNING_CVAR_CLOSE_EFFECT_DIST, sTuning.closeEffectDist);
+    CVarSetFloat(TUNING_CVAR_JUMPSCARE_TRIGGER_DIST, sTuning.jumpscareTriggerDist);
+    CVarSetFloat(TUNING_CVAR_JUMPSCARE_TARGET_DIST, sTuning.jumpscareTargetDist);
+    CVarSetFloat(TUNING_CVAR_JUMPSCARE_TARGET_FOV, sTuning.jumpscareTargetFov);
     CVarSetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, sTuning.fallbackStalkDist);
     CVarSetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, sTuning.proximityRumbleDist);
     CVarSave();
@@ -1309,9 +1345,12 @@ void RegisterBenDrowned() {
 static RegisterShipInitFunc initFunc(RegisterBenDrowned, {
                                                              CVAR_NAME,
                                                              DEBUG_OVERLAY_CVAR,
+                                                             PLAYER_NAME_OVERRIDE_CVAR,
                                                              TUNING_CVAR_MOVE_COOLDOWN,
                                                              TUNING_CVAR_RESPAWN_COOLDOWN,
                                                              TUNING_CVAR_DIALOGUE_COOLDOWN,
+                                                             TUNING_CVAR_JUMPSCARE_ZOOM_FRAMES,
+                                                             TUNING_CVAR_JUMPSCARE_COOLDOWN,
                                                              TUNING_CVAR_LAUGH_BASE,
                                                              TUNING_CVAR_LAUGH_RANDOM,
                                                              TUNING_CVAR_COLOR_DISTORT_BASE,
@@ -1328,6 +1367,9 @@ static RegisterShipInitFunc initFunc(RegisterBenDrowned, {
                                                              TUNING_CVAR_MIN_REPOSITION_DIST,
                                                              TUNING_CVAR_MOVE_THRESHOLD_DIST,
                                                              TUNING_CVAR_CLOSE_EFFECT_DIST,
+                                                             TUNING_CVAR_JUMPSCARE_TRIGGER_DIST,
+                                                             TUNING_CVAR_JUMPSCARE_TARGET_DIST,
+                                                             TUNING_CVAR_JUMPSCARE_TARGET_FOV,
                                                              TUNING_CVAR_FALLBACK_STALK_DIST,
                                                              TUNING_CVAR_PROXIMITY_RUMBLE_DIST,
                                                          });

@@ -398,13 +398,12 @@ static void ResetHistoryBuffer() {
 }
 
 static void ResetCooldownState() {
-    sState.moveCooldown = 0;
-    sState.respawnCooldown = 0;
-    sState.effectCooldown = 0;
-    sState.jumpscareCooldown = 0;
-    sState.laughCooldown = 0;
-    sState.dialogueCooldown = 0;
-    ResetLaughCooldown();
+    sState.moveCooldown = sTuning.moveCooldownFrames;
+    sState.respawnCooldown = sTuning.respawnCooldownFrames;
+    sState.effectCooldown = EFFECT_COOLDOWN_FRAMES;
+    sState.jumpscareCooldown = sTuning.jumpscareCooldownFrames;
+    sState.laughCooldown = sTuning.laughBaseFrames + sTuning.laughRandomFrames;
+    sState.dialogueCooldown = sTuning.dialogueCooldownFrames;
 }
 
 static void ResetZoneRuntimeState(bool preserveCooldowns) {

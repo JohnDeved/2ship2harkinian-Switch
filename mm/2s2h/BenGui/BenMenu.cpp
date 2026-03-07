@@ -1087,6 +1087,13 @@ void BenMenu::AddEnhancements() {
                      .Min(1)
                      .Max(5)
                      .DefaultValue(1));
+    AddWidget(path, "Hookshot speed", WIDGET_CVAR_SLIDER_INT)
+        .CVar("gEnhancements.Player.HookshotSpeed")
+        .Options(IntSliderOptions()
+                     .Tooltip("Increases the speed of the hookshot.")
+                     .Min(1)
+                     .Max(5)
+                     .DefaultValue(1));
     AddWidget(path, "Faster Push/Pull", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.FasterPushAndPull")
         .Options(CheckboxOptions().Tooltip("Speeds up the time it takes to push/pull various objects."));

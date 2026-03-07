@@ -14,7 +14,6 @@ extern "C" {
 #include "sfx.h"
 #include "variables.h"
 #include "z64debug_display.h"
-#include "z64quake.h"
 #include "overlays/actors/ovl_En_Torch2/z_en_torch2.h"
 #include "overlays/effects/ovl_Effect_Ss_Dust/z_eff_ss_dust.h"
 }
@@ -58,7 +57,6 @@ extern "C" {
 #define TUNING_CVAR_MIN_REPOSITION_DIST TUNING_CVAR_BASE ".MinRepositionDist"
 #define TUNING_CVAR_MOVE_THRESHOLD_DIST TUNING_CVAR_BASE ".MoveThresholdDist"
 #define TUNING_CVAR_CLOSE_EFFECT_DIST TUNING_CVAR_BASE ".CloseEffectDist"
-#define TUNING_CVAR_JUMPSCARE_DIST TUNING_CVAR_BASE ".JumpscareDist"
 #define TUNING_CVAR_FALLBACK_STALK_DIST TUNING_CVAR_BASE ".FallbackStalkDist"
 #define TUNING_CVAR_PROXIMITY_RUMBLE_DIST TUNING_CVAR_BASE ".ProximityRumbleDist"
 #define TUNING_MIN_DISTANCE 1.0f
@@ -102,20 +100,10 @@ extern "C" {
 
 // --- Arrival effects ---
 #define DEFAULT_CLOSE_EFFECT_DIST 110.0f
-#define DEFAULT_JUMPSCARE_DIST 60.0f
 #define DUST_DRAW_FLAGS DUST_DRAWFLAG_RAND_COLOR_OFFSET
 #define DUST_SCALE 120
 #define DUST_SCALE_STEP (-8)
 #define DUST_LIFE 6
-#define QUAKE_SPEED 17232
-#define QUAKE_PERTURB_X 2
-#define QUAKE_PERTURB_Y 0
-#define QUAKE_PERTURB_Z 0
-#define QUAKE_PERTURB_W 0
-#define QUAKE_DURATION 4
-#define RUMBLE_STRENGTH 180
-#define RUMBLE_DECAY 10
-#define RUMBLE_DURATION 70
 
 // --- Dialogue corruption ---
 #define DIALOGUE_SEARCH_WINDOW 96
@@ -224,7 +212,6 @@ static BenDrowned::TuningParams sTuning = {
     DEFAULT_MIN_REPOSITION_DISTANCE,
     DEFAULT_MOVE_THRESHOLD_DIST,
     DEFAULT_CLOSE_EFFECT_DIST,
-    DEFAULT_JUMPSCARE_DIST,
     DEFAULT_FALLBACK_STALK_DISTANCE,
     DEFAULT_PROXIMITY_RUMBLE_DIST,
 };
@@ -245,14 +232,25 @@ static void ResetColorDistortCooldown() {
 }
 
 static void NormalizeTuning() {
+    sTuning.moveCooldownFrames = std::max(sTuning.moveCooldownFrames, 0);
+    sTuning.respawnCooldownFrames = std::max(sTuning.respawnCooldownFrames, 0);
+    sTuning.dialogueCooldownFrames = std::max(sTuning.dialogueCooldownFrames, 0);
+    sTuning.laughBaseFrames = std::max(sTuning.laughBaseFrames, 0);
+    sTuning.laughRandomFrames = std::max(sTuning.laughRandomFrames, 0);
     sTuning.colorDistortBaseFrames = std::max(sTuning.colorDistortBaseFrames, 0);
     sTuning.colorDistortRandomFrames = std::max(sTuning.colorDistortRandomFrames, 0);
     sTuning.colorDistortDuration = std::max(sTuning.colorDistortDuration, 1);
+    sTuning.disappearChance = std::clamp(sTuning.disappearChance, 0.0f, 1.0f);
+    sTuning.dialogueChance = std::clamp(sTuning.dialogueChance, 0.0f, 1.0f);
     sTuning.historyPointMinDist = std::max(sTuning.historyPointMinDist, TUNING_MIN_DISTANCE);
+    sTuning.minSpawnDist = std::max(sTuning.minSpawnDist, TUNING_MIN_DISTANCE);
+    sTuning.distantSpawnDist = std::max(sTuning.distantSpawnDist, TUNING_MIN_DISTANCE);
+    sTuning.maxNearbyDist = std::max(sTuning.maxNearbyDist, TUNING_MIN_DISTANCE);
     sTuning.minRepositionDist = std::max(sTuning.minRepositionDist, TUNING_MIN_DISTANCE);
     sTuning.moveThresholdDist = std::max(sTuning.moveThresholdDist, TUNING_MIN_DISTANCE);
     sTuning.closeEffectDist = std::max(sTuning.closeEffectDist, TUNING_MIN_DISTANCE);
-    sTuning.jumpscareDist = std::max(sTuning.jumpscareDist, TUNING_MIN_DISTANCE);
+    sTuning.fallbackStalkDist = std::max(sTuning.fallbackStalkDist, TUNING_MIN_DISTANCE);
+    sTuning.proximityRumbleDist = std::max(sTuning.proximityRumbleDist, TUNING_MIN_DISTANCE);
     sTuning.laughMinPitch = std::clamp(sTuning.laughMinPitch, TUNING_MIN_PITCH, TUNING_MAX_PITCH);
     sTuning.laughMaxPitch = std::clamp(sTuning.laughMaxPitch, TUNING_MIN_PITCH, TUNING_MAX_PITCH);
 
@@ -418,7 +416,6 @@ static void LoadTuning() {
     sTuning.minRepositionDist = CVarGetFloat(TUNING_CVAR_MIN_REPOSITION_DIST, DEFAULT_MIN_REPOSITION_DISTANCE);
     sTuning.moveThresholdDist = CVarGetFloat(TUNING_CVAR_MOVE_THRESHOLD_DIST, DEFAULT_MOVE_THRESHOLD_DIST);
     sTuning.closeEffectDist = CVarGetFloat(TUNING_CVAR_CLOSE_EFFECT_DIST, DEFAULT_CLOSE_EFFECT_DIST);
-    sTuning.jumpscareDist = CVarGetFloat(TUNING_CVAR_JUMPSCARE_DIST, DEFAULT_JUMPSCARE_DIST);
     sTuning.fallbackStalkDist = CVarGetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, DEFAULT_FALLBACK_STALK_DISTANCE);
     sTuning.proximityRumbleDist = CVarGetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, DEFAULT_PROXIMITY_RUMBLE_DIST);
     NormalizeTuning();
@@ -837,7 +834,6 @@ static void MoveStatue(PlayState* play, Player* player, EnTorch2* statue, const 
 
 static void TriggerArrivalEffects(PlayState* play, Player* player, EnTorch2* statue) {
     f32 distSq;
-    s16 quakeIndex;
 
     if (sState.effectCooldown > 0) {
         return;
@@ -851,18 +847,6 @@ static void TriggerArrivalEffects(PlayState* play, Player* player, EnTorch2* sta
 
     EffectSsDust_Spawn(play, DUST_DRAW_FLAGS, &statue->actor.world.pos, &sZeroVelocity, &sDustAccel, &sDustPrimColor,
                        &sDustEnvColor, DUST_SCALE, DUST_SCALE_STEP, DUST_LIFE, DUST_UPDATE_NORMAL);
-
-    if (distSq < SQ(sTuning.jumpscareDist)) {
-        quakeIndex = Quake_Request(GET_ACTIVE_CAM(play), QUAKE_TYPE_3);
-
-        if (quakeIndex >= 0) {
-            Quake_SetSpeed(quakeIndex, QUAKE_SPEED);
-            Quake_SetPerturbations(quakeIndex, QUAKE_PERTURB_X, QUAKE_PERTURB_Y, QUAKE_PERTURB_Z, QUAKE_PERTURB_W);
-            Quake_SetDuration(quakeIndex, QUAKE_DURATION);
-        }
-
-        Rumble_Request(0.0f, RUMBLE_STRENGTH, RUMBLE_DECAY, RUMBLE_DURATION);
-    }
 
     sState.effectCooldown = EFFECT_COOLDOWN_FRAMES;
 }
@@ -1079,7 +1063,6 @@ void SaveTuning() {
     CVarSetFloat(TUNING_CVAR_MIN_REPOSITION_DIST, sTuning.minRepositionDist);
     CVarSetFloat(TUNING_CVAR_MOVE_THRESHOLD_DIST, sTuning.moveThresholdDist);
     CVarSetFloat(TUNING_CVAR_CLOSE_EFFECT_DIST, sTuning.closeEffectDist);
-    CVarSetFloat(TUNING_CVAR_JUMPSCARE_DIST, sTuning.jumpscareDist);
     CVarSetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, sTuning.fallbackStalkDist);
     CVarSetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, sTuning.proximityRumbleDist);
     CVarSave();
@@ -1244,7 +1227,6 @@ static RegisterShipInitFunc initFunc(RegisterBenDrowned, {
                                                              TUNING_CVAR_MIN_REPOSITION_DIST,
                                                              TUNING_CVAR_MOVE_THRESHOLD_DIST,
                                                              TUNING_CVAR_CLOSE_EFFECT_DIST,
-                                                             TUNING_CVAR_JUMPSCARE_DIST,
                                                              TUNING_CVAR_FALLBACK_STALK_DIST,
                                                              TUNING_CVAR_PROXIMITY_RUMBLE_DIST,
                                                          });

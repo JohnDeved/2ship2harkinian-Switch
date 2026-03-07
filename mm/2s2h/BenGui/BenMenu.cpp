@@ -232,7 +232,6 @@ void RenderBenDrownedDebugSection() {
         tuningChanged |= ImGui::SliderFloat("Min reposition dist", &tuning.minRepositionDist, 1.0f, 300.0f, "%.0f");
         tuningChanged |= ImGui::SliderFloat("Move threshold dist", &tuning.moveThresholdDist, 1.0f, 200.0f, "%.0f");
         tuningChanged |= ImGui::SliderFloat("Close effect dist", &tuning.closeEffectDist, 1.0f, 300.0f, "%.0f");
-        tuningChanged |= ImGui::SliderFloat("Jumpscare dist", &tuning.jumpscareDist, 1.0f, 300.0f, "%.0f");
         tuningChanged |= ImGui::SliderFloat("Fallback stalk dist", &tuning.fallbackStalkDist, 20.0f, 500.0f, "%.0f");
         tuningChanged |=
             ImGui::SliderFloat("Proximity rumble dist", &tuning.proximityRumbleDist, 10.0f, 500.0f, "%.0f");

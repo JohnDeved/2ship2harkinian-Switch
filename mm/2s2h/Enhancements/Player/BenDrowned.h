@@ -41,7 +41,6 @@ struct TuningParams {
     f32 minRepositionDist;
     f32 moveThresholdDist;
     f32 closeEffectDist;
-    f32 jumpscareDist;
     f32 fallbackStalkDist;
     f32 proximityRumbleDist;
 };

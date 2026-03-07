@@ -4,6 +4,7 @@
 #include <string_view>
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "2s2h/Enhancements/Player/BenDrowned.h"
+#include "2s2h/Enhancements/FrameInterpolation/FrameInterpolation.h"
 #include "2s2h/CustomMessage/CustomMessage.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
@@ -32,6 +33,7 @@ extern "C" {
 #define DEFAULT_DISTANT_SPAWN_DIST 140.0f
 #define DEFAULT_MAX_NEARBY_DIST 225.0f
 #define MOVE_DIST_SQ (15.0f * 15.0f)
+#define MIN_REPOSITION_DISTANCE 30.0f
 #define DEFAULT_FALLBACK_STALK_DISTANCE 80.0f
 #define DEFAULT_PROXIMITY_RUMBLE_DIST 100.0f
 
@@ -93,7 +95,7 @@ extern "C" {
 #define DIALOGUE_LATE_START_DENOMINATOR 4
 #define DIALOGUE_TRIGGER_BASE 8
 #define DIALOGUE_TRIGGER_RANGE 8
-#define DIALOGUE_CHANCE 0.25f
+#define DIALOGUE_CHANCE 0.5f
 
 // --- Debug overlay ---
 #define DEBUG_OVERLAY_CVAR "gDeveloperTools.BenDrowned.DebugOverlay"
@@ -148,6 +150,7 @@ static struct {
     PlayState* lastPlayState;
     EnTorch2* ownedStatue;
     bool spawnedStatue;
+    u32 ignoreStatueInterpolationUntilFrame;
 } sState;
 
 // Runtime-adjustable tuning parameters (exposed via debug menu).
@@ -202,6 +205,7 @@ static void ResetHistory() {
     sState.disappearAfterObserved = false;
     sState.statueObserved = false;
     sState.statueWasVisible = false;
+    sState.ignoreStatueInterpolationUntilFrame = 0;
     ResetLaughCooldown();
 }
 
@@ -211,6 +215,7 @@ static void ClearStatueTracking() {
     sState.disappearAfterObserved = false;
     sState.statueObserved = false;
     sState.statueWasVisible = false;
+    sState.ignoreStatueInterpolationUntilFrame = 0;
 }
 
 static void CleanupOwnedStatue() {
@@ -523,8 +528,13 @@ static bool TryCorruptMessage(std::string* msg) {
     size_t searchEnd = std::min(msg->size(), searchStart + (size_t)DIALOGUE_SEARCH_WINDOW);
 
     for (size_t offset = 0; offset < phraseCount; offset++) {
-        if (TryReplaceDialoguePhrase(msg, sDialoguePhrases[(startIndex + offset) % phraseCount], searchStart,
-                                     searchEnd)) {
+        std::string_view phrase = sDialoguePhrases[(startIndex + offset) % phraseCount];
+
+        if (TryReplaceDialoguePhrase(msg, phrase, searchStart, searchEnd)) {
+            return true;
+        }
+
+        if (((searchStart > 0) || (searchEnd < msg->size())) && TryReplaceDialoguePhrase(msg, phrase, 0, msg->size())) {
             return true;
         }
     }
@@ -533,12 +543,18 @@ static bool TryCorruptMessage(std::string* msg) {
 }
 
 static bool ShouldCorruptOpenText(PlayState* play, u16 textId) {
-    return (play != nullptr) && (play->msgCtx.talkActor != nullptr) && (textId != 0) &&
-           (textId != CUSTOM_MESSAGE_ID) && (sState.dialogueCooldown <= 0) &&
+    // Allow the haunt to hit readable non-actor text too so it can still show up in ordinary gameplay.
+    return (play != nullptr) && (textId != 0) && (textId != CUSTOM_MESSAGE_ID) && (sState.dialogueCooldown <= 0) &&
            (Rand_ZeroOne() < sTuning.dialogueChance);
 }
 
-static bool FindFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
+static bool IsPointFarEnoughFromReference(const Vec3f* referencePoint, f32 minReferenceDistSq, const Vec3f& point) {
+    return (referencePoint == nullptr) || (minReferenceDistSq <= 0.0f) ||
+           (Math3D_Vec3fDistSq(referencePoint, &point) >= minReferenceDistSq);
+}
+
+static bool FindFallbackPoint(PlayState* play, Player* player, const Vec3f* referencePoint, f32 minReferenceDistSq,
+                              Vec3f* hiddenPoint) {
     Camera* camera = GET_ACTIVE_CAM(play);
 
     if (camera == nullptr) {
@@ -556,6 +572,10 @@ static bool FindFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoin
             continue;
         }
 
+        if (!IsPointFarEnoughFromReference(referencePoint, minReferenceDistSq, candidatePoint)) {
+            continue;
+        }
+
         if (!CanCameraSeePoint(play, candidatePoint)) {
             *hiddenPoint = candidatePoint;
             return true;
@@ -567,7 +587,52 @@ static bool FindFallbackPoint(PlayState* play, Player* player, Vec3f* hiddenPoin
 
 static bool FindTargetPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
     return FindHiddenHistoryPoint(play, player, SQ(sTuning.maxNearbyDist), hiddenPoint) ||
-           FindFallbackPoint(play, player, hiddenPoint) || FindHiddenHistoryPoint(play, player, 0.0f, hiddenPoint);
+           FindFallbackPoint(play, player, nullptr, 0.0f, hiddenPoint) ||
+           FindHiddenHistoryPoint(play, player, 0.0f, hiddenPoint);
+}
+
+static bool FindTargetPointFarFromCurrent(PlayState* play, Player* player, const Vec3f& currentPoint, Vec3f* hiddenPoint) {
+    Vec3f bestHistoryPoint = {};
+    bool foundHistoryPoint = false;
+    f32 bestHistoryDistSq = 0.0f;
+    f32 minMoveDistSq = SQ(std::max(MIN_REPOSITION_DISTANCE, sTuning.minSpawnDist));
+
+    for (size_t i = 0; i < sState.historyCount; i++) {
+        size_t idx = HistoryIndexFromEnd(i);
+        Vec3f candidatePoint = sState.history[idx];
+        f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
+        f32 statueDistSq;
+
+        if (playerDistSq < SQ(sTuning.minSpawnDist)) {
+            continue;
+        }
+
+        if (playerDistSq > SQ(sTuning.maxNearbyDist)) {
+            continue;
+        }
+
+        if (CanCameraSeePoint(play, candidatePoint)) {
+            continue;
+        }
+
+        statueDistSq = Math3D_Vec3fDistSq(&candidatePoint, &currentPoint);
+        if (statueDistSq < minMoveDistSq) {
+            continue;
+        }
+
+        if (!foundHistoryPoint || (statueDistSq > bestHistoryDistSq)) {
+            bestHistoryPoint = candidatePoint;
+            bestHistoryDistSq = statueDistSq;
+            foundHistoryPoint = true;
+        }
+    }
+
+    if (foundHistoryPoint) {
+        *hiddenPoint = bestHistoryPoint;
+        return true;
+    }
+
+    return FindFallbackPoint(play, player, &currentPoint, minMoveDistSq, hiddenPoint);
 }
 
 static void MoveStatue(PlayState* play, Player* player, EnTorch2* statue, const Vec3f& targetPoint) {
@@ -588,6 +653,7 @@ static void MoveStatue(PlayState* play, Player* player, EnTorch2* statue, const 
     statue->alpha = 255;
 
     SetStatueRotation(statue, player);
+    sState.ignoreStatueInterpolationUntilFrame = play->gameplayFrames;
 }
 
 static void TriggerArrivalEffects(PlayState* play, Player* player, EnTorch2* statue) {
@@ -875,7 +941,7 @@ void RegisterBenDrowned() {
                         sState.respawnCooldown = sTuning.respawnCooldownFrames;
                     } else {
                         Vec3f repositionPoint;
-                        if (FindTargetPoint(play, player, &repositionPoint)) {
+                        if (FindTargetPointFarFromCurrent(play, player, statue->actor.world.pos, &repositionPoint)) {
                             MoveStatue(play, player, statue, repositionPoint);
                             sState.statueObserved = false;
                             sState.moveCooldown = sTuning.moveCooldownFrames;
@@ -899,7 +965,7 @@ void RegisterBenDrowned() {
             }
         }
 
-        if ((statue != nullptr) && FindTargetPoint(play, player, &hiddenPoint)) {
+        if ((statue != nullptr) && FindTargetPointFarFromCurrent(play, player, statue->actor.world.pos, &hiddenPoint)) {
             if (!spawnedThisFrame && (sState.moveCooldown <= 0) &&
                 (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > MOVE_DIST_SQ)) {
                 MoveStatue(play, player, statue, hiddenPoint);
@@ -932,6 +998,14 @@ void RegisterBenDrowned() {
         CustomMessage::LoadCustomMessageIntoFont(entry);
         *loadFromMessageTable = false;
         sState.dialogueCooldown = sTuning.dialogueCooldownFrames;
+    });
+
+    COND_ID_HOOK(ShouldActorDraw, ACTOR_EN_TORCH2, CVAR, [](Actor* actor, bool*) {
+        if ((sState.ignoreStatueInterpolationUntilFrame != 0) && (actor == (Actor*)sState.ownedStatue) &&
+            (gPlayState != nullptr) &&
+            (gPlayState->gameplayFrames == sState.ignoreStatueInterpolationUntilFrame)) {
+            FrameInterpolation_IgnoreActorMtx();
+        }
     });
 
     COND_HOOK(OnPlayDrawWorldEnd, CVAR, []() { DrawDebugOverlay(); });

@@ -2248,7 +2248,11 @@ void BenMenu::AddDevTools() {
         .Options(ButtonOptions().Tooltip("Opens the Ben Drowned debug panel in a separate window.").Size(Sizes::Inline))
         .WindowName("Ben Drowned Debug");
     AddWidget(path, "Ben Drowned Debug", WIDGET_CUSTOM)
-        .CustomFunction([](WidgetInfo& info) { RenderBenDrownedDebugSection(); });
+        .CustomFunction([](WidgetInfo& info) {
+            ImGui::PushID("BenDrownedDebugInline");
+            RenderBenDrownedDebugSection();
+            ImGui::PopID();
+        });
 
     path = { "Dev Tools", "Stats", SECTION_COLUMN_1 };
     AddSidebarEntry("Dev Tools", "Stats", 1);

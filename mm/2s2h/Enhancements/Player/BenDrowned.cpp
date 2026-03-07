@@ -33,13 +33,16 @@ constexpr f32 BEN_DROWNED_FLOOR_RAYCAST_HEIGHT = 60.0f;
 constexpr f32 BEN_DROWNED_WATCH_MARGIN = 1.35f;
 constexpr f32 BEN_DROWNED_FALLBACK_STALK_DISTANCE = 160.0f;
 constexpr f32 BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED = 0.7f;
-constexpr size_t BEN_DROWNED_MIN_DISTANT_SPAWN_POINTS = 4;
 constexpr s32 BEN_DROWNED_LAUGH_BASE_FRAMES = 3000;
 constexpr s32 BEN_DROWNED_LAUGH_RANDOM_FRAMES = 1200;
 constexpr f32 BEN_DROWNED_LAUGH_MIN_PITCH = 0.9f;
 constexpr f32 BEN_DROWNED_LAUGH_MAX_PITCH = 1.1f;
 constexpr s32 BEN_DROWNED_MOVE_COOLDOWN_FRAMES = 3600;
 constexpr s32 BEN_DROWNED_RESPAWN_COOLDOWN_FRAMES = 1800;
+constexpr s32 BEN_DROWNED_COLOR_DISTORT_BASE_FRAMES = 240;
+constexpr s32 BEN_DROWNED_COLOR_DISTORT_RANDOM_FRAMES = 360;
+constexpr u16 BEN_DROWNED_COLOR_DISTORT_DURATION = 12;
+constexpr u16 BEN_DROWNED_COLOR_DISTORT_INTENSITY = 160;
 constexpr s32 BEN_DROWNED_EFFECT_COOLDOWN_FRAMES = 30;
 constexpr s32 BEN_DROWNED_DIALOGUE_COOLDOWN_FRAMES = 900;
 constexpr size_t BEN_DROWNED_DIALOGUE_SEARCH_WINDOW = 48;
@@ -74,6 +77,11 @@ struct BenDrownedDialoguePhrase {
     size_t length;
 };
 
+struct BenDrownedColorDistortion {
+    u16 colorFlag;
+    u16 intensity;
+};
+
 constexpr std::array<BenDrownedDialoguePhrase, 6> BEN_DROWNED_DIALOGUE_PHRASES = {
     BenDrownedDialoguePhrase{ "help me", sizeof("help me") - 1 },
     BenDrownedDialoguePhrase{ "look behind", sizeof("look behind") - 1 },
@@ -81,6 +89,13 @@ constexpr std::array<BenDrownedDialoguePhrase, 6> BEN_DROWNED_DIALOGUE_PHRASES =
     BenDrownedDialoguePhrase{ "you saw me", sizeof("you saw me") - 1 },
     BenDrownedDialoguePhrase{ "it sees you", sizeof("it sees you") - 1 },
     BenDrownedDialoguePhrase{ "watching you", sizeof("watching you") - 1 },
+};
+
+constexpr std::array<BenDrownedColorDistortion, 3> BEN_DROWNED_COLOR_DISTORTIONS = {
+    BenDrownedColorDistortion{ COLORFILTER_COLORFLAG_BLUE, BEN_DROWNED_COLOR_DISTORT_INTENSITY },
+    BenDrownedColorDistortion{ COLORFILTER_COLORFLAG_RED, BEN_DROWNED_COLOR_DISTORT_INTENSITY },
+    BenDrownedColorDistortion{ COLORFILTER_COLORFLAG_GRAY,
+                               (u16)(COLORFILTER_INTENSITY_FLAG | BEN_DROWNED_COLOR_DISTORT_INTENSITY) },
 };
 
 struct BenDrownedHistoryEntry {
@@ -97,6 +112,7 @@ size_t sBenDrownedHistoryWriteIndex = 0;
 s32 sBenDrownedRecordTimer = 0;
 s32 sBenDrownedMoveCooldown = 0;
 s32 sBenDrownedRespawnCooldown = 0;
+s32 sBenDrownedColorDistortCooldown = 0;
 s32 sBenDrownedEffectCooldown = 0;
 s32 sBenDrownedLaughCooldown = 0;
 s32 sBenDrownedDialogueCooldown = 0;
@@ -113,6 +129,7 @@ void ResetBenDrownedHistory() {
     sBenDrownedRecordTimer = 0;
     sBenDrownedMoveCooldown = 0;
     sBenDrownedRespawnCooldown = 0;
+    sBenDrownedColorDistortCooldown = 0;
     sBenDrownedEffectCooldown = 0;
     sBenDrownedLaughCooldown = 0;
     sBenDrownedDialogueCooldown = 0;
@@ -249,9 +266,12 @@ bool FindHiddenBenDrownedHistoryPoint(PlayState* play, Player* player, f32 maxDi
 }
 
 bool FindDistantBenDrownedSpawnPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
-    Vec3f bestPoint = player->actor.world.pos;
-    size_t candidateCount = 0;
-    f32 bestDistSq = BEN_DROWNED_DISTANT_SPAWN_DIST_SQ;
+    Vec3f bestDistantPoint = player->actor.world.pos;
+    Vec3f bestFallbackPoint = player->actor.world.pos;
+    bool foundDistantPoint = false;
+    bool foundFallbackPoint = false;
+    f32 bestDistantDistSq = 0.0f;
+    f32 bestFallbackDistSq = 0.0f;
 
     for (size_t i = 0; i < sBenDrownedHistoryCount; i++) {
         size_t historyIndex =
@@ -264,20 +284,31 @@ bool FindDistantBenDrownedSpawnPoint(PlayState* play, Player* player, Vec3f* hid
         }
 
         if (!CanCameraSeePoint(play, candidatePoint)) {
-            candidateCount++;
-            if ((candidateCount == 1) || (playerDistSq > bestDistSq)) {
-                bestPoint = candidatePoint;
-                bestDistSq = playerDistSq;
+            if (playerDistSq >= BEN_DROWNED_DISTANT_SPAWN_DIST_SQ) {
+                if (!foundDistantPoint || (playerDistSq > bestDistantDistSq)) {
+                    bestDistantPoint = candidatePoint;
+                    bestDistantDistSq = playerDistSq;
+                    foundDistantPoint = true;
+                }
+            } else if (!foundFallbackPoint || (playerDistSq > bestFallbackDistSq)) {
+                bestFallbackPoint = candidatePoint;
+                bestFallbackDistSq = playerDistSq;
+                foundFallbackPoint = true;
             }
         }
     }
 
-    if (candidateCount < BEN_DROWNED_MIN_DISTANT_SPAWN_POINTS) {
-        return false;
+    if (foundDistantPoint) {
+        *hiddenPoint = bestDistantPoint;
+        return true;
     }
 
-    *hiddenPoint = bestPoint;
-    return true;
+    if (foundFallbackPoint) {
+        *hiddenPoint = bestFallbackPoint;
+        return true;
+    }
+
+    return false;
 }
 
 bool SnapBenDrownedPointToFloor(PlayState* play, Vec3f* point) {
@@ -358,6 +389,11 @@ void SetBenDrownedStatueRotation(EnTorch2* statue, Player* player) {
 
 void ResetBenDrownedLaughCooldown() {
     sBenDrownedLaughCooldown = BEN_DROWNED_LAUGH_BASE_FRAMES + (s32)(Rand_ZeroOne() * BEN_DROWNED_LAUGH_RANDOM_FRAMES);
+}
+
+void ResetBenDrownedColorDistortCooldown() {
+    sBenDrownedColorDistortCooldown =
+        BEN_DROWNED_COLOR_DISTORT_BASE_FRAMES + (s32)(Rand_ZeroOne() * BEN_DROWNED_COLOR_DISTORT_RANDOM_FRAMES);
 }
 
 template <size_t N> size_t GetBenDrownedRandomIndex() {
@@ -551,6 +587,23 @@ void UpdateBenDrownedStatueLaugh(EnTorch2* statue) {
                      &gSfxDefaultReverb);
     ResetBenDrownedLaughCooldown();
 }
+
+void UpdateBenDrownedStatueColorDistortion(EnTorch2* statue) {
+    if (statue == nullptr) {
+        return;
+    }
+
+    const BenDrownedColorDistortion& distortion =
+        BEN_DROWNED_COLOR_DISTORTIONS[GetBenDrownedRandomIndex<BEN_DROWNED_COLOR_DISTORTIONS.size()>()];
+
+    if ((sBenDrownedColorDistortCooldown > 0) || (statue->actor.colorFilterTimer != 0)) {
+        return;
+    }
+
+    Actor_SetColorFilter(&statue->actor, distortion.colorFlag, distortion.intensity, COLORFILTER_BUFFLAG_XLU,
+                         BEN_DROWNED_COLOR_DISTORT_DURATION);
+    ResetBenDrownedColorDistortCooldown();
+}
 } // namespace
 
 void RegisterBenDrowned() {
@@ -595,6 +648,9 @@ void RegisterBenDrowned() {
         if (sBenDrownedRespawnCooldown > 0) {
             sBenDrownedRespawnCooldown--;
         }
+        if (sBenDrownedColorDistortCooldown > 0) {
+            sBenDrownedColorDistortCooldown--;
+        }
         if (sBenDrownedLaughCooldown > 0) {
             sBenDrownedLaughCooldown--;
         }
@@ -606,6 +662,7 @@ void RegisterBenDrowned() {
         if (statue != nullptr) {
             statueVisible = CanCameraSeePoint(play, statue->actor.world.pos);
             if (statueVisible) {
+                UpdateBenDrownedStatueColorDistortion(statue);
                 if (!sBenDrownedStatueWasVisible) {
                     sBenDrownedDisappearAfterObserved =
                         Rand_ZeroOne() < BEN_DROWNED_DISAPPEAR_CHANCE_AFTER_OBSERVED;
@@ -638,6 +695,7 @@ void RegisterBenDrowned() {
             statue = SpawnBenDrownedStatue(play, hiddenPoint);
             spawnedStatueThisFrame = statue != nullptr;
             if (spawnedStatueThisFrame) {
+                ResetBenDrownedColorDistortCooldown();
                 sBenDrownedMoveCooldown = BEN_DROWNED_MOVE_COOLDOWN_FRAMES;
             }
         }

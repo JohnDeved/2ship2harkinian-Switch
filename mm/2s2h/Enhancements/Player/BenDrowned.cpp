@@ -82,7 +82,6 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 #define WATCH_MARGIN 1.35f
 
 // --- Cooldown durations ---
-#define BEN_DROWNED_FRAMES_PER_SECOND 60.0f
 #define DEFAULT_MOVE_COOLDOWN_SECONDS 60.0f
 #define EFFECT_COOLDOWN_FRAMES 30
 #define DEFAULT_RESPAWN_COOLDOWN_SECONDS 30.0f
@@ -353,11 +352,11 @@ static Color_RGBA8 sDustPrimColor = { 170, 130, 90, 160 };
 static Color_RGBA8 sDustEnvColor = { 100, 60, 20, 110 };
 
 static s32 SecondsToFrames(f32 seconds) {
-    return (s32)lroundf(seconds * BEN_DROWNED_FRAMES_PER_SECOND);
+    return (s32)lroundf(seconds * BenDrowned::TUNING_FRAMES_PER_SECOND);
 }
 
 static f32 FramesToSeconds(s32 frames) {
-    return frames / BEN_DROWNED_FRAMES_PER_SECOND;
+    return frames / BenDrowned::TUNING_FRAMES_PER_SECOND;
 }
 
 static void ResetLaughCooldown() {
@@ -548,7 +547,8 @@ static f32 LoadCooldownSeconds(const char* secondsCvar, const char* legacyFrames
     }
 
     if (CVarExists(legacyFramesCvar)) {
-        f32 seconds = FramesToSeconds(CVarGetInteger(legacyFramesCvar, SecondsToFrames(defaultSeconds)));
+        s32 legacyFrames = CVarGetInteger(legacyFramesCvar, SecondsToFrames(defaultSeconds));
+        f32 seconds = FramesToSeconds(legacyFrames);
 
         CVarSetFloat(secondsCvar, seconds);
         CVarClear(legacyFramesCvar);

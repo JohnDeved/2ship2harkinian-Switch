@@ -13,6 +13,7 @@ namespace BenDrowned {
 constexpr std::size_t DEBUG_HISTORY_SIZE = 48;
 constexpr float MIN_TUNING_PITCH = 0.1f;
 constexpr float MAX_TUNING_PITCH = 3.0f;
+constexpr float TUNING_FRAMES_PER_SECOND = 60.0f;
 
 struct DebugHistoryEntry {
     Vec3f pos;

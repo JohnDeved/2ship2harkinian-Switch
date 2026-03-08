@@ -126,7 +126,7 @@ static Actor* FindTargetActor(PlayState* play, Player* player, s32 switchDirecti
             s16 actorYaw = Math_Vec3f_Yaw(&player->actor.world.pos, &actor->focus.pos);
             s16 relYaw = (s16)(actorYaw - cameraYaw);
             s16 yawDiff = (s16)(relYaw - currentRel);
-            s32 absYawDiff = std::abs(static_cast<int>(yawDiff));
+            s32 absYawDiff = std::abs(yawDiff);
 
             if (switchDirection == SWITCH_DIRECTION_NEAREST) {
                 if ((absYawDiff != 0) && (!foundDirect || (absYawDiff < bestAbsDiff))) {
@@ -184,8 +184,8 @@ static void SwitchTarget(Player* player, Actor* bestActor) {
     // Clear refindable so the new target is treated as a fresh lock-on.
     bestActor->flags &= ~ACTOR_FLAG_FOCUS_ACTOR_REFINDABLE;
     player->focusActor = bestActor;
-    // 15 frames gives the reticle time to settle onto the new target
-    // (vanilla counts down from 15 to 5, ignoring leash distance during that window).
+    // Start at 15 so the reticle has time to settle onto the new target.
+    // Vanilla ignores leash distance until the timer counts down to 5.
     player->zTargetActiveTimer = 15;
     player->stateFlags2 &= ~(PLAYER_STATE2_CAN_ACCEPT_TALK_OFFER | PLAYER_STATE2_200000);
     sSwitchCooldown = SWITCH_COOLDOWN;

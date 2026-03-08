@@ -30,12 +30,12 @@ extern SaveContext gSaveContext;
 extern std::unordered_map<s16, const char*> warpPointSceneList;
 extern void Warp();
 
-static float BenDrownedFramesToSeconds(int frameCount) {
-    return frameCount / BenDrowned::TUNING_FRAMES_PER_SECOND;
+static float BenDrownedFramesToSeconds(int frames) {
+    return frames / BenDrowned::TUNING_FRAMES_PER_SECOND;
 }
 
-static float BenDrownedFramesToMinutes(int frameCount) {
-    return BenDrownedFramesToSeconds(frameCount) / 60.0f;
+static float BenDrownedFramesToMinutes(int frames) {
+    return frames / (BenDrowned::TUNING_FRAMES_PER_SECOND * 60.0f);
 }
 
 static float BenDrownedSecondsToMinutes(float seconds) {

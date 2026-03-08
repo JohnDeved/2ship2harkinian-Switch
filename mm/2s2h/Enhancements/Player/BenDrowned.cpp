@@ -43,13 +43,19 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 
 // --- Persisted tuning CVars ---
 #define TUNING_CVAR_BASE "gDeveloperTools.BenDrowned.Tuning"
-#define TUNING_CVAR_MOVE_COOLDOWN TUNING_CVAR_BASE ".MoveCooldown"
-#define TUNING_CVAR_RESPAWN_COOLDOWN TUNING_CVAR_BASE ".RespawnCooldown"
-#define TUNING_CVAR_DIALOGUE_COOLDOWN TUNING_CVAR_BASE ".DialogueCooldown"
+#define TUNING_CVAR_MOVE_COOLDOWN_LEGACY TUNING_CVAR_BASE ".MoveCooldown"
+#define TUNING_CVAR_RESPAWN_COOLDOWN_LEGACY TUNING_CVAR_BASE ".RespawnCooldown"
+#define TUNING_CVAR_DIALOGUE_COOLDOWN_LEGACY TUNING_CVAR_BASE ".DialogueCooldown"
+#define TUNING_CVAR_MOVE_COOLDOWN_SECONDS TUNING_CVAR_BASE ".MoveCooldownSeconds"
+#define TUNING_CVAR_RESPAWN_COOLDOWN_SECONDS TUNING_CVAR_BASE ".RespawnCooldownSeconds"
+#define TUNING_CVAR_DIALOGUE_COOLDOWN_SECONDS TUNING_CVAR_BASE ".DialogueCooldownSeconds"
 #define TUNING_CVAR_JUMPSCARE_ZOOM_FRAMES TUNING_CVAR_BASE ".JumpscareZoomFrames"
-#define TUNING_CVAR_JUMPSCARE_COOLDOWN TUNING_CVAR_BASE ".JumpscareCooldown"
-#define TUNING_CVAR_LAUGH_BASE TUNING_CVAR_BASE ".LaughBase"
-#define TUNING_CVAR_LAUGH_RANDOM TUNING_CVAR_BASE ".LaughRandom"
+#define TUNING_CVAR_JUMPSCARE_COOLDOWN_LEGACY TUNING_CVAR_BASE ".JumpscareCooldown"
+#define TUNING_CVAR_JUMPSCARE_COOLDOWN_SECONDS TUNING_CVAR_BASE ".JumpscareCooldownSeconds"
+#define TUNING_CVAR_LAUGH_BASE_LEGACY TUNING_CVAR_BASE ".LaughBase"
+#define TUNING_CVAR_LAUGH_RANDOM_LEGACY TUNING_CVAR_BASE ".LaughRandom"
+#define TUNING_CVAR_LAUGH_BASE_SECONDS TUNING_CVAR_BASE ".LaughBaseSeconds"
+#define TUNING_CVAR_LAUGH_RANDOM_SECONDS TUNING_CVAR_BASE ".LaughRandomSeconds"
 #define TUNING_CVAR_DISAPPEAR_CHANCE TUNING_CVAR_BASE ".DisappearChance"
 #define TUNING_CVAR_DIALOGUE_CHANCE TUNING_CVAR_BASE ".DialogueChance"
 #define TUNING_CVAR_LAUGH_MIN_PITCH TUNING_CVAR_BASE ".LaughMinPitch"
@@ -76,19 +82,20 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 #define WATCH_MARGIN 1.35f
 
 // --- Cooldown durations ---
-#define DEFAULT_MOVE_COOLDOWN_FRAMES 3600
+#define BEN_DROWNED_FRAMES_PER_SECOND 60.0f
+#define DEFAULT_MOVE_COOLDOWN_SECONDS 60.0f
 #define EFFECT_COOLDOWN_FRAMES 30
-#define DEFAULT_RESPAWN_COOLDOWN_FRAMES 1800
-#define DEFAULT_DIALOGUE_COOLDOWN_FRAMES 600
+#define DEFAULT_RESPAWN_COOLDOWN_SECONDS 30.0f
+#define DEFAULT_DIALOGUE_COOLDOWN_SECONDS 10.0f
 #define DEFAULT_JUMPSCARE_ZOOM_FRAMES 20
-#define DEFAULT_JUMPSCARE_COOLDOWN_FRAMES 90
+#define DEFAULT_JUMPSCARE_COOLDOWN_SECONDS 1.5f
 
 // --- Disappearance ---
 #define DEFAULT_DISAPPEAR_CHANCE 0.3f
 
 // --- Laugh SFX ---
-#define DEFAULT_LAUGH_BASE_FRAMES 300
-#define DEFAULT_LAUGH_RANDOM_FRAMES 300
+#define DEFAULT_LAUGH_BASE_SECONDS 5.0f
+#define DEFAULT_LAUGH_RANDOM_SECONDS 5.0f
 #define DEFAULT_LAUGH_MIN_PITCH 0.9f
 #define DEFAULT_LAUGH_MAX_PITCH 1.1f
 
@@ -329,9 +336,9 @@ static size_t sNextZoneHistoryCacheReplacementIndex = 0;
 
 // Runtime-adjustable tuning parameters (exposed via debug menu).
 static BenDrowned::TuningParams sTuning = {
-    DEFAULT_MOVE_COOLDOWN_FRAMES,    DEFAULT_RESPAWN_COOLDOWN_FRAMES,   DEFAULT_DIALOGUE_COOLDOWN_FRAMES,
-    DEFAULT_JUMPSCARE_ZOOM_FRAMES,   DEFAULT_JUMPSCARE_COOLDOWN_FRAMES, DEFAULT_LAUGH_BASE_FRAMES,
-    DEFAULT_LAUGH_RANDOM_FRAMES,     DEFAULT_DISAPPEAR_CHANCE,          DIALOGUE_CHANCE,
+    DEFAULT_MOVE_COOLDOWN_SECONDS,    DEFAULT_RESPAWN_COOLDOWN_SECONDS,   DEFAULT_DIALOGUE_COOLDOWN_SECONDS,
+    DEFAULT_JUMPSCARE_ZOOM_FRAMES,    DEFAULT_JUMPSCARE_COOLDOWN_SECONDS, DEFAULT_LAUGH_BASE_SECONDS,
+    DEFAULT_LAUGH_RANDOM_SECONDS,     DEFAULT_DISAPPEAR_CHANCE,           DIALOGUE_CHANCE,
     DEFAULT_LAUGH_MIN_PITCH,         DEFAULT_LAUGH_MAX_PITCH,           DEFAULT_HISTORY_POINT_MIN_DIST,
     DEFAULT_MIN_SPAWN_DIST,          DEFAULT_DISTANT_SPAWN_DIST,        DEFAULT_MAX_NEARBY_DIST,
     DEFAULT_MIN_REPOSITION_DISTANCE, DEFAULT_MOVE_THRESHOLD_DIST,       DEFAULT_CLOSE_EFFECT_DIST,
@@ -345,18 +352,27 @@ static Vec3f sDustAccel = { 0.0f, 0.08f, 0.0f };
 static Color_RGBA8 sDustPrimColor = { 170, 130, 90, 160 };
 static Color_RGBA8 sDustEnvColor = { 100, 60, 20, 110 };
 
+static s32 SecondsToFrames(f32 seconds) {
+    return (s32)lroundf(seconds * BEN_DROWNED_FRAMES_PER_SECOND);
+}
+
+static f32 FramesToSeconds(s32 frames) {
+    return frames / BEN_DROWNED_FRAMES_PER_SECOND;
+}
+
 static void ResetLaughCooldown() {
-    sState.laughCooldown = sTuning.laughBaseFrames + (s32)(Rand_ZeroOne() * sTuning.laughRandomFrames);
+    sState.laughCooldown =
+        SecondsToFrames(sTuning.laughBaseSeconds + (Rand_ZeroOne() * sTuning.laughRandomSeconds));
 }
 
 static void NormalizeTuning() {
-    sTuning.moveCooldownFrames = std::max(sTuning.moveCooldownFrames, 0);
-    sTuning.respawnCooldownFrames = std::max(sTuning.respawnCooldownFrames, 0);
-    sTuning.dialogueCooldownFrames = std::max(sTuning.dialogueCooldownFrames, 0);
+    sTuning.moveCooldownSeconds = std::max(sTuning.moveCooldownSeconds, 0.0f);
+    sTuning.respawnCooldownSeconds = std::max(sTuning.respawnCooldownSeconds, 0.0f);
+    sTuning.dialogueCooldownSeconds = std::max(sTuning.dialogueCooldownSeconds, 0.0f);
     sTuning.jumpscareZoomFrames = std::max(sTuning.jumpscareZoomFrames, 1);
-    sTuning.jumpscareCooldownFrames = std::max(sTuning.jumpscareCooldownFrames, 0);
-    sTuning.laughBaseFrames = std::max(sTuning.laughBaseFrames, 0);
-    sTuning.laughRandomFrames = std::max(sTuning.laughRandomFrames, 0);
+    sTuning.jumpscareCooldownSeconds = std::max(sTuning.jumpscareCooldownSeconds, 0.0f);
+    sTuning.laughBaseSeconds = std::max(sTuning.laughBaseSeconds, 0.0f);
+    sTuning.laughRandomSeconds = std::max(sTuning.laughRandomSeconds, 0.0f);
     sTuning.disappearChance = std::clamp(sTuning.disappearChance, 0.0f, 1.0f);
     sTuning.dialogueChance = std::clamp(sTuning.dialogueChance, 0.0f, 1.0f);
     sTuning.historyPointMinDist = std::max(sTuning.historyPointMinDist, TUNING_MIN_DISTANCE);
@@ -398,12 +414,12 @@ static void ResetHistoryBuffer() {
 }
 
 static void ResetCooldownState() {
-    sState.moveCooldown = sTuning.moveCooldownFrames;
-    sState.respawnCooldown = sTuning.respawnCooldownFrames;
+    sState.moveCooldown = SecondsToFrames(sTuning.moveCooldownSeconds);
+    sState.respawnCooldown = SecondsToFrames(sTuning.respawnCooldownSeconds);
     sState.effectCooldown = EFFECT_COOLDOWN_FRAMES;
-    sState.jumpscareCooldown = sTuning.jumpscareCooldownFrames;
-    sState.laughCooldown = sTuning.laughBaseFrames + sTuning.laughRandomFrames;
-    sState.dialogueCooldown = sTuning.dialogueCooldownFrames;
+    sState.jumpscareCooldown = SecondsToFrames(sTuning.jumpscareCooldownSeconds);
+    sState.laughCooldown = SecondsToFrames(sTuning.laughBaseSeconds + sTuning.laughRandomSeconds);
+    sState.dialogueCooldown = SecondsToFrames(sTuning.dialogueCooldownSeconds);
 }
 
 static void ResetZoneRuntimeState(bool preserveCooldowns) {
@@ -526,14 +542,42 @@ static void HandleZoneChange(PlayState* play) {
     ClearStatueTracking();
 }
 
+static f32 LoadCooldownSeconds(const char* secondsCvar, const char* legacyFramesCvar, f32 defaultSeconds, bool* migrated) {
+    if (CVarExists(secondsCvar)) {
+        return CVarGetFloat(secondsCvar, defaultSeconds);
+    }
+
+    if (CVarExists(legacyFramesCvar)) {
+        f32 seconds = FramesToSeconds(CVarGetInteger(legacyFramesCvar, SecondsToFrames(defaultSeconds)));
+
+        CVarSetFloat(secondsCvar, seconds);
+        CVarClear(legacyFramesCvar);
+        *migrated = true;
+        return seconds;
+    }
+
+    return defaultSeconds;
+}
+
 static void LoadTuning() {
-    sTuning.moveCooldownFrames = CVarGetInteger(TUNING_CVAR_MOVE_COOLDOWN, DEFAULT_MOVE_COOLDOWN_FRAMES);
-    sTuning.respawnCooldownFrames = CVarGetInteger(TUNING_CVAR_RESPAWN_COOLDOWN, DEFAULT_RESPAWN_COOLDOWN_FRAMES);
-    sTuning.dialogueCooldownFrames = CVarGetInteger(TUNING_CVAR_DIALOGUE_COOLDOWN, DEFAULT_DIALOGUE_COOLDOWN_FRAMES);
+    bool migratedCooldownCvars = false;
+
+    sTuning.moveCooldownSeconds = LoadCooldownSeconds(TUNING_CVAR_MOVE_COOLDOWN_SECONDS, TUNING_CVAR_MOVE_COOLDOWN_LEGACY,
+                                                      DEFAULT_MOVE_COOLDOWN_SECONDS, &migratedCooldownCvars);
+    sTuning.respawnCooldownSeconds =
+        LoadCooldownSeconds(TUNING_CVAR_RESPAWN_COOLDOWN_SECONDS, TUNING_CVAR_RESPAWN_COOLDOWN_LEGACY,
+                            DEFAULT_RESPAWN_COOLDOWN_SECONDS, &migratedCooldownCvars);
+    sTuning.dialogueCooldownSeconds =
+        LoadCooldownSeconds(TUNING_CVAR_DIALOGUE_COOLDOWN_SECONDS, TUNING_CVAR_DIALOGUE_COOLDOWN_LEGACY,
+                            DEFAULT_DIALOGUE_COOLDOWN_SECONDS, &migratedCooldownCvars);
     sTuning.jumpscareZoomFrames = CVarGetInteger(TUNING_CVAR_JUMPSCARE_ZOOM_FRAMES, DEFAULT_JUMPSCARE_ZOOM_FRAMES);
-    sTuning.jumpscareCooldownFrames = CVarGetInteger(TUNING_CVAR_JUMPSCARE_COOLDOWN, DEFAULT_JUMPSCARE_COOLDOWN_FRAMES);
-    sTuning.laughBaseFrames = CVarGetInteger(TUNING_CVAR_LAUGH_BASE, DEFAULT_LAUGH_BASE_FRAMES);
-    sTuning.laughRandomFrames = CVarGetInteger(TUNING_CVAR_LAUGH_RANDOM, DEFAULT_LAUGH_RANDOM_FRAMES);
+    sTuning.jumpscareCooldownSeconds =
+        LoadCooldownSeconds(TUNING_CVAR_JUMPSCARE_COOLDOWN_SECONDS, TUNING_CVAR_JUMPSCARE_COOLDOWN_LEGACY,
+                            DEFAULT_JUMPSCARE_COOLDOWN_SECONDS, &migratedCooldownCvars);
+    sTuning.laughBaseSeconds = LoadCooldownSeconds(TUNING_CVAR_LAUGH_BASE_SECONDS, TUNING_CVAR_LAUGH_BASE_LEGACY,
+                                                   DEFAULT_LAUGH_BASE_SECONDS, &migratedCooldownCvars);
+    sTuning.laughRandomSeconds = LoadCooldownSeconds(TUNING_CVAR_LAUGH_RANDOM_SECONDS, TUNING_CVAR_LAUGH_RANDOM_LEGACY,
+                                                     DEFAULT_LAUGH_RANDOM_SECONDS, &migratedCooldownCvars);
     sTuning.disappearChance = CVarGetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, DEFAULT_DISAPPEAR_CHANCE);
     sTuning.dialogueChance = CVarGetFloat(TUNING_CVAR_DIALOGUE_CHANCE, DIALOGUE_CHANCE);
     sTuning.laughMinPitch = CVarGetFloat(TUNING_CVAR_LAUGH_MIN_PITCH, DEFAULT_LAUGH_MIN_PITCH);
@@ -551,6 +595,10 @@ static void LoadTuning() {
     sTuning.fallbackStalkDist = CVarGetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, DEFAULT_FALLBACK_STALK_DISTANCE);
     sTuning.proximityRumbleDist = CVarGetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, DEFAULT_PROXIMITY_RUMBLE_DIST);
     NormalizeTuning();
+
+    if (migratedCooldownCvars) {
+        CVarSave();
+    }
 }
 
 static void HandlePlayStateChange(PlayState* play) {
@@ -1102,7 +1150,7 @@ static void TriggerVisibilityJumpscare(PlayState* play, Player* player, EnTorch2
     sState.jumpscareOriginalFov = camera->fov;
     sState.jumpscareCameraActive = true;
     sState.jumpscareTimer = sTuning.jumpscareZoomFrames;
-    sState.jumpscareCooldown = sTuning.jumpscareCooldownFrames;
+    sState.jumpscareCooldown = SecondsToFrames(sTuning.jumpscareCooldownSeconds);
 
     PlayGlobalJumpscareSfx();
 
@@ -1336,13 +1384,19 @@ TuningParams& GetTuning() {
 
 void SaveTuning() {
     NormalizeTuning();
-    CVarSetInteger(TUNING_CVAR_MOVE_COOLDOWN, sTuning.moveCooldownFrames);
-    CVarSetInteger(TUNING_CVAR_RESPAWN_COOLDOWN, sTuning.respawnCooldownFrames);
-    CVarSetInteger(TUNING_CVAR_DIALOGUE_COOLDOWN, sTuning.dialogueCooldownFrames);
+    CVarSetFloat(TUNING_CVAR_MOVE_COOLDOWN_SECONDS, sTuning.moveCooldownSeconds);
+    CVarSetFloat(TUNING_CVAR_RESPAWN_COOLDOWN_SECONDS, sTuning.respawnCooldownSeconds);
+    CVarSetFloat(TUNING_CVAR_DIALOGUE_COOLDOWN_SECONDS, sTuning.dialogueCooldownSeconds);
     CVarSetInteger(TUNING_CVAR_JUMPSCARE_ZOOM_FRAMES, sTuning.jumpscareZoomFrames);
-    CVarSetInteger(TUNING_CVAR_JUMPSCARE_COOLDOWN, sTuning.jumpscareCooldownFrames);
-    CVarSetInteger(TUNING_CVAR_LAUGH_BASE, sTuning.laughBaseFrames);
-    CVarSetInteger(TUNING_CVAR_LAUGH_RANDOM, sTuning.laughRandomFrames);
+    CVarSetFloat(TUNING_CVAR_JUMPSCARE_COOLDOWN_SECONDS, sTuning.jumpscareCooldownSeconds);
+    CVarSetFloat(TUNING_CVAR_LAUGH_BASE_SECONDS, sTuning.laughBaseSeconds);
+    CVarSetFloat(TUNING_CVAR_LAUGH_RANDOM_SECONDS, sTuning.laughRandomSeconds);
+    CVarClear(TUNING_CVAR_MOVE_COOLDOWN_LEGACY);
+    CVarClear(TUNING_CVAR_RESPAWN_COOLDOWN_LEGACY);
+    CVarClear(TUNING_CVAR_DIALOGUE_COOLDOWN_LEGACY);
+    CVarClear(TUNING_CVAR_JUMPSCARE_COOLDOWN_LEGACY);
+    CVarClear(TUNING_CVAR_LAUGH_BASE_LEGACY);
+    CVarClear(TUNING_CVAR_LAUGH_RANDOM_LEGACY);
     CVarSetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, sTuning.disappearChance);
     CVarSetFloat(TUNING_CVAR_DIALOGUE_CHANCE, sTuning.dialogueChance);
     CVarSetFloat(TUNING_CVAR_LAUGH_MIN_PITCH, sTuning.laughMinPitch);
@@ -1431,13 +1485,13 @@ void RegisterBenDrowned() {
                         DismissStatue(play, statue);
                         statue = nullptr;
                         dismissedThisFrame = true;
-                        sState.respawnCooldown = sTuning.respawnCooldownFrames;
+                        sState.respawnCooldown = SecondsToFrames(sTuning.respawnCooldownSeconds);
                     } else {
                         Vec3f repositionPoint;
                         if (FindTargetPointFarFromCurrent(play, player, statue->actor.world.pos, &repositionPoint)) {
                             MoveStatue(play, player, statue, repositionPoint);
                             sState.statueObserved = false;
-                            sState.moveCooldown = sTuning.moveCooldownFrames;
+                            sState.moveCooldown = SecondsToFrames(sTuning.moveCooldownSeconds);
                         }
                     }
                 }
@@ -1453,7 +1507,7 @@ void RegisterBenDrowned() {
             statue = SpawnStatue(play, hiddenPoint);
             spawnedThisFrame = statue != nullptr;
             if (spawnedThisFrame) {
-                sState.moveCooldown = sTuning.moveCooldownFrames;
+                sState.moveCooldown = SecondsToFrames(sTuning.moveCooldownSeconds);
             }
         }
 
@@ -1462,7 +1516,7 @@ void RegisterBenDrowned() {
                 (Math3D_Vec3fDistSq(&statue->actor.world.pos, &hiddenPoint) > SQ(sTuning.moveThresholdDist))) {
                 MoveStatue(play, player, statue, hiddenPoint);
                 TriggerArrivalEffects(play, player, statue);
-                sState.moveCooldown = sTuning.moveCooldownFrames;
+                sState.moveCooldown = SecondsToFrames(sTuning.moveCooldownSeconds);
             }
         }
 
@@ -1487,7 +1541,7 @@ void RegisterBenDrowned() {
         }
         CustomMessage::LoadCustomMessageIntoFont(entry);
         *loadFromMessageTable = false;
-        sState.dialogueCooldown = sTuning.dialogueCooldownFrames;
+        sState.dialogueCooldown = SecondsToFrames(sTuning.dialogueCooldownSeconds);
     });
 
     COND_ID_HOOK(ShouldActorDraw, ACTOR_EN_TORCH2, CVAR, [](Actor* actor, bool*) {
@@ -1504,13 +1558,13 @@ static RegisterShipInitFunc initFunc(RegisterBenDrowned, {
                                                              CVAR_NAME,
                                                              DEBUG_OVERLAY_CVAR,
                                                              PLAYER_NAME_OVERRIDE_CVAR,
-                                                             TUNING_CVAR_MOVE_COOLDOWN,
-                                                             TUNING_CVAR_RESPAWN_COOLDOWN,
-                                                             TUNING_CVAR_DIALOGUE_COOLDOWN,
+                                                             TUNING_CVAR_MOVE_COOLDOWN_SECONDS,
+                                                             TUNING_CVAR_RESPAWN_COOLDOWN_SECONDS,
+                                                             TUNING_CVAR_DIALOGUE_COOLDOWN_SECONDS,
                                                              TUNING_CVAR_JUMPSCARE_ZOOM_FRAMES,
-                                                             TUNING_CVAR_JUMPSCARE_COOLDOWN,
-                                                             TUNING_CVAR_LAUGH_BASE,
-                                                             TUNING_CVAR_LAUGH_RANDOM,
+                                                             TUNING_CVAR_JUMPSCARE_COOLDOWN_SECONDS,
+                                                             TUNING_CVAR_LAUGH_BASE_SECONDS,
+                                                             TUNING_CVAR_LAUGH_RANDOM_SECONDS,
                                                              TUNING_CVAR_DISAPPEAR_CHANCE,
                                                              TUNING_CVAR_DIALOGUE_CHANCE,
                                                              TUNING_CVAR_LAUGH_MIN_PITCH,

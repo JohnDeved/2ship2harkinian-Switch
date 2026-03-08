@@ -24,13 +24,13 @@ struct DebugHistoryEntry {
 };
 
 struct TuningParams {
-    s32 moveCooldownFrames;
-    s32 respawnCooldownFrames;
-    s32 dialogueCooldownFrames;
+    f32 moveCooldownSeconds;
+    f32 respawnCooldownSeconds;
+    f32 dialogueCooldownSeconds;
     s32 jumpscareZoomFrames;
-    s32 jumpscareCooldownFrames;
-    s32 laughBaseFrames;
-    s32 laughRandomFrames;
+    f32 jumpscareCooldownSeconds;
+    f32 laughBaseSeconds;
+    f32 laughRandomSeconds;
     f32 disappearChance;
     f32 dialogueChance;
     f32 laughMinPitch;

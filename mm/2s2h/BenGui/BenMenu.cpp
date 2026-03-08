@@ -30,6 +30,10 @@ extern SaveContext gSaveContext;
 extern std::unordered_map<s16, const char*> warpPointSceneList;
 extern void Warp();
 
+static float BenDrownedFramesToSeconds(int frames) {
+    return frames / 60.0f;
+}
+
 static const std::unordered_map<int32_t, const char*> menuThemeOptions = {
     { UIWidgets::Colors::Red, "Red" },
     { UIWidgets::Colors::DarkRed, "Dark Red" },
@@ -197,20 +201,24 @@ void RenderBenDrownedDebugSection() {
     ImGui::SeparatorText("Active Cooldowns");
     ImGui::BulletText("History count: %d / %zu", snapshot.historyCount, BenDrowned::DEBUG_HISTORY_SIZE);
     ImGui::BulletText("Record timer: %d", snapshot.recordTimer);
-    ImGui::BulletText("Move cooldown: %d", snapshot.moveCooldown);
-    ImGui::BulletText("Respawn cooldown: %d", snapshot.respawnCooldown);
-    ImGui::BulletText("Laugh cooldown: %d", snapshot.laughCooldown);
-    ImGui::BulletText("Arrival effect cooldown: %d", snapshot.effectCooldown);
-    ImGui::BulletText("Dialogue cooldown: %d", snapshot.dialogueCooldown);
+    ImGui::BulletText("Move cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.moveCooldown));
+    ImGui::BulletText("Respawn cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.respawnCooldown));
+    ImGui::BulletText("Laugh cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.laughCooldown));
+    ImGui::BulletText("Arrival effect cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.effectCooldown));
+    ImGui::BulletText("Dialogue cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.dialogueCooldown));
 
     bool tuningChanged = false;
 
     if (ImGui::CollapsingHeader("Cooldown Tuning")) {
-        tuningChanged |= ImGui::SliderInt("Move cooldown (frames)", &tuning.moveCooldownFrames, 60, 7200 * 100);
-        tuningChanged |= ImGui::SliderInt("Respawn cooldown (frames)", &tuning.respawnCooldownFrames, 60, 7200 * 100);
-        tuningChanged |= ImGui::SliderInt("Dialogue cooldown (frames)", &tuning.dialogueCooldownFrames, 30, 3600);
-        tuningChanged |= ImGui::SliderInt("Laugh base (frames)", &tuning.laughBaseFrames, 30, 3600);
-        tuningChanged |= ImGui::SliderInt("Laugh random (frames)", &tuning.laughRandomFrames, 0, 3600);
+        tuningChanged |= ImGui::SliderFloat("Move cooldown (seconds)", &tuning.moveCooldownSeconds, 1.0f, 12000.0f,
+                                            "%.1f");
+        tuningChanged |= ImGui::SliderFloat("Respawn cooldown (seconds)", &tuning.respawnCooldownSeconds, 1.0f,
+                                            12000.0f, "%.1f");
+        tuningChanged |=
+            ImGui::SliderFloat("Dialogue cooldown (seconds)", &tuning.dialogueCooldownSeconds, 0.5f, 60.0f, "%.1f");
+        tuningChanged |= ImGui::SliderFloat("Laugh base (seconds)", &tuning.laughBaseSeconds, 0.5f, 60.0f, "%.1f");
+        tuningChanged |=
+            ImGui::SliderFloat("Laugh random (seconds)", &tuning.laughRandomSeconds, 0.0f, 60.0f, "%.1f");
         tuningChanged |= ImGui::SliderFloat("Disappear chance", &tuning.disappearChance, 0.0f, 1.0f, "%.2f");
         tuningChanged |= ImGui::SliderFloat("Dialogue chance", &tuning.dialogueChance, 0.0f, 1.0f, "%.2f");
     }
@@ -237,7 +245,8 @@ void RenderBenDrownedDebugSection() {
 
     if (ImGui::CollapsingHeader("Jumpscare Tuning")) {
         tuningChanged |= ImGui::SliderInt("Zoom (frames)", &tuning.jumpscareZoomFrames, 1, 120);
-        tuningChanged |= ImGui::SliderInt("Cooldown (frames)", &tuning.jumpscareCooldownFrames, 0, 600);
+        tuningChanged |=
+            ImGui::SliderFloat("Cooldown (seconds)", &tuning.jumpscareCooldownSeconds, 0.0f, 10.0f, "%.1f");
         tuningChanged |= ImGui::SliderFloat("Trigger dist", &tuning.jumpscareTriggerDist, 1.0f, 300.0f, "%.0f");
         tuningChanged |= ImGui::SliderFloat("Target dist", &tuning.jumpscareTargetDist, 1.0f, 200.0f, "%.0f");
         tuningChanged |= ImGui::SliderFloat("Target FOV", &tuning.jumpscareTargetFov, 1.0f, 120.0f, "%.1f");

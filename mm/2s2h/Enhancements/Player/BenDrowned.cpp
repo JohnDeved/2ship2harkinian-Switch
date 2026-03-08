@@ -441,11 +441,6 @@ static void ResetZoneRuntimeState(bool preserveCooldowns) {
     sState.jumpscareOriginalFov = 0.0f;
 }
 
-static void ResetHistory() {
-    ResetHistoryBuffer();
-    ResetZoneRuntimeState(false);
-}
-
 static void ClearStatueTracking() {
     sState.ownedStatue = nullptr;
     sState.spawnedStatue = false;
@@ -453,6 +448,16 @@ static void ClearStatueTracking() {
     sState.statueObserved = false;
     sState.statueWasVisible = false;
     sState.ignoreStatueInterpolationUntilFrame = 0;
+}
+
+static void ResetEncounterState(bool preserveCooldowns) {
+    ResetZoneRuntimeState(preserveCooldowns);
+    ClearStatueTracking();
+}
+
+static void ResetHistory() {
+    ResetHistoryBuffer();
+    ResetEncounterState(false);
 }
 
 static void CleanupOwnedStatue() {
@@ -546,8 +551,7 @@ static void HandleZoneChange(PlayState* play) {
     sState.currentSceneId = sceneId;
     sState.currentSceneLayer = sceneLayer;
     LoadZoneHistory(sceneId, sceneLayer);
-    ResetZoneRuntimeState(true);
-    ClearStatueTracking();
+    ResetEncounterState(true);
 }
 
 static f32 LoadCooldownSeconds(const char* secondsCvar, const char* legacyFramesCvar, f32 defaultSeconds, bool* migrated) {
@@ -617,7 +621,6 @@ static void HandlePlayStateChange(PlayState* play) {
         sState.currentSceneId = -1;
         sState.currentSceneLayer = -1;
         ResetHistory();
-        ClearStatueTracking();
     }
 }
 

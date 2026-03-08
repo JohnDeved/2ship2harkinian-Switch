@@ -572,6 +572,10 @@ static f32 LoadCooldownSeconds(const char* secondsCvar, const char* legacyFrames
     return defaultSeconds;
 }
 
+static f32 LoadFloatTuningValue(const char* cvar, f32 defaultValue) {
+    return CVarGetFloat(cvar, defaultValue);
+}
+
 static void LoadTuning() {
     bool migratedCooldownCvars = false;
 
@@ -591,22 +595,26 @@ static void LoadTuning() {
                                                    DEFAULT_LAUGH_BASE_SECONDS, &migratedCooldownCvars);
     sTuning.laughRandomSeconds = LoadCooldownSeconds(TUNING_CVAR_LAUGH_RANDOM_SECONDS, TUNING_CVAR_LAUGH_RANDOM_LEGACY,
                                                      DEFAULT_LAUGH_RANDOM_SECONDS, &migratedCooldownCvars);
-    sTuning.disappearChance = CVarGetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, DEFAULT_DISAPPEAR_CHANCE);
-    sTuning.dialogueChance = CVarGetFloat(TUNING_CVAR_DIALOGUE_CHANCE, DIALOGUE_CHANCE);
-    sTuning.laughMinPitch = CVarGetFloat(TUNING_CVAR_LAUGH_MIN_PITCH, DEFAULT_LAUGH_MIN_PITCH);
-    sTuning.laughMaxPitch = CVarGetFloat(TUNING_CVAR_LAUGH_MAX_PITCH, DEFAULT_LAUGH_MAX_PITCH);
-    sTuning.historyPointMinDist = CVarGetFloat(TUNING_CVAR_HISTORY_POINT_MIN_DIST, DEFAULT_HISTORY_POINT_MIN_DIST);
-    sTuning.minSpawnDist = CVarGetFloat(TUNING_CVAR_MIN_SPAWN_DIST, DEFAULT_MIN_SPAWN_DIST);
-    sTuning.distantSpawnDist = CVarGetFloat(TUNING_CVAR_DISTANT_SPAWN_DIST, DEFAULT_DISTANT_SPAWN_DIST);
-    sTuning.maxNearbyDist = CVarGetFloat(TUNING_CVAR_MAX_NEARBY_DIST, DEFAULT_MAX_NEARBY_DIST);
-    sTuning.minRepositionDist = CVarGetFloat(TUNING_CVAR_MIN_REPOSITION_DIST, DEFAULT_MIN_REPOSITION_DISTANCE);
-    sTuning.moveThresholdDist = CVarGetFloat(TUNING_CVAR_MOVE_THRESHOLD_DIST, DEFAULT_MOVE_THRESHOLD_DIST);
-    sTuning.closeEffectDist = CVarGetFloat(TUNING_CVAR_CLOSE_EFFECT_DIST, DEFAULT_CLOSE_EFFECT_DIST);
-    sTuning.jumpscareTriggerDist = CVarGetFloat(TUNING_CVAR_JUMPSCARE_TRIGGER_DIST, DEFAULT_JUMPSCARE_TRIGGER_DIST);
-    sTuning.jumpscareTargetDist = CVarGetFloat(TUNING_CVAR_JUMPSCARE_TARGET_DIST, DEFAULT_JUMPSCARE_TARGET_DIST);
-    sTuning.jumpscareTargetFov = CVarGetFloat(TUNING_CVAR_JUMPSCARE_TARGET_FOV, DEFAULT_JUMPSCARE_TARGET_FOV);
-    sTuning.fallbackStalkDist = CVarGetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, DEFAULT_FALLBACK_STALK_DISTANCE);
-    sTuning.proximityRumbleDist = CVarGetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, DEFAULT_PROXIMITY_RUMBLE_DIST);
+    sTuning.disappearChance = LoadFloatTuningValue(TUNING_CVAR_DISAPPEAR_CHANCE, DEFAULT_DISAPPEAR_CHANCE);
+    sTuning.dialogueChance = LoadFloatTuningValue(TUNING_CVAR_DIALOGUE_CHANCE, DIALOGUE_CHANCE);
+    sTuning.laughMinPitch = LoadFloatTuningValue(TUNING_CVAR_LAUGH_MIN_PITCH, DEFAULT_LAUGH_MIN_PITCH);
+    sTuning.laughMaxPitch = LoadFloatTuningValue(TUNING_CVAR_LAUGH_MAX_PITCH, DEFAULT_LAUGH_MAX_PITCH);
+    sTuning.historyPointMinDist =
+        LoadFloatTuningValue(TUNING_CVAR_HISTORY_POINT_MIN_DIST, DEFAULT_HISTORY_POINT_MIN_DIST);
+    sTuning.minSpawnDist = LoadFloatTuningValue(TUNING_CVAR_MIN_SPAWN_DIST, DEFAULT_MIN_SPAWN_DIST);
+    sTuning.distantSpawnDist = LoadFloatTuningValue(TUNING_CVAR_DISTANT_SPAWN_DIST, DEFAULT_DISTANT_SPAWN_DIST);
+    sTuning.maxNearbyDist = LoadFloatTuningValue(TUNING_CVAR_MAX_NEARBY_DIST, DEFAULT_MAX_NEARBY_DIST);
+    sTuning.minRepositionDist = LoadFloatTuningValue(TUNING_CVAR_MIN_REPOSITION_DIST, DEFAULT_MIN_REPOSITION_DISTANCE);
+    sTuning.moveThresholdDist = LoadFloatTuningValue(TUNING_CVAR_MOVE_THRESHOLD_DIST, DEFAULT_MOVE_THRESHOLD_DIST);
+    sTuning.closeEffectDist = LoadFloatTuningValue(TUNING_CVAR_CLOSE_EFFECT_DIST, DEFAULT_CLOSE_EFFECT_DIST);
+    sTuning.jumpscareTriggerDist =
+        LoadFloatTuningValue(TUNING_CVAR_JUMPSCARE_TRIGGER_DIST, DEFAULT_JUMPSCARE_TRIGGER_DIST);
+    sTuning.jumpscareTargetDist =
+        LoadFloatTuningValue(TUNING_CVAR_JUMPSCARE_TARGET_DIST, DEFAULT_JUMPSCARE_TARGET_DIST);
+    sTuning.jumpscareTargetFov = LoadFloatTuningValue(TUNING_CVAR_JUMPSCARE_TARGET_FOV, DEFAULT_JUMPSCARE_TARGET_FOV);
+    sTuning.fallbackStalkDist = LoadFloatTuningValue(TUNING_CVAR_FALLBACK_STALK_DIST, DEFAULT_FALLBACK_STALK_DISTANCE);
+    sTuning.proximityRumbleDist =
+        LoadFloatTuningValue(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, DEFAULT_PROXIMITY_RUMBLE_DIST);
     NormalizeTuning();
 
     if (migratedCooldownCvars) {
@@ -632,6 +640,20 @@ static bool IsNormalGameplayState(PlayState* play) {
 
 static bool IsPlayerGroundedAndDry(Player* player) {
     return (player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && !(player->actor.bgCheckFlags & BGCHECKFLAG_WATER);
+}
+
+static bool IsActorAlive(const Actor* actor) {
+    return (actor != nullptr) && (actor->update != nullptr);
+}
+
+static bool IsPlayerValid(Player* player) {
+    return (player != nullptr) && IsActorAlive(&player->actor);
+}
+
+static Player* GetValidPlayer(PlayState* play) {
+    Player* player = GET_PLAYER(play);
+
+    return IsPlayerValid(player) ? player : nullptr;
 }
 
 static void RecordHistoryPoint(Player* player) {
@@ -798,7 +820,7 @@ static bool SnapPointToFloor(PlayState* play, Vec3f* point) {
 }
 
 static bool IsStatueAlive(EnTorch2* statue) {
-    return (statue != nullptr) && (statue->actor.update != NULL);
+    return (statue != nullptr) && IsActorAlive(&statue->actor);
 }
 
 static EnTorch2* GetStatue(PlayState* play) {
@@ -1292,11 +1314,7 @@ static void DrawDebugOverlay() {
     // The engine's normal DebugDisplay pass has already run before OnPlayDrawWorldEnd.
     DebugDisplay_Init();
 
-    player = GET_PLAYER(play);
-    if ((player == nullptr) || (player->actor.update == NULL)) {
-        player = nullptr;
-    }
-
+    player = GetValidPlayer(play);
     statue = play->actorCtx.elegyShells[TORCH2_PARAM_HUMAN];
     if ((statue != nullptr) && (statue->actor.update == NULL)) {
         statue = nullptr;
@@ -1343,11 +1361,11 @@ DebugSnapshot GetDebugSnapshot() {
         return snapshot;
     }
 
-    player = GET_PLAYER(play);
+    player = GetValidPlayer(play);
     statue = GetStatue(play);
 
     snapshot.normalGameplayState = IsNormalGameplayState(play);
-    snapshot.playerValid = (player != nullptr) && (player->actor.update != NULL);
+    snapshot.playerValid = player != nullptr;
     snapshot.playerGroundedAndDry = snapshot.playerValid && IsPlayerGroundedAndDry(player);
     snapshot.statueAlive = statue != nullptr;
     snapshot.statueManaged = sState.spawnedStatue;
@@ -1394,37 +1412,45 @@ TuningParams& GetTuning() {
     return sTuning;
 }
 
+static void SaveFloatTuningValue(const char* cvar, f32 value) {
+    CVarSetFloat(cvar, value);
+}
+
+static void SaveCooldownTuningValue(const char* secondsCvar, const char* legacyFramesCvar, f32 seconds) {
+    SaveFloatTuningValue(secondsCvar, seconds);
+    CVarClear(legacyFramesCvar);
+}
+
 void SaveTuning() {
     NormalizeTuning();
-    CVarSetFloat(TUNING_CVAR_MOVE_COOLDOWN_SECONDS, sTuning.moveCooldownSeconds);
-    CVarSetFloat(TUNING_CVAR_RESPAWN_COOLDOWN_SECONDS, sTuning.respawnCooldownSeconds);
-    CVarSetFloat(TUNING_CVAR_DIALOGUE_COOLDOWN_SECONDS, sTuning.dialogueCooldownSeconds);
+    SaveCooldownTuningValue(TUNING_CVAR_MOVE_COOLDOWN_SECONDS, TUNING_CVAR_MOVE_COOLDOWN_LEGACY,
+                            sTuning.moveCooldownSeconds);
+    SaveCooldownTuningValue(TUNING_CVAR_RESPAWN_COOLDOWN_SECONDS, TUNING_CVAR_RESPAWN_COOLDOWN_LEGACY,
+                            sTuning.respawnCooldownSeconds);
+    SaveCooldownTuningValue(TUNING_CVAR_DIALOGUE_COOLDOWN_SECONDS, TUNING_CVAR_DIALOGUE_COOLDOWN_LEGACY,
+                            sTuning.dialogueCooldownSeconds);
     CVarSetInteger(TUNING_CVAR_JUMPSCARE_ZOOM_FRAMES, sTuning.jumpscareZoomFrames);
-    CVarSetFloat(TUNING_CVAR_JUMPSCARE_COOLDOWN_SECONDS, sTuning.jumpscareCooldownSeconds);
-    CVarSetFloat(TUNING_CVAR_LAUGH_BASE_SECONDS, sTuning.laughBaseSeconds);
-    CVarSetFloat(TUNING_CVAR_LAUGH_RANDOM_SECONDS, sTuning.laughRandomSeconds);
-    CVarClear(TUNING_CVAR_MOVE_COOLDOWN_LEGACY);
-    CVarClear(TUNING_CVAR_RESPAWN_COOLDOWN_LEGACY);
-    CVarClear(TUNING_CVAR_DIALOGUE_COOLDOWN_LEGACY);
-    CVarClear(TUNING_CVAR_JUMPSCARE_COOLDOWN_LEGACY);
-    CVarClear(TUNING_CVAR_LAUGH_BASE_LEGACY);
-    CVarClear(TUNING_CVAR_LAUGH_RANDOM_LEGACY);
-    CVarSetFloat(TUNING_CVAR_DISAPPEAR_CHANCE, sTuning.disappearChance);
-    CVarSetFloat(TUNING_CVAR_DIALOGUE_CHANCE, sTuning.dialogueChance);
-    CVarSetFloat(TUNING_CVAR_LAUGH_MIN_PITCH, sTuning.laughMinPitch);
-    CVarSetFloat(TUNING_CVAR_LAUGH_MAX_PITCH, sTuning.laughMaxPitch);
-    CVarSetFloat(TUNING_CVAR_HISTORY_POINT_MIN_DIST, sTuning.historyPointMinDist);
-    CVarSetFloat(TUNING_CVAR_MIN_SPAWN_DIST, sTuning.minSpawnDist);
-    CVarSetFloat(TUNING_CVAR_DISTANT_SPAWN_DIST, sTuning.distantSpawnDist);
-    CVarSetFloat(TUNING_CVAR_MAX_NEARBY_DIST, sTuning.maxNearbyDist);
-    CVarSetFloat(TUNING_CVAR_MIN_REPOSITION_DIST, sTuning.minRepositionDist);
-    CVarSetFloat(TUNING_CVAR_MOVE_THRESHOLD_DIST, sTuning.moveThresholdDist);
-    CVarSetFloat(TUNING_CVAR_CLOSE_EFFECT_DIST, sTuning.closeEffectDist);
-    CVarSetFloat(TUNING_CVAR_JUMPSCARE_TRIGGER_DIST, sTuning.jumpscareTriggerDist);
-    CVarSetFloat(TUNING_CVAR_JUMPSCARE_TARGET_DIST, sTuning.jumpscareTargetDist);
-    CVarSetFloat(TUNING_CVAR_JUMPSCARE_TARGET_FOV, sTuning.jumpscareTargetFov);
-    CVarSetFloat(TUNING_CVAR_FALLBACK_STALK_DIST, sTuning.fallbackStalkDist);
-    CVarSetFloat(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, sTuning.proximityRumbleDist);
+    SaveCooldownTuningValue(TUNING_CVAR_JUMPSCARE_COOLDOWN_SECONDS, TUNING_CVAR_JUMPSCARE_COOLDOWN_LEGACY,
+                            sTuning.jumpscareCooldownSeconds);
+    SaveCooldownTuningValue(TUNING_CVAR_LAUGH_BASE_SECONDS, TUNING_CVAR_LAUGH_BASE_LEGACY, sTuning.laughBaseSeconds);
+    SaveCooldownTuningValue(TUNING_CVAR_LAUGH_RANDOM_SECONDS, TUNING_CVAR_LAUGH_RANDOM_LEGACY,
+                            sTuning.laughRandomSeconds);
+    SaveFloatTuningValue(TUNING_CVAR_DISAPPEAR_CHANCE, sTuning.disappearChance);
+    SaveFloatTuningValue(TUNING_CVAR_DIALOGUE_CHANCE, sTuning.dialogueChance);
+    SaveFloatTuningValue(TUNING_CVAR_LAUGH_MIN_PITCH, sTuning.laughMinPitch);
+    SaveFloatTuningValue(TUNING_CVAR_LAUGH_MAX_PITCH, sTuning.laughMaxPitch);
+    SaveFloatTuningValue(TUNING_CVAR_HISTORY_POINT_MIN_DIST, sTuning.historyPointMinDist);
+    SaveFloatTuningValue(TUNING_CVAR_MIN_SPAWN_DIST, sTuning.minSpawnDist);
+    SaveFloatTuningValue(TUNING_CVAR_DISTANT_SPAWN_DIST, sTuning.distantSpawnDist);
+    SaveFloatTuningValue(TUNING_CVAR_MAX_NEARBY_DIST, sTuning.maxNearbyDist);
+    SaveFloatTuningValue(TUNING_CVAR_MIN_REPOSITION_DIST, sTuning.minRepositionDist);
+    SaveFloatTuningValue(TUNING_CVAR_MOVE_THRESHOLD_DIST, sTuning.moveThresholdDist);
+    SaveFloatTuningValue(TUNING_CVAR_CLOSE_EFFECT_DIST, sTuning.closeEffectDist);
+    SaveFloatTuningValue(TUNING_CVAR_JUMPSCARE_TRIGGER_DIST, sTuning.jumpscareTriggerDist);
+    SaveFloatTuningValue(TUNING_CVAR_JUMPSCARE_TARGET_DIST, sTuning.jumpscareTargetDist);
+    SaveFloatTuningValue(TUNING_CVAR_JUMPSCARE_TARGET_FOV, sTuning.jumpscareTargetFov);
+    SaveFloatTuningValue(TUNING_CVAR_FALLBACK_STALK_DIST, sTuning.fallbackStalkDist);
+    SaveFloatTuningValue(TUNING_CVAR_PROXIMITY_RUMBLE_DIST, sTuning.proximityRumbleDist);
     CVarSave();
 }
 
@@ -1451,8 +1477,8 @@ void RegisterBenDrowned() {
             return;
         }
 
-        player = GET_PLAYER(play);
-        if ((player == nullptr) || (player->actor.update == NULL)) {
+        player = GetValidPlayer(play);
+        if (player == nullptr) {
             return;
         }
 

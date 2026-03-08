@@ -9,7 +9,6 @@
 #include "2s2h/PresetManager/PresetManager.h"
 #include "HudEditor.h"
 #include "Notification.h"
-#include <variant>
 #include <ship/utils/StringHelper.h>
 #include <spdlog/fmt/fmt.h>
 #include "variables.h"
@@ -44,6 +43,29 @@ static float BenDrownedSecondsToMinutes(float seconds) {
 
 static float BenDrownedMinutesToSeconds(float minutes) {
     return minutes * 60.0f;
+}
+
+static const ImVec4 sBenDrownedDistantSpawnColor = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
+static const ImVec4 sBenDrownedActiveTargetColor = ImVec4(1.0f, 0.85f, 0.35f, 1.0f);
+
+static bool RenderBenDrownedMinutesSlider(const char* label, float* secondsValue, float minMinutes, float maxMinutes,
+                                          const char* format) {
+    float minutesValue = BenDrownedSecondsToMinutes(*secondsValue);
+
+    if (!ImGui::SliderFloat(label, &minutesValue, minMinutes, maxMinutes, format)) {
+        return false;
+    }
+
+    *secondsValue = BenDrownedMinutesToSeconds(minutesValue);
+    return true;
+}
+
+static void RenderBenDrownedBulletPositionText(const char* label, const Vec3f& pos) {
+    ImGui::BulletText("%s: %.1f, %.1f, %.1f", label, pos.x, pos.y, pos.z);
+}
+
+static void RenderBenDrownedColoredPositionText(const char* label, const Vec3f& pos, const ImVec4& color) {
+    ImGui::TextColored(color, "%s: %.1f, %.1f, %.1f", label, pos.x, pos.y, pos.z);
 }
 
 static const std::unordered_map<int32_t, const char*> menuThemeOptions = {
@@ -196,18 +218,17 @@ void RenderBenDrownedDebugSection() {
 
     ImGui::SeparatorText("Positions");
     if (snapshot.playerValid) {
-        ImGui::BulletText("Player: %.1f, %.1f, %.1f", snapshot.playerPos.x, snapshot.playerPos.y, snapshot.playerPos.z);
+        RenderBenDrownedBulletPositionText("Player", snapshot.playerPos);
     }
     if (snapshot.statueAlive) {
-        ImGui::BulletText("Statue: %.1f, %.1f, %.1f", snapshot.statuePos.x, snapshot.statuePos.y, snapshot.statuePos.z);
+        RenderBenDrownedBulletPositionText("Statue", snapshot.statuePos);
     }
     if (snapshot.hasDistantSpawnPoint) {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Best distant spawn: %.1f, %.1f, %.1f",
-                           snapshot.distantSpawnPoint.x, snapshot.distantSpawnPoint.y, snapshot.distantSpawnPoint.z);
+        RenderBenDrownedColoredPositionText("Best distant spawn", snapshot.distantSpawnPoint,
+                                            sBenDrownedDistantSpawnColor);
     }
     if (snapshot.hasTargetPoint) {
-        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "Best active target: %.1f, %.1f, %.1f",
-                           snapshot.targetPoint.x, snapshot.targetPoint.y, snapshot.targetPoint.z);
+        RenderBenDrownedColoredPositionText("Best active target", snapshot.targetPoint, sBenDrownedActiveTargetColor);
     }
 
     ImGui::SeparatorText("Active Cooldowns");
@@ -222,23 +243,14 @@ void RenderBenDrownedDebugSection() {
     bool tuningChanged = false;
 
     if (ImGui::CollapsingHeader("Cooldown Tuning")) {
-        float moveCooldownMinutes = BenDrownedSecondsToMinutes(tuning.moveCooldownSeconds);
-        if (ImGui::SliderFloat("Move cooldown (minutes)", &moveCooldownMinutes, 0.1f, 200.0f, "%.2f")) {
-            tuning.moveCooldownSeconds = BenDrownedMinutesToSeconds(moveCooldownMinutes);
-            tuningChanged = true;
-        }
-
-        float respawnCooldownMinutes = BenDrownedSecondsToMinutes(tuning.respawnCooldownSeconds);
-        if (ImGui::SliderFloat("Respawn cooldown (minutes)", &respawnCooldownMinutes, 0.1f, 200.0f, "%.2f")) {
-            tuning.respawnCooldownSeconds = BenDrownedMinutesToSeconds(respawnCooldownMinutes);
-            tuningChanged = true;
-        }
-
+        tuningChanged |=
+            RenderBenDrownedMinutesSlider("Move cooldown (minutes)", &tuning.moveCooldownSeconds, 0.1f, 200.0f, "%.2f");
+        tuningChanged |= RenderBenDrownedMinutesSlider("Respawn cooldown (minutes)", &tuning.respawnCooldownSeconds,
+                                                       0.1f, 200.0f, "%.2f");
         tuningChanged |=
             ImGui::SliderFloat("Dialogue cooldown (seconds)", &tuning.dialogueCooldownSeconds, 0.5f, 60.0f, "%.1f");
         tuningChanged |= ImGui::SliderFloat("Laugh base (seconds)", &tuning.laughBaseSeconds, 0.5f, 60.0f, "%.1f");
-        tuningChanged |=
-            ImGui::SliderFloat("Laugh random (seconds)", &tuning.laughRandomSeconds, 0.0f, 60.0f, "%.1f");
+        tuningChanged |= ImGui::SliderFloat("Laugh random (seconds)", &tuning.laughRandomSeconds, 0.0f, 60.0f, "%.1f");
         tuningChanged |= ImGui::SliderFloat("Disappear chance", &tuning.disappearChance, 0.0f, 1.0f, "%.2f");
         tuningChanged |= ImGui::SliderFloat("Dialogue chance", &tuning.dialogueChance, 0.0f, 1.0f, "%.2f");
     }

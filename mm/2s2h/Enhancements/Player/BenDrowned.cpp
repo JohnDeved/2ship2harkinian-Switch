@@ -359,6 +359,10 @@ static f32 FramesToSeconds(s32 frames) {
     return frames / BenDrowned::TUNING_FRAMES_PER_SECOND;
 }
 
+static bool HasCVar(const char* name) {
+    return CVarGet(name) != nullptr;
+}
+
 static void ResetLaughCooldown() {
     sState.laughCooldown =
         SecondsToFrames(sTuning.laughBaseSeconds + (Rand_ZeroOne() * sTuning.laughRandomSeconds));
@@ -542,11 +546,11 @@ static void HandleZoneChange(PlayState* play) {
 }
 
 static f32 LoadCooldownSeconds(const char* secondsCvar, const char* legacyFramesCvar, f32 defaultSeconds, bool* migrated) {
-    if (CVarExists(secondsCvar)) {
+    if (HasCVar(secondsCvar)) {
         return CVarGetFloat(secondsCvar, defaultSeconds);
     }
 
-    if (CVarExists(legacyFramesCvar)) {
+    if (HasCVar(legacyFramesCvar)) {
         s32 legacyFrames = CVarGetInteger(legacyFramesCvar, SecondsToFrames(defaultSeconds));
         f32 seconds = FramesToSeconds(legacyFrames);
 

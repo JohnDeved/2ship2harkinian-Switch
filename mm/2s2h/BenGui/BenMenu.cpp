@@ -34,6 +34,18 @@ static float BenDrownedFramesToSeconds(int frameCount) {
     return frameCount / BenDrowned::TUNING_FRAMES_PER_SECOND;
 }
 
+static float BenDrownedFramesToMinutes(int frameCount) {
+    return BenDrownedFramesToSeconds(frameCount) / 60.0f;
+}
+
+static float BenDrownedSecondsToMinutes(float seconds) {
+    return seconds / 60.0f;
+}
+
+static float BenDrownedMinutesToSeconds(float minutes) {
+    return minutes * 60.0f;
+}
+
 static const std::unordered_map<int32_t, const char*> menuThemeOptions = {
     { UIWidgets::Colors::Red, "Red" },
     { UIWidgets::Colors::DarkRed, "Dark Red" },
@@ -201,8 +213,8 @@ void RenderBenDrownedDebugSection() {
     ImGui::SeparatorText("Active Cooldowns");
     ImGui::BulletText("History count: %d / %zu", snapshot.historyCount, BenDrowned::DEBUG_HISTORY_SIZE);
     ImGui::BulletText("Record timer: %d", snapshot.recordTimer);
-    ImGui::BulletText("Move cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.moveCooldown));
-    ImGui::BulletText("Respawn cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.respawnCooldown));
+    ImGui::BulletText("Move cooldown: %.2f min", BenDrownedFramesToMinutes(snapshot.moveCooldown));
+    ImGui::BulletText("Respawn cooldown: %.2f min", BenDrownedFramesToMinutes(snapshot.respawnCooldown));
     ImGui::BulletText("Laugh cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.laughCooldown));
     ImGui::BulletText("Arrival effect cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.effectCooldown));
     ImGui::BulletText("Dialogue cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.dialogueCooldown));
@@ -210,10 +222,18 @@ void RenderBenDrownedDebugSection() {
     bool tuningChanged = false;
 
     if (ImGui::CollapsingHeader("Cooldown Tuning")) {
-        tuningChanged |= ImGui::SliderFloat("Move cooldown (seconds)", &tuning.moveCooldownSeconds, 1.0f, 12000.0f,
-                                            "%.1f");
-        tuningChanged |= ImGui::SliderFloat("Respawn cooldown (seconds)", &tuning.respawnCooldownSeconds, 1.0f,
-                                            12000.0f, "%.1f");
+        float moveCooldownMinutes = BenDrownedSecondsToMinutes(tuning.moveCooldownSeconds);
+        if (ImGui::SliderFloat("Move cooldown (minutes)", &moveCooldownMinutes, 0.1f, 200.0f, "%.2f")) {
+            tuning.moveCooldownSeconds = BenDrownedMinutesToSeconds(moveCooldownMinutes);
+            tuningChanged = true;
+        }
+
+        float respawnCooldownMinutes = BenDrownedSecondsToMinutes(tuning.respawnCooldownSeconds);
+        if (ImGui::SliderFloat("Respawn cooldown (minutes)", &respawnCooldownMinutes, 0.1f, 200.0f, "%.2f")) {
+            tuning.respawnCooldownSeconds = BenDrownedMinutesToSeconds(respawnCooldownMinutes);
+            tuningChanged = true;
+        }
+
         tuningChanged |=
             ImGui::SliderFloat("Dialogue cooldown (seconds)", &tuning.dialogueCooldownSeconds, 0.5f, 60.0f, "%.1f");
         tuningChanged |= ImGui::SliderFloat("Laugh base (seconds)", &tuning.laughBaseSeconds, 0.5f, 60.0f, "%.1f");

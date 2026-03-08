@@ -1135,8 +1135,16 @@ void BenMenu::AddEnhancements() {
             info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
         })
         .Options(CheckboxOptions().Tooltip(
-            "Push the right stick left/right while locked on to switch between nearby targets.")
+            "Quickly flick and release the right stick left/right while locked on to switch between nearby targets.")
             .DefaultValue(true));
+    AddWidget(path, "  Left Shoulder Target Switch", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.ModernZTargeting.LeftShoulderSwitch")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Press L while locked on to switch to the nearest adjacent target.")
+            .DefaultValue(false));
     AddWidget(path, "  Z-Toggle Release", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting.ZToggleRelease")
         .PreFunc([](WidgetInfo& info) {
@@ -1983,7 +1991,7 @@ void BenMenu::AddEnhancements() {
     path = { "Enhancements", "Time Splits", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", "Time Splits", 1);
     AddWidget(path, "Popout Timesplits Settings", WIDGET_WINDOW_BUTTON)
-        .CVar("gWindows.Timesplits.Settings")
+        .CVar("gWindows.TimesplitsSettings")
         .WindowName("Time Splits Settings Window");
 
     // Audio Editor

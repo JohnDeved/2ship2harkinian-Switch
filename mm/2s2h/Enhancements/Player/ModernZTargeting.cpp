@@ -10,20 +10,31 @@ extern "C" {
 #define CVAR_LEGACY_NAME "gEnhancements.Player.ModernZTargeting"
 #define CVAR_CAMERA_NAME "gEnhancements.Player.ModernZTargeting.CameraBasedLock"
 #define CVAR_RSTICK_NAME "gEnhancements.Player.ModernZTargeting.RightStickSwitch"
+#define CVAR_LSHOULDER_NAME "gEnhancements.Player.ModernZTargeting.LeftShoulderSwitch"
 #define CVAR_ZTOGGLE_NAME "gEnhancements.Player.ModernZTargeting.ZToggleRelease"
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
 #define CVAR_RSTICK CVarGetInteger(CVAR_RSTICK_NAME, 1)
+#define CVAR_LSHOULDER CVarGetInteger(CVAR_LSHOULDER_NAME, 0)
 
-// Threshold for right stick X to trigger a target switch (raw stick range is roughly -128..127)
-#define STICK_THRESHOLD 20
-// Stick must return below this before another switch is allowed
+// Require a strong horizontal right stick deflection before arming a target switch.
+#define STICK_FLICK_THRESHOLD 28
+// Stick must return below this before another switch is allowed.
 #define STICK_RELEASE_THRESHOLD 10
-// Minimum frames between switches as a safety net
+// Horizontal movement must clearly dominate vertical movement to avoid look-around input triggering a switch.
+#define STICK_HORIZONTAL_MARGIN 10
+// Stick must return to neutral quickly for the gesture to count as a flick.
+#define STICK_FLICK_MAX_FRAMES 5
+// Minimum frames between switches as a safety net.
 #define SWITCH_COOLDOWN 8
+#define SWITCH_DIRECTION_NONE 0
+#define SWITCH_DIRECTION_LEFT -1
+#define SWITCH_DIRECTION_RIGHT 1
+#define SWITCH_DIRECTION_NEAREST 2
 
 static s32 sSwitchCooldown = 0;
 static bool sStickReleased = true;
-static s32 sPrevRightStickX = 0;
+static s32 sPendingSwitchDirection = SWITCH_DIRECTION_NONE;
+static s32 sPendingFlickFrames = 0;
 
 static void MigrateLegacyCVar() {
     if (CVarGet(CVAR_NAME) == nullptr && CVarGet(CVAR_LEGACY_NAME) != nullptr) {
@@ -33,6 +44,17 @@ static void MigrateLegacyCVar() {
     if (CVarGet(CVAR_LEGACY_NAME) != nullptr) {
         CVarClear(CVAR_LEGACY_NAME);
     }
+}
+
+static void ResetTargetSwitchState() {
+    sSwitchCooldown = 0;
+    sStickReleased = true;
+    sPendingSwitchDirection = SWITCH_DIRECTION_NONE;
+    sPendingFlickFrames = 0;
+}
+
+static s32 AbsStickValue(s32 value) {
+    return (value >= 0) ? value : -value;
 }
 
 static bool IsActorTargetable(PlayState* play, Player* player, Actor* actor) {
@@ -69,10 +91,149 @@ static bool IsActorTargetable(PlayState* play, Player* player, Actor* actor) {
     return true;
 }
 
+static Actor* FindTargetActor(PlayState* play, Player* player, s32 switchDirection) {
+    Camera* cam = GET_ACTIVE_CAM(play);
+    if (cam == NULL) {
+        return NULL;
+    }
+
+    // Use camera yaw to determine screen-space left/right.
+    s16 cameraYaw = Math_Vec3f_Yaw(&cam->eye, &cam->at);
+
+    // Current target angle relative to camera.
+    s16 currentYaw = Math_Vec3f_Yaw(&player->actor.world.pos, &player->focusActor->focus.pos);
+    s16 currentRel = (s16)(currentYaw - cameraYaw);
+
+    Actor* bestActor = NULL;
+    s16 bestDiff = 0;
+    bool foundDirect = false;
+    s16 bestAbsDiff = 0;
+
+    // Wrap-around candidate: furthest target in the opposite direction.
+    Actor* wrapActor = NULL;
+    s16 wrapDiff = 0;
+    bool foundWrap = false;
+
+    for (s32 cat = 0; cat < ACTORCAT_MAX; cat++) {
+        for (Actor* actor = play->actorCtx.actorLists[cat].first; actor != NULL; actor = actor->next) {
+            if (actor == player->focusActor) {
+                continue;
+            }
+            if (!IsActorTargetable(play, player, actor)) {
+                continue;
+            }
+
+            s16 actorYaw = Math_Vec3f_Yaw(&player->actor.world.pos, &actor->focus.pos);
+            s16 relYaw = (s16)(actorYaw - cameraYaw);
+            s16 yawDiff = (s16)(relYaw - currentRel);
+            s16 absYawDiff = AbsStickValue(yawDiff);
+
+            if (switchDirection == SWITCH_DIRECTION_NEAREST) {
+                if ((absYawDiff != 0) && (!foundDirect || (absYawDiff < bestAbsDiff))) {
+                    bestActor = actor;
+                    bestAbsDiff = absYawDiff;
+                    foundDirect = true;
+                }
+                continue;
+            }
+
+            if (switchDirection == SWITCH_DIRECTION_RIGHT) {
+                if (yawDiff > 0) {
+                    if (!foundDirect || (yawDiff < bestDiff)) {
+                        bestActor = actor;
+                        bestDiff = yawDiff;
+                        foundDirect = true;
+                    }
+                } else if (yawDiff < 0) {
+                    // Track the furthest-left target for wrap-around.
+                    if (!foundWrap || (yawDiff < wrapDiff)) {
+                        wrapActor = actor;
+                        wrapDiff = yawDiff;
+                        foundWrap = true;
+                    }
+                }
+            } else if (switchDirection == SWITCH_DIRECTION_LEFT) {
+                if (yawDiff < 0) {
+                    if (!foundDirect || (yawDiff > bestDiff)) {
+                        bestActor = actor;
+                        bestDiff = yawDiff;
+                        foundDirect = true;
+                    }
+                } else if (yawDiff > 0) {
+                    // Track the furthest-right target for wrap-around.
+                    if (!foundWrap || (yawDiff > wrapDiff)) {
+                        wrapActor = actor;
+                        wrapDiff = yawDiff;
+                        foundWrap = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to wrap-around if no direct candidate.
+    if (!foundDirect && foundWrap) {
+        bestActor = wrapActor;
+    }
+
+    return bestActor;
+}
+
+static void SwitchTarget(Player* player, Actor* bestActor) {
+    // Replicate the vanilla target-switch logic from Player_UpdateZTargeting:
+    // Clear refindable so the new target is treated as a fresh lock-on.
+    bestActor->flags &= ~ACTOR_FLAG_FOCUS_ACTOR_REFINDABLE;
+    player->focusActor = bestActor;
+    // 15 frames gives the reticle time to settle onto the new target
+    // (vanilla counts down from 15 to 5, ignoring leash distance during that window).
+    player->zTargetActiveTimer = 15;
+    player->stateFlags2 &= ~(PLAYER_STATE2_CAN_ACCEPT_TALK_OFFER | PLAYER_STATE2_200000);
+    sSwitchCooldown = SWITCH_COOLDOWN;
+}
+
+static s32 GetRightStickSwitchDirection(Input* input, bool canTrigger) {
+    s32 rightStickX = input->cur.right_stick_x;
+    s32 rightStickY = input->cur.right_stick_y;
+    s32 absRightStickX = AbsStickValue(rightStickX);
+    s32 absRightStickY = AbsStickValue(rightStickY);
+    bool stickInNeutral = (absRightStickX < STICK_RELEASE_THRESHOLD) && (absRightStickY < STICK_RELEASE_THRESHOLD);
+
+    if (stickInNeutral) {
+        s32 completedDirection = sPendingSwitchDirection;
+        bool validFlick = canTrigger && (sPendingFlickFrames > 0) && (sPendingFlickFrames <= STICK_FLICK_MAX_FRAMES);
+
+        sStickReleased = true;
+        sPendingSwitchDirection = SWITCH_DIRECTION_NONE;
+        sPendingFlickFrames = 0;
+
+        if (validFlick) {
+            return completedDirection;
+        }
+        return SWITCH_DIRECTION_NONE;
+    }
+
+    if (sPendingSwitchDirection != SWITCH_DIRECTION_NONE) {
+        sPendingFlickFrames++;
+        return SWITCH_DIRECTION_NONE;
+    }
+
+    if (!canTrigger || !sStickReleased) {
+        return SWITCH_DIRECTION_NONE;
+    }
+
+    if ((absRightStickX >= STICK_FLICK_THRESHOLD) && (absRightStickX >= (absRightStickY + STICK_HORIZONTAL_MARGIN))) {
+        sStickReleased = false;
+        sPendingSwitchDirection = (rightStickX > 0) ? SWITCH_DIRECTION_RIGHT : SWITCH_DIRECTION_LEFT;
+        sPendingFlickFrames = 1;
+    }
+
+    return SWITCH_DIRECTION_NONE;
+}
+
 void RegisterModernZTargeting() {
     MigrateLegacyCVar();
 
-    COND_HOOK(OnGameStateUpdate, (CVAR && CVAR_RSTICK), []() {
+    COND_HOOK(OnGameStateUpdate, (CVAR && (CVAR_RSTICK || CVAR_LSHOULDER)), []() {
         if (gPlayState == nullptr) {
             return;
         }
@@ -80,22 +241,16 @@ void RegisterModernZTargeting() {
         PlayState* play = gPlayState;
         Player* player = GET_PLAYER(play);
 
-        s32 rightStickX = play->state.input[0].cur.right_stick_x;
-
         // Not active during cutscenes or special states
         if ((play->csCtx.state != CS_STATE_IDLE) || (player->csAction != PLAYER_CSACTION_NONE) ||
             (player->stateFlags1 & (PLAYER_STATE1_DEAD | PLAYER_STATE1_20000000))) {
-            sSwitchCooldown = 0;
-            sStickReleased = true;
-            sPrevRightStickX = rightStickX;
+            ResetTargetSwitchState();
             return;
         }
 
         // Only active when the player has a lock-on target
         if (player->focusActor == NULL) {
-            sSwitchCooldown = 0;
-            sStickReleased = true;
-            sPrevRightStickX = rightStickX;
+            ResetTargetSwitchState();
             return;
         }
 
@@ -103,115 +258,28 @@ void RegisterModernZTargeting() {
             sSwitchCooldown--;
         }
 
-        // Require stick to return to neutral before another switch
-        if (rightStickX > -STICK_RELEASE_THRESHOLD && rightStickX < STICK_RELEASE_THRESHOLD) {
-            sStickReleased = true;
+        s32 switchDirection = SWITCH_DIRECTION_NONE;
+
+        if (CVAR_RSTICK) {
+            switchDirection = GetRightStickSwitchDirection(&play->state.input[0], sSwitchCooldown == 0);
         }
 
-        bool wasNeutral = (sPrevRightStickX > -STICK_THRESHOLD) && (sPrevRightStickX < STICK_THRESHOLD);
-        bool crossedRight = wasNeutral && (rightStickX >= STICK_THRESHOLD);
-        bool crossedLeft = wasNeutral && (rightStickX <= -STICK_THRESHOLD);
-        bool hasFlick = crossedRight || crossedLeft;
+        if ((switchDirection == SWITCH_DIRECTION_NONE) && CVAR_LSHOULDER &&
+            CHECK_BTN_ALL(play->state.input[0].press.button, BTN_L) && (sSwitchCooldown == 0)) {
+            switchDirection = SWITCH_DIRECTION_NEAREST;
+        }
 
-        if (!sStickReleased || sSwitchCooldown > 0 || !hasFlick) {
-            sPrevRightStickX = rightStickX;
+        if (switchDirection == SWITCH_DIRECTION_NONE) {
             return;
         }
 
-        // Consume this as a single flick attempt; require returning to neutral before trying again.
-        sStickReleased = false;
-
-        bool switchRight = crossedRight;
-
-        // Use camera yaw to determine screen-space left/right
-        Camera* cam = GET_ACTIVE_CAM(play);
-        if (cam == NULL) {
-            sPrevRightStickX = rightStickX;
-            return;
-        }
-        s16 cameraYaw = Math_Vec3f_Yaw(&cam->eye, &cam->at);
-
-        // Current target angle relative to camera
-        s16 currentYaw = Math_Vec3f_Yaw(&player->actor.world.pos, &player->focusActor->focus.pos);
-        s16 currentRel = (s16)(currentYaw - cameraYaw);
-
-        Actor* bestActor = NULL;
-        s16 bestDiff = 0;
-        bool foundDirect = false;
-
-        // Wrap-around candidate: furthest target in the opposite direction
-        Actor* wrapActor = NULL;
-        s16 wrapDiff = 0;
-        bool foundWrap = false;
-
-        for (s32 cat = 0; cat < ACTORCAT_MAX; cat++) {
-            for (Actor* actor = play->actorCtx.actorLists[cat].first; actor != NULL; actor = actor->next) {
-                if (actor == player->focusActor) {
-                    continue;
-                }
-                if (!IsActorTargetable(play, player, actor)) {
-                    continue;
-                }
-
-                s16 actorYaw = Math_Vec3f_Yaw(&player->actor.world.pos, &actor->focus.pos);
-                s16 relYaw = (s16)(actorYaw - cameraYaw);
-                s16 yawDiff = (s16)(relYaw - currentRel);
-
-                if (switchRight) {
-                    if (yawDiff > 0) {
-                        if (!foundDirect || yawDiff < bestDiff) {
-                            bestActor = actor;
-                            bestDiff = yawDiff;
-                            foundDirect = true;
-                        }
-                    } else if (yawDiff < 0) {
-                        // Track the furthest-left target for wrap-around
-                        if (!foundWrap || yawDiff < wrapDiff) {
-                            wrapActor = actor;
-                            wrapDiff = yawDiff;
-                            foundWrap = true;
-                        }
-                    }
-                } else {
-                    if (yawDiff < 0) {
-                        if (!foundDirect || yawDiff > bestDiff) {
-                            bestActor = actor;
-                            bestDiff = yawDiff;
-                            foundDirect = true;
-                        }
-                    } else if (yawDiff > 0) {
-                        // Track the furthest-right target for wrap-around
-                        if (!foundWrap || yawDiff > wrapDiff) {
-                            wrapActor = actor;
-                            wrapDiff = yawDiff;
-                            foundWrap = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Fall back to wrap-around if no direct candidate
-        if (!foundDirect && foundWrap) {
-            bestActor = wrapActor;
-        }
-
+        Actor* bestActor = FindTargetActor(play, player, switchDirection);
         if (bestActor != NULL) {
-            // Replicate the vanilla target-switch logic from Player_UpdateZTargeting:
-            // Clear refindable so the new target is treated as a fresh lock-on.
-            bestActor->flags &= ~ACTOR_FLAG_FOCUS_ACTOR_REFINDABLE;
-            player->focusActor = bestActor;
-            // 15 frames gives the reticle time to settle onto the new target
-            // (vanilla counts down from 15 to 5, ignoring leash distance during that window).
-            player->zTargetActiveTimer = 15;
-            player->stateFlags2 &= ~(PLAYER_STATE2_CAN_ACCEPT_TALK_OFFER | PLAYER_STATE2_200000);
-
-            sSwitchCooldown = SWITCH_COOLDOWN;
+            SwitchTarget(player, bestActor);
         }
-
-        sPrevRightStickX = rightStickX;
     });
 }
 
-static RegisterShipInitFunc initFunc(RegisterModernZTargeting, { CVAR_NAME, CVAR_LEGACY_NAME, CVAR_CAMERA_NAME,
-                                                                 CVAR_RSTICK_NAME, CVAR_ZTOGGLE_NAME });
+static RegisterShipInitFunc initFunc(RegisterModernZTargeting,
+                                     { CVAR_NAME, CVAR_LEGACY_NAME, CVAR_CAMERA_NAME, CVAR_RSTICK_NAME,
+                                       CVAR_LSHOULDER_NAME, CVAR_ZTOGGLE_NAME });

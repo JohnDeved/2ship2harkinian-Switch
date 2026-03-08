@@ -1136,7 +1136,7 @@ void BenMenu::AddEnhancements() {
         })
         .Options(CheckboxOptions().Tooltip(
             "Quickly flick and release the right stick left/right while locked on to switch between nearby targets. "
-            "Holding the stick to look around will not trigger it; the flick must return to neutral within a few frames.")
+            "Holding the stick to look around will not trigger it; the flick must return to neutral within 5 frames.")
             .DefaultValue(true));
     AddWidget(path, "  Left Shoulder Target Switch", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting.LeftShoulderSwitch")

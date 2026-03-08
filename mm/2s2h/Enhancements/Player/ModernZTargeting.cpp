@@ -107,7 +107,7 @@ static Actor* FindTargetActor(PlayState* play, Player* player, s32 switchDirecti
     Actor* bestActor = NULL;
     s16 bestDiff = 0;
     bool foundDirect = false;
-    s16 bestAbsDiff = 0;
+    s32 bestAbsDiff = 0;
 
     // Wrap-around candidate: furthest target in the opposite direction.
     Actor* wrapActor = NULL;
@@ -126,7 +126,7 @@ static Actor* FindTargetActor(PlayState* play, Player* player, s32 switchDirecti
             s16 actorYaw = Math_Vec3f_Yaw(&player->actor.world.pos, &actor->focus.pos);
             s16 relYaw = (s16)(actorYaw - cameraYaw);
             s16 yawDiff = (s16)(relYaw - currentRel);
-            s16 absYawDiff = static_cast<s16>(std::abs(static_cast<int>(yawDiff)));
+            s32 absYawDiff = std::abs(static_cast<int>(yawDiff));
 
             if (switchDirection == SWITCH_DIRECTION_NEAREST) {
                 if ((absYawDiff != 0) && (!foundDirect || (absYawDiff < bestAbsDiff))) {

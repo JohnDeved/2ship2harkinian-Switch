@@ -1315,9 +1315,10 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Player.ManualJump")
         .Options(CheckboxOptions().Tooltip("Z + A to Jump and B while midair to Jump Attack."));
     AddWidget(path, "Modern Z-Targeting", WIDGET_CVAR_CHECKBOX)
-        .CVar("gEnhancements.Player.ModernZTargeting")
-        .Options(CheckboxOptions().Tooltip("Enables modern Zelda-style targeting enhancements (BotW/TotK). "
-                                           "Toggle the individual features below."));
+        .CVar("gEnhancements.Player.ModernZTargeting.Enable")
+        .Options(CheckboxOptions().Tooltip(
+            "Enables modern Zelda-style targeting enhancements (BotW/TotK). "
+            "Toggle the individual features below."));
     AddWidget(path, "  Camera-Based Lock-On", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting.CameraBasedLock")
         .PreFunc([](WidgetInfo& info) {
@@ -1332,9 +1333,19 @@ void BenMenu::AddEnhancements() {
         .PreFunc([](WidgetInfo& info) {
             info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
         })
-        .Options(CheckboxOptions()
-                     .Tooltip("Push the right stick left/right while locked on to switch between nearby targets.")
-                     .DefaultValue(true));
+        .Options(CheckboxOptions().Tooltip(
+            "Quickly flick and release the right stick left/right while locked on to switch between nearby targets. "
+            "Holding the stick to look around will not trigger it; the flick must return to neutral within 5 frames "
+            "(~83ms at 60 FPS).")
+            .DefaultValue(true));
+    AddWidget(path, "  Left Shoulder Target Switch", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.ModernZTargeting.LeftShoulderSwitch")
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
+        })
+        .Options(CheckboxOptions().Tooltip(
+            "Press L while locked on to switch to the nearest adjacent target.")
+            .DefaultValue(false));
     AddWidget(path, "  Z-Toggle Release", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting.ZToggleRelease")
         .PreFunc([](WidgetInfo& info) {
@@ -2178,7 +2189,7 @@ void BenMenu::AddEnhancements() {
     path = { "Enhancements", "Time Splits", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", "Time Splits", 1);
     AddWidget(path, "Popout Timesplits Settings", WIDGET_WINDOW_BUTTON)
-        .CVar("gWindows.Timesplits.Settings")
+        .CVar("gWindows.TimesplitsSettings")
         .WindowName("Time Splits Settings Window");
 
     // Audio Editor
@@ -2523,7 +2534,9 @@ void BenMenu::InitElement() {
            },
             "Koume is Invincible" } },
         { DISABLE_FOR_MODERN_ZTARGETING_OFF,
-          { [](disabledInfo& info) -> bool { return !CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0); },
+          { [](disabledInfo& info) -> bool {
+               return !CVarGetInteger("gEnhancements.Player.ModernZTargeting.Enable", 0);
+           },
             "Modern Z-Targeting is Disabled" } },
         { DISABLE_FOR_ARROW_CYCLE_OFF,
           { [](disabledInfo& info) -> bool { return !CVarGetInteger("gEnhancements.PlayerActions.ArrowCycle", 0); },

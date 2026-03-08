@@ -5091,7 +5091,7 @@ void Player_UpdateZTargeting(Player* this, PlayState* play) {
                 CHECK_BTN_ALL(sPlayerControlInput->press.button, BTN_Z)) {
 
                 // #region 2S2H [Enhancement] Modern Z-Targeting: Z-toggle releases lock-on
-                if (CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0) &&
+                if (CVarGetInteger("gEnhancements.Player.ModernZTargeting.Enable", 0) &&
                     CVarGetInteger("gEnhancements.Player.ModernZTargeting.ZToggleRelease", 1) &&
                     this->focusActor != NULL && this == GET_PLAYER(play)) {
                     Player_ReleaseLockOn(this);

@@ -161,7 +161,19 @@ constexpr size_t MAX_SEGMENT_POINTERS = 16;
 
 struct GfxExecStack {
     // This is a dlist stack used to handle dlist calls.
+#ifdef __SWITCH__
+    // Use vector-backed stack for better cache locality on A57
+    // (std::deque allocates in scattered 512B chunks).
+    // IMPORTANT: The vector MUST be pre-reserved because currCmd() returns a reference
+    // to vector.back(), and handlers call call()/branch() which push to the stack.
+    // Without sufficient capacity, push_back could reallocate, invalidating the reference.
+    // (std::deque is immune to this — push_back never invalidates references.)
+    struct PreReservedStack : std::stack<F3DGfx*, std::vector<F3DGfx*>> {
+        PreReservedStack() { c.reserve(128); } // DL call depth never exceeds ~20
+    } cmd_stack;
+#else
     std::stack<F3DGfx*> cmd_stack = {};
+#endif
     // This is also a dlist stack but a std::vector is used to make it possible
     // to iterate on the elements.
     // The purpose of this is to identify an instruction at a poin in time
@@ -265,8 +277,8 @@ struct RSP {
 
     F3DLight_t lookat[2];
     F3DLight current_lights[MAX_LIGHTS + 1];
-    float current_lights_coeffs[MAX_LIGHTS][3];
-    float current_lookat_coeffs[2][3]; // lookat_x, lookat_y
+    float current_lights_coeffs[MAX_LIGHTS][4]; // padded to 4 for NEON alignment
+    float current_lookat_coeffs[2][4]; // lookat_x, lookat_y — padded to 4 for NEON
     uint8_t current_num_lights;        // includes ambient light
     bool lights_changed;
 
@@ -328,6 +340,8 @@ struct RDP {
     struct RGBA env_color, prim_color, fog_color, fill_color, grayscale_color;
     struct XYWidthHeight viewport, scissor;
     bool viewport_or_scissor_changed;
+    bool other_mode_changed;    // Set when other_mode_l or other_mode_h changes
+    bool geometry_mode_changed; // Set when geometry_mode changes
     void* z_buf_address;
     void* color_image_address;
 };
@@ -379,14 +393,47 @@ struct Fast3DStats {
     uint32_t verticesSubmitted;
     uint32_t trianglesSubmitted;
     uint32_t stateChangeFlushes;
+    uint32_t bufferFullFlushes;
+    uint32_t pixelDepthQueries;
+
+    // Flush cause breakdown: which state changes triggered batch flushes
+    uint32_t flushCauseTexture;      // texture changed (required new bind)
+    uint32_t flushCauseSampler;      // sampler params changed (filter/clamp)
+    uint32_t flushCauseShader;       // shader program changed
+    uint32_t flushCauseAlpha;        // alpha blend state changed
+    uint32_t flushCauseDepthViewport; // depth/decal/viewport/scissor changed
+    uint32_t flushCauseCombiner;     // new color combiner created
+    uint32_t textureReloadSkips;     // redundant texture loads skipped (same texture already bound)
 
     uint64_t timeTotal;
-    uint64_t timeGbiDispatch;
+    uint64_t timeGbiDispatch; // computed: timeTotal minus all other accounted sub-timings
     uint64_t timeTriProcessing;
     uint64_t timeTextureSetup;
     uint64_t timeShaderSetup;
     uint64_t timeDrawSubmit;
+    uint64_t timeVboUpload;    // VBO data upload (glBufferData/glBufferSubData) — sub-component of timeDrawSubmit
+    uint64_t timeGlDraw;       // actual glDrawArrays call — sub-component of timeDrawSubmit
     uint64_t timeVertexLoad;
+    uint64_t timeMatrixOps;    // matrix multiply, push/pop, normal dir calculations
+    uint64_t timePixelDepth;   // pixel depth prepare + readback
+    uint64_t timeFrameSetup;   // Run() setup/teardown, framebuffer ops, clear, MSAA resolve
+
+    // Command handler timing breakdown (subset of timeGbiDispatch)
+    uint64_t timeTextureLoading;   // GfxDpLoadBlock, GfxDpLoadTlut, GfxDpLoadTile
+    uint64_t timeRectDrawing;      // GfxDpTextureRectangle, GfxDpFillRectangle
+    uint64_t timeDisplayListOps;   // Display list call/branch (stack push/pop)
+    uint64_t timeCombinerSetup;    // GfxDpSetCombineMode (hash lookup + cache)
+    uint64_t timeFramebufferOps;   // GfxDpSetColorImage (framebuffer changes)
+
+    uint32_t commandsProcessed;    // total commands walked through the dispatch loop
+
+    // Batch size histogram: how many draws fall into each size bucket
+    // Bucket 0: 1-2 tris, 1: 3-8, 2: 9-32, 3: 33-128, 4: 129+
+    static constexpr int BATCH_HISTOGRAM_BUCKETS = 5;
+    uint32_t batchHistogram[BATCH_HISTOGRAM_BUCKETS];
+
+    // Max batch size seen this frame
+    uint32_t maxBatchSize;
 
     float avgBatchSize;
     float usPerTriangle;
@@ -401,7 +448,14 @@ struct Fast3DStats {
         usPerTriangle = trianglesSubmitted > 0 ? (float)timeTotal / (float)trianglesSubmitted / 1000.0f : 0.0f;
         usPerDrawCall = drawCalls > 0 ? (float)timeTotal / (float)drawCalls / 1000.0f : 0.0f;
 
-        const uint64_t accounted = timeTriProcessing + timeTextureSetup + timeShaderSetup + timeDrawSubmit + timeVertexLoad;
+        // Note: timeDrawSubmit, timeTextureSetup, and timeShaderSetup are NOT
+        // in accounted because they are nested inside timeTriProcessing
+        // (Flush/DrawTriangles, ImportTexture, and LoadShader are only called
+        // from within GfxSpTri1). Including them would double-count.
+        // Similarly, the command handler timings (timeTextureLoading, timeRectDrawing,
+        // etc.) are subtracted from timeGbiDispatch in post-processing, not here.
+        const uint64_t accounted = timeTriProcessing + timeVertexLoad + timeMatrixOps +
+                                    timePixelDepth + timeFrameSetup;
         timeGbiDispatch = timeTotal > accounted ? (timeTotal - accounted) : 0;
     }
 };
@@ -589,6 +643,71 @@ class Interpreter {
     std::vector<std::string> shader_ids;
     int mInterpolationIndex;
     int mInterpolationIndexTarget;
+
+    // Cached per-framebuffer clip parameters (updated on framebuffer change)
+    GfxClipParameters mCachedClipParams{};
+
+    // Cached shader info (updated on shader switch to avoid virtual call per triangle)
+    uint8_t mCachedNumInputs{};
+    bool mCachedUsedTextures[2]{};
+
+    // Cached other_mode_l / geometry_mode derived flags (updated when dirty)
+    struct {
+        bool use_alpha;
+        bool use_fog;
+        bool texture_edge;
+        bool use_noise;
+        bool use_2cyc;
+        bool alpha_threshold;
+        bool invisible;
+        uint8_t depth_test_and_mask;
+        bool zmode_decal;
+        bool linear_filter; // derived from other_mode_h TEXTFILT bits
+    } mCachedModeFlags{};
+
+    // Cached combiner key + result (skip LookupOrCreateColorCombiner on ~85% of triangles)
+    ColorCombinerKey mCachedCombinerKey{};
+    ColorCombiner* mCachedCombiner = nullptr;
+
+#ifdef __SWITCH__
+    // Tri-state dirty flag: set by ANY command that changes rendering state
+    // consumed by GfxSpTri1. When clean, consecutive triangles skip all state
+    // validation (depth, viewport, combiner, texture, shader, alpha checks)
+    // and reuse cached vertex-processing parameters — saving ~400-600ns per tri.
+    bool mTriStateDirty = true;
+
+    // Cached vertex-processing parameters for the fast-path (valid when !mTriStateDirty).
+    // Populated by the slow path in GfxSpTri1 after full state validation.
+    struct CachedTriParams {
+        uint64_t cc_options;
+        uint32_t tm;
+        ColorCombiner* comb;
+        struct ShaderProgram* prg;
+        uint8_t numInputs;
+        int numAlphaPasses;
+        bool usedTextures[2];
+        bool useFog;
+        bool useGrayscale;
+        // Per-texture tile parameters
+        struct {
+            uint32_t tex_width, tex_height, tex_width2, tex_height2;
+            float invTexWidth, invTexHeight;
+            bool clampS, clampT;
+            float clampSVal, clampTVal;
+            float shiftsMul, shifttMul;
+            float ulsOffset, ultOffset;
+        } tex[2];
+        // Precomputed combiner inputs (constant across vertices)
+        struct { float r, g, b, a; bool isShade; } precomputed[2][7];
+        // Fog/grayscale constants
+        float fogR, fogG, fogB;
+        float grayR, grayG, grayB, grayA;
+        // Clip/filter parameters
+        GfxClipParameters clipParams;
+        bool linearFilter;
+        float linearOffset;
+    } mCachedTriParams{};
+#endif
 };
 
 void gfx_set_target_ucode(UcodeHandlers ucode);

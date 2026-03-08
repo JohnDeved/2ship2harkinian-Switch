@@ -225,7 +225,7 @@ void BenInputEditorWindow::DrawButtonLineAddMappingButton(uint8_t port, N64Butto
     };
     ImGui::PopStyleVar();
 
-    if (ImGui::BeginPopup(popupId.c_str())) {
+    if (ImGui::BeginPopupModal(popupId.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto add mapping");
         if (ImGui::Button("Cancel")) {
@@ -289,7 +289,7 @@ void BenInputEditorWindow::DrawButtonLineEditMappingButton(uint8_t port, N64Butt
     ImGui::PopStyleColor();
     ImGui::PopStyleColor();
 
-    if (ImGui::BeginPopup(popupId.c_str())) {
+    if (ImGui::BeginPopupModal(popupId.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto edit mapping");
         if (ImGui::Button("Cancel")) {
@@ -473,7 +473,7 @@ void BenInputEditorWindow::DrawStickDirectionLineAddMappingButton(uint8_t port, 
     };
     ImGui::PopStyleVar();
 
-    if (ImGui::BeginPopup(popupId.c_str())) {
+    if (ImGui::BeginPopupModal(popupId.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto add mapping");
         if (ImGui::Button("Cancel")) {
@@ -497,6 +497,7 @@ void BenInputEditorWindow::DrawStickDirectionLineAddMappingButton(uint8_t port, 
                     ->GetControllerByPort(port)
                     ->GetRightStick()
                     ->AddOrEditAxisDirectionMappingFromRawPress(direction, "")) {
+                mInputEditorPopupOpen = false;
                 ImGui::CloseCurrentPopup();
             }
         }
@@ -560,7 +561,7 @@ void BenInputEditorWindow::DrawStickDirectionLineEditMappingButton(uint8_t port,
     ImGui::PopStyleColor();
     ImGui::PopStyleColor();
 
-    if (ImGui::BeginPopup(popupId.c_str())) {
+    if (ImGui::BeginPopupModal(popupId.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button,\nmove any axis,\nor press any key\nto edit mapping");
         if (ImGui::Button("Cancel")) {
@@ -585,6 +586,7 @@ void BenInputEditorWindow::DrawStickDirectionLineEditMappingButton(uint8_t port,
                     ->GetControllerByPort(port)
                     ->GetRightStick()
                     ->AddOrEditAxisDirectionMappingFromRawPress(direction, id)) {
+                mInputEditorPopupOpen = false;
                 ImGui::CloseCurrentPopup();
             }
         }
@@ -838,7 +840,7 @@ void BenInputEditorWindow::DrawAddRumbleMappingButton(uint8_t port) {
     }
     ImGui::PopStyleVar();
 
-    if (ImGui::BeginPopup(popupId.c_str())) {
+    if (ImGui::BeginPopupModal(popupId.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button\nor move any axis\nto add rumble device");
         if (ImGui::Button("Cancel")) {
@@ -1022,7 +1024,7 @@ void BenInputEditorWindow::DrawAddLEDMappingButton(uint8_t port) {
     }
     ImGui::PopStyleVar();
 
-    if (ImGui::BeginPopup(popupId.c_str())) {
+    if (ImGui::BeginPopupModal(popupId.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button\nor move any axis\nto add LED device");
         if (ImGui::Button("Cancel")) {
@@ -1102,7 +1104,7 @@ void BenInputEditorWindow::DrawAddGyroMappingButton(uint8_t port) {
     }
     ImGui::PopStyleVar();
 
-    if (ImGui::BeginPopup(popupId.c_str())) {
+    if (ImGui::BeginPopupModal(popupId.c_str(), NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoNav)) {
         mInputEditorPopupOpen = true;
         ImGui::Text("Press any button\nor move any axis\nto add gyro device");
         if (ImGui::Button("Cancel")) {

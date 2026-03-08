@@ -38,6 +38,11 @@ class GfxWindowBackend {
     virtual void Destroy() = 0;
     virtual bool IsFullscreen() = 0;
 
+    // GL context management for render thread support.
+    // Default implementations are no-ops; overridden by SDL2 backend.
+    virtual void MakeContextCurrent() {}
+    virtual void ReleaseContext() {}
+
   protected:
     void (*mOnFullscreenChanged)(bool isNowFullscreen);
     bool (*mOnKeyDown)(int scancode);

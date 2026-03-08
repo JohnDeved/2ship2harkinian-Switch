@@ -38,6 +38,9 @@ struct ShaderProgram {
     GLint texture_width_location;
     GLint texture_height_location;
     GLint texture_filtering_location;
+#if defined(__SWITCH__) || defined(USE_OPENGLES)
+    GLuint vao; // Per-shader VAO: configured once, bound on shader switch
+#endif
 };
 
 struct FramebufferOGL {
@@ -49,9 +52,19 @@ struct FramebufferOGL {
     GLuint fbo, clrbuf, clrbufMsaa, rbo;
 };
 
+// Hash for shader program pool key (same approach as Metal backend)
+struct HashPairShaderIds {
+    size_t operator()(const std::pair<uint64_t, uint32_t>& p) const {
+        // Mix the two IDs with xor-shift; collisions are rare with shader ID pairs.
+        size_t h = std::hash<uint64_t>{}(p.first);
+        h ^= std::hash<uint32_t>{}(p.second) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        return h;
+    }
+};
+
 class GfxRenderingAPIOGL final : public GfxRenderingAPI {
   public:
-    ~GfxRenderingAPIOGL() override = default;
+    ~GfxRenderingAPIOGL() override;
     const char* GetName() override;
     int GetMaxTextureSize() override;
     GfxClipParameters GetClipParameters() override;
@@ -104,17 +117,59 @@ class GfxRenderingAPIOGL final : public GfxRenderingAPI {
         uint16_t width;
         uint16_t height;
         uint16_t filtering;
-    } textures[1024];
+        uint16_t pad;
+        uint32_t uniformsVersion;
+    } textures[1024]{};
 
-    GLuint mCurrentTextureIds[SHADER_MAX_TEXTURES];
+    GLuint mCurrentTextureIds[SHADER_MAX_TEXTURES]{};
     uint8_t mCurrentTile;
 
-    std::map<std::pair<uint64_t, uint32_t>, ShaderProgram> mShaderProgramPool;
+    std::unordered_map<std::pair<uint64_t, uint32_t>, ShaderProgram, HashPairShaderIds> mShaderProgramPool;
     ShaderProgram* mCurrentShaderProgram;
 
     GLuint mOpenglVbo = 0;
 #if defined(__APPLE__) || defined(USE_OPENGLES)
     GLuint mOpenglVao;
+#endif
+
+    // Per-iteration VBO batching: orphan once per DL iteration, then use
+    // glBufferSubData + glDrawArrays(first=N) for each draw within the
+    // iteration. Reduces ~320 glBufferData allocations per iteration to 1.
+    static constexpr size_t VBO_ITER_SIZE = 2 * 1024 * 1024; // 2MB per iteration
+    size_t mVboIterOffset = 0;  // Running byte offset within current iteration's VBO
+    bool mVboIterActive = false; // True after orphaning for this iteration
+
+    // Cache state to skip redundant SetPerDrawUniforms calls
+    uint32_t mLastUniformTextureIds[2] = { UINT32_MAX, UINT32_MAX };
+    uint32_t mLastUniformTextureVersions[2] = { UINT32_MAX, UINT32_MAX };
+
+#if defined(__SWITCH__)
+    // Cache viewport/scissor to skip redundant GL calls.
+    // Initialized to impossible values so first call always applies.
+    GLint mLastViewport[4] = { -1, -1, -1, -1 };
+    GLint mLastScissor[4] = { -1, -1, -1, -1 };
+
+    // Deferred alpha blend: SetUseAlpha stores the value, DrawTriangles applies it.
+    // -1 = uninitialized sentinel (forces first-time apply).
+    int8_t mCurrentAlphaBlend = 0;
+    int8_t mLastAlphaBlend = -1;
+
+    // Cache z-fighting CVar per frame to avoid hash map lookup per draw call.
+    int mCachedZFightingMode = 0;
+
+    // Cache computed polygon offset (SSDB) to skip recalculation when framebuffer/mode unchanged.
+    // Invalidate on framebuffer change or z-fighting mode change (detected in StartFrame).
+    GLfloat mCachedPolygonOffsetSSDB = -2.0f;
+    size_t mCachedPolygonOffsetFbId = SIZE_MAX;
+    int mCachedPolygonOffsetZMode = -1;
+
+    // Texture bind deduplication: skip glBindTexture/glActiveTexture when unchanged.
+    // UINT32_MAX sentinel ensures first call per frame always goes through.
+    GLuint mLastBoundTexture[2] = { UINT32_MAX, UINT32_MAX };
+    int mLastActiveTextureTile = -1;
+
+    // Shader switch deduplication: skip glUseProgram+VAO bind when same program.
+    GLuint mLastShaderProgramId = UINT32_MAX;
 #endif
 
     uint32_t mFrameCount = 0;

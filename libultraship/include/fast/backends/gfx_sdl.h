@@ -38,6 +38,8 @@ class GfxWindowBackendSDL2 final : public GfxWindowBackend {
     bool IsRunning() override;
     void Destroy() override;
     bool IsFullscreen() override;
+    void MakeContextCurrent() override;
+    void ReleaseContext() override;
 
   private:
     void SetFullscreenImpl(bool on, bool call_callback);

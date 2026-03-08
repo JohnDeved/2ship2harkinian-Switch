@@ -211,12 +211,13 @@ const char* RandomTexts[] = {
     "They say that Kenix is not a developer",
     "Squadala we're off",
     "They say one once saw an equals not get set equals",
-    "This is the port all true gamers dock at"
+    "This is the port all true gamers dock at",
     "Enhancements? Times Savers? Cheats? You want them? They're yours my friend!",
     "They say you gotta have the BIIIIG salad",
     "They say Louis stopped working on the imports so he can focus on the exports",
     "They say ZAPD is good software",
 };
+static constexpr size_t kRandomTextsCount = sizeof(RandomTexts) / sizeof(RandomTexts[0]);
 
 void DetectAppletMode() {
     AppletType at = appletGetAppletType();
@@ -227,13 +228,13 @@ void DetectAppletMode() {
                                             "\x1b[4;2HPlease relaunch while in full-memory mode."
                                             "\x1b[5;2HHold R when opening any game to enter HBMenu."
                                             "\x1b[44;2H%s.",
-                                            RandomTexts[rand() % 25]);
+                                            RandomTexts[rand() % kRandomTextsCount]);
 }
 
 void Ship::Switch::ThrowMissingOTR(std::string OTRPath) {
     Ship::Switch::PrintErrorMessageToScreen("\x1b[2;2HYou've launched the Ship without the OTR file."
                                             "\x1b[4;2HPlease relaunch making sure %s exists."
                                             "\x1b[44;2H%s.",
-                                            OTRPath.c_str(), RandomTexts[rand() % 25]);
+                                            OTRPath.c_str(), RandomTexts[rand() % kRandomTextsCount]);
 }
 #endif

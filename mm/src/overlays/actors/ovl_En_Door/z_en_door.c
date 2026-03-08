@@ -23,6 +23,7 @@
 #include "objects/gameplay_field_keep/gameplay_field_keep.h"
 
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include <libultraship/bridge/consolevariablebridge.h>
 
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 

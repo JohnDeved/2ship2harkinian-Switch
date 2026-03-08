@@ -2,10 +2,44 @@ name: generate-builds
 on:
   push:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-
 jobs:
+  generate-2ship-otr:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Git Checkout
+      uses: actions/checkout@v6
+    - name: Init submodules
+      run: git submodule update --init --force
+    - name: Configure ccache
+      uses: hendrikmuhs/ccache-action@v1.2.20
+      with:
+        key: ${{ runner.os }}-otr
+        restore-keys: |
+          ${{ runner.os }}-otr
+        append-timestamp: true
+        verbose: 2
+        max-size: "500M"
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y $(cat .github/workflows/apt-deps.txt) libzip-dev zipcmp zipmerge ziptool
+    - name: Generate 2ship.o2r
+      run: |
+        export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+        export CCACHE_LOGFILE=${{ github.workspace }}/ccache.log
+        ccache --zero-stats
+        cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release
+        cmake --build build-cmake --config Release --target Generate2ShipOtr --parallel 10
+        ccache --show-stats
+        echo "=== ccache log (last 50 lines) ==="
+        tail -50 ccache.log || true
+    - name: Upload 2ship.o2r
+      uses: actions/upload-artifact@v4
+      with:
+        name: 2ship.o2r
+        path: 2ship.o2r
+        retention-days: 3
+
   build-switch:
     runs-on: ${{ (vars.LINUX_RUNNER && fromJSON(vars.LINUX_RUNNER)) || 'ubuntu-latest' }}
     container:
@@ -17,8 +51,10 @@ jobs:
       CCACHE_NOHASHDIR: 1
     steps:
     - uses: actions/checkout@v6
-      with:
-        submodules: recursive
+    - name: Fix dubious ownership (container)
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+    - name: Init submodules
+      run: git submodule update --init --force --recursive
 
     - name: Install dependencies
       run: |
@@ -28,15 +64,6 @@ jobs:
         sudo dkp-pacman -R --noconfirm switch-tinyxml2
         wget https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.sh -O /tmp/cmake.sh
         sudo sh /tmp/cmake.sh --prefix=/usr/local/ --exclude-subdir
-
-    - name: Fix dubious ownership error
-      if: ${{ vars.LINUX_RUNNER }}
-      run: git config --global --add safe.directory '*'
-
-    - uses: actions/checkout@v6
-      if: ${{ vars.LINUX_RUNNER }}
-      with:
-        submodules: recursive
 
     - name: ccache (minimal key, max hits)
       uses: hendrikmuhs/ccache-action@v1.2.20
@@ -66,12 +93,44 @@ jobs:
 
         mv build-switch/mm/*.nro 2ship.nro
         mv README.md readme.txt
-
-    - name: Upload build
+    - name: Upload NRO and supporting files
       uses: actions/upload-artifact@v4
       with:
-        name: 2ship-switch
+        name: 2ship-switch-nro
         path: |
           2ship.nro
           readme.txt
           gamecontrollerdb.txt
+        retention-days: 3
+
+  combine-artifacts:
+    needs: [generate-2ship-otr, build-switch]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Derive short SHA
+      id: combine_gitvars
+      run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+    - name: Download OTR artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: 2ship.o2r
+        path: ./artifacts
+
+    - name: Download Switch NRO artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: 2ship-switch-nro
+        path: ./artifacts
+
+    - name: Upload combined build
+      uses: actions/upload-artifact@v4
+      with:
+        name: 2ship-switch[${{ steps.combine_gitvars.outputs.short_sha }}].zip
+        path: |
+          ./artifacts/2ship.o2r
+          ./artifacts/2ship.nro
+          ./artifacts/readme.txt
+          ./artifacts/gamecontrollerdb.txt
+        if-no-files-found: error
+        retention-days: 3

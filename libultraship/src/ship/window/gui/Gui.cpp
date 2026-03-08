@@ -438,7 +438,10 @@ void Gui::ApplyResolutionChanges() {
     const uint32_t maxResolutionHeight = 4320; // on either axis. if you have the VRAM for it.
     uint32_t newWidth;
     uint32_t newHeight;
-    mInterpreter.lock()->GetCurDimensions(&newWidth, &newHeight);
+
+    // Cache the interpreter pointer once to avoid repeated weak_ptr::lock() atomic ops
+    auto interp = mInterpreter.lock();
+    interp->GetCurDimensions(&newWidth, &newHeight);
 
     if (verticalResolutionToggle) { // Use fixed vertical resolution
         if (aspectRatioIsEnabled) {
@@ -449,12 +452,12 @@ void Gui::ApplyResolutionChanges() {
         newHeight = verticalPixelCount;
     } else { // Use the window's resolution
         if (aspectRatioIsEnabled) {
-            if (((float)mInterpreter.lock()->mGameWindowViewport.height /
-                 mInterpreter.lock()->mGameWindowViewport.width) < (aspectRatioY / aspectRatioX)) {
+            if (((float)interp->mGameWindowViewport.height /
+                 interp->mGameWindowViewport.width) < (aspectRatioY / aspectRatioX)) {
                 // when pillarboxed
-                newWidth = uint32_t(float(mInterpreter.lock()->mCurDimensions.height / aspectRatioY) * aspectRatioX);
+                newWidth = uint32_t(float(interp->mCurDimensions.height / aspectRatioY) * aspectRatioX);
             } else { // when letterboxed
-                newHeight = uint32_t(float(mInterpreter.lock()->mCurDimensions.width / aspectRatioX) * aspectRatioY);
+                newHeight = uint32_t(float(interp->mCurDimensions.width / aspectRatioX) * aspectRatioY);
             }
         } // else, having both options turned off does nothing.
     }
@@ -472,12 +475,15 @@ void Gui::ApplyResolutionChanges() {
         newHeight = maxResolutionHeight;
     }
     // apply new dimensions
-    mInterpreter.lock()->mCurDimensions.width = newWidth;
-    mInterpreter.lock()->mCurDimensions.height = newHeight;
+    interp->mCurDimensions.width = newWidth;
+    interp->mCurDimensions.height = newHeight;
     // centring the image is done in Gui::StartFrame().
 }
 
 int16_t Gui::GetIntegerScaleFactor() {
+    // Cache the interpreter pointer once to avoid repeated weak_ptr::lock() atomic ops
+    auto interp = mInterpreter.lock();
+
     if (!Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
             CVAR_PREFIX_ADVANCED_RESOLUTION ".IntegerScale.FitAutomatically", 0)) {
         int16_t factor = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
@@ -488,20 +494,20 @@ int16_t Gui::GetIntegerScaleFactor() {
             // Screen bounds take priority over whatever Factor is set to.
 
             // The same comparison as below, but checked against the configured factor
-            if (((float)mInterpreter.lock()->mGameWindowViewport.height /
-                 mInterpreter.lock()->mGameWindowViewport.width) <
-                ((float)mInterpreter.lock()->mCurDimensions.height / mInterpreter.lock()->mCurDimensions.width)) {
+            if (((float)interp->mGameWindowViewport.height /
+                 interp->mGameWindowViewport.width) <
+                ((float)interp->mCurDimensions.height / interp->mCurDimensions.width)) {
                 if ((uint32_t)factor >
-                    mInterpreter.lock()->mGameWindowViewport.height / mInterpreter.lock()->mCurDimensions.height) {
+                    interp->mGameWindowViewport.height / interp->mCurDimensions.height) {
                     // Scale to window height
                     factor =
-                        mInterpreter.lock()->mGameWindowViewport.height / mInterpreter.lock()->mCurDimensions.height;
+                        interp->mGameWindowViewport.height / interp->mCurDimensions.height;
                 }
             } else {
                 if ((uint32_t)factor >
-                    mInterpreter.lock()->mGameWindowViewport.width / mInterpreter.lock()->mCurDimensions.width) {
+                    interp->mGameWindowViewport.width / interp->mCurDimensions.width) {
                     // Scale to window width
-                    factor = mInterpreter.lock()->mGameWindowViewport.width / mInterpreter.lock()->mCurDimensions.width;
+                    factor = interp->mGameWindowViewport.width / interp->mCurDimensions.width;
                 }
             }
         }
@@ -514,13 +520,13 @@ int16_t Gui::GetIntegerScaleFactor() {
         int16_t factor = 1;
 
         // Compare aspect ratios of game framebuffer and GUI
-        if (((float)mInterpreter.lock()->mGameWindowViewport.height / mInterpreter.lock()->mGameWindowViewport.width) <
-            ((float)mInterpreter.lock()->mCurDimensions.height / mInterpreter.lock()->mCurDimensions.width)) {
+        if (((float)interp->mGameWindowViewport.height / interp->mGameWindowViewport.width) <
+            ((float)interp->mCurDimensions.height / interp->mCurDimensions.width)) {
             // Scale to window height
-            factor = mInterpreter.lock()->mGameWindowViewport.height / mInterpreter.lock()->mCurDimensions.height;
+            factor = interp->mGameWindowViewport.height / interp->mCurDimensions.height;
         } else {
             // Scale to window width
-            factor = mInterpreter.lock()->mGameWindowViewport.width / mInterpreter.lock()->mCurDimensions.width;
+            factor = interp->mGameWindowViewport.width / interp->mCurDimensions.width;
         }
 
         // Add screen bounds offset, if set.
@@ -696,16 +702,19 @@ void Gui::CalculateGameViewport() {
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor();
 
+    // Cache the interpreter pointer once to avoid repeated weak_ptr::lock() atomic ops
+    auto interp = mInterpreter.lock();
+
     ImVec2 mainPos = ImGui::GetWindowPos();
     mainPos.x -= mTemporaryWindowPos.x;
     mainPos.y -= mTemporaryWindowPos.y;
     ImVec2 size = ImGui::GetContentRegionAvail();
-    mInterpreter.lock()->mCurDimensions.width = (uint32_t)(size.x * mInterpreter.lock()->mCurDimensions.internal_mul);
-    mInterpreter.lock()->mCurDimensions.height = (uint32_t)(size.y * mInterpreter.lock()->mCurDimensions.internal_mul);
-    mInterpreter.lock()->mGameWindowViewport.x = (int16_t)mainPos.x;
-    mInterpreter.lock()->mGameWindowViewport.y = (int16_t)mainPos.y;
-    mInterpreter.lock()->mGameWindowViewport.width = (int16_t)size.x;
-    mInterpreter.lock()->mGameWindowViewport.height = (int16_t)size.y;
+    interp->mCurDimensions.width = (uint32_t)(size.x * interp->mCurDimensions.internal_mul);
+    interp->mCurDimensions.height = (uint32_t)(size.y * interp->mCurDimensions.internal_mul);
+    interp->mGameWindowViewport.x = (int16_t)mainPos.x;
+    interp->mGameWindowViewport.y = (int16_t)mainPos.y;
+    interp->mGameWindowViewport.width = (int16_t)size.x;
+    interp->mGameWindowViewport.height = (int16_t)size.y;
 
     if (Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_PREFIX_ADVANCED_RESOLUTION ".Enabled",
                                                                         0)) {
@@ -714,24 +723,20 @@ void Gui::CalculateGameViewport() {
 
     switch (Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(CVAR_LOW_RES_MODE, 0)) {
         case 1: { // N64 Mode
-            mInterpreter.lock()->mCurDimensions.width = 320;
-            mInterpreter.lock()->mCurDimensions.height = 240;
-            /*
-            const int sw = size.y * 320 / 240;
-            mInterpreter.lock()->mGameWindowViewport.x += ((int)size.x - sw) / 2;
-            mInterpreter.lock()->mGameWindowViewport.width = sw;*/
+            interp->mCurDimensions.width = 320;
+            interp->mCurDimensions.height = 240;
             break;
         }
         case 2: { // 240p Widescreen
             const int vertRes = 240;
-            mInterpreter.lock()->mCurDimensions.width = vertRes * size.x / size.y;
-            mInterpreter.lock()->mCurDimensions.height = vertRes;
+            interp->mCurDimensions.width = vertRes * size.x / size.y;
+            interp->mCurDimensions.height = vertRes;
             break;
         }
         case 3: { // 480p Widescreen
             const int vertRes = 480;
-            mInterpreter.lock()->mCurDimensions.width = vertRes * size.x / size.y;
-            mInterpreter.lock()->mCurDimensions.height = vertRes;
+            interp->mCurDimensions.width = vertRes * size.x / size.y;
+            interp->mCurDimensions.height = vertRes;
             break;
         }
     }
@@ -753,6 +758,9 @@ void Gui::DrawGame() {
 
     GetGameOverlay()->Draw();
 
+    // Cache the interpreter pointer once to avoid repeated weak_ptr::lock() atomic ops
+    auto interp = mInterpreter.lock();
+
     ImVec2 mainPos = ImGui::GetWindowPos();
     ImVec2 size = ImGui::GetContentRegionAvail();
     ImVec2 pos = ImVec2(0, 0);
@@ -768,9 +776,9 @@ void Gui::DrawGame() {
             if (!Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
                     CVAR_PREFIX_ADVANCED_RESOLUTION ".IgnoreAspectCorrection", 0)) {
                 float sWdth =
-                    size.y * mInterpreter.lock()->mCurDimensions.width / mInterpreter.lock()->mCurDimensions.height;
+                    size.y * interp->mCurDimensions.width / interp->mCurDimensions.height;
                 float sHght =
-                    size.x * mInterpreter.lock()->mCurDimensions.height / mInterpreter.lock()->mCurDimensions.width;
+                    size.x * interp->mCurDimensions.height / interp->mCurDimensions.width;
                 float sPosX = floor(size.x / 2.0f - sWdth / 2.0f);
                 float sPosY = floor(size.y / 2.0f - sHght / 2.0f);
                 if (sPosY < 0.0f) { // pillarbox
@@ -786,11 +794,11 @@ void Gui::DrawGame() {
             }
         } else { // in pixel perfect mode it's much easier
             const int factor = GetIntegerScaleFactor();
-            float sPosX = floor(size.x / 2.0f - (mInterpreter.lock()->mCurDimensions.width * factor) / 2.0f);
-            float sPosY = floor(size.y / 2.0f - (mInterpreter.lock()->mCurDimensions.height * factor) / 2.0f);
+            float sPosX = floor(size.x / 2.0f - (interp->mCurDimensions.width * factor) / 2.0f);
+            float sPosY = floor(size.y / 2.0f - (interp->mCurDimensions.height * factor) / 2.0f);
             pos = ImVec2(sPosX, sPosY);
-            size = ImVec2(float(mInterpreter.lock()->mCurDimensions.width) * factor,
-                          float(mInterpreter.lock()->mCurDimensions.height) * factor);
+            size = ImVec2(float(interp->mCurDimensions.width) * factor,
+                          float(interp->mCurDimensions.height) * factor);
         }
     }
     uintptr_t fb = Ship::Context::GetInstance()->GetWindow()->GetGfxFrameBuffer();

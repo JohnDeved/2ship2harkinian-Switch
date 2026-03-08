@@ -36,6 +36,10 @@ typedef enum {
 
 typedef enum {
     PROFILE_COUNTER_DL_ITERATIONS, // number of DrawAndRunGraphicsCommands calls per frame
+    PROFILE_COUNTER_DL_REPLAY_ITERATIONS, // number of RunReplay calls per frame
+    PROFILE_COUNTER_DL_REPLAY_FALLBACKS,  // non-first iterations that fell back to full interpretation
+    PROFILE_COUNTER_DL_REPLAY_BRANCHZ_FRAMES, // first iterations where replay was blocked by G_BRANCH_Z
+    PROFILE_COUNTER_DL_REPLAY_COOLDOWN_SKIPS, // first iterations skipped due branch-z cooldown
     PROFILE_COUNTER_DL_COMMANDS,   // total GBI commands across all buffers
     PROFILE_COUNTER_DL_TRIANGLES,  // G_TRI1 + 2*G_TRI2 triangle count
     PROFILE_COUNTER_DL_VERTICES,   // total vertices loaded (from G_VTX)
@@ -48,6 +52,7 @@ typedef enum {
     // Fast3D internal counters (libultraship, actual backend activity)
     PROFILE_COUNTER_GL_DRAW_CALLS,
     PROFILE_COUNTER_GL_BATCH_FLUSHES,
+    PROFILE_COUNTER_GL_BUFFER_FULL_FLUSHES,
     PROFILE_COUNTER_GL_STATE_FLUSHES,
     PROFILE_COUNTER_GL_SHADER_SWITCHES,
     PROFILE_COUNTER_GL_SHADER_COMPILATIONS,
@@ -61,8 +66,64 @@ typedef enum {
     PROFILE_COUNTER_GL_TIME_TEX_MS,
     PROFILE_COUNTER_GL_TIME_SHADER_MS,
     PROFILE_COUNTER_GL_TIME_DRAW_MS,
+    PROFILE_COUNTER_GL_TIME_VBO_UPLOAD_MS,
+    PROFILE_COUNTER_GL_TIME_GL_DRAW_MS,
     PROFILE_COUNTER_GL_TIME_VTX_MS,
+    PROFILE_COUNTER_GL_TIME_MTX_MS,
+    PROFILE_COUNTER_GL_TIME_DEPTH_MS,
+    PROFILE_COUNTER_GL_TIME_SETUP_MS,
+    PROFILE_COUNTER_GL_PIXEL_DEPTH_QUERIES,
     PROFILE_COUNTER_GL_AVG_BATCH_SIZE,
+
+    // Command handler timing breakdown (subset of dispatch time)
+    PROFILE_COUNTER_GL_TIME_TEXTURE_LOADING_MS,
+    PROFILE_COUNTER_GL_TIME_RECT_DRAWING_MS,
+    PROFILE_COUNTER_GL_TIME_DL_OPS_MS,
+    PROFILE_COUNTER_GL_TIME_COMBINER_SETUP_MS,
+    PROFILE_COUNTER_GL_TIME_FRAMEBUFFER_OPS_MS,
+
+    // Flush cause breakdown: which state triggered each batch-breaking flush
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_TEXTURE,
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_SAMPLER,
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_SHADER,
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_ALPHA,
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_DEPTH_VIEWPORT,
+    PROFILE_COUNTER_GL_FLUSH_CAUSE_COMBINER,
+    PROFILE_COUNTER_GL_TEXTURE_RELOAD_SKIPS,
+
+    // Batch size histogram: draws per bucket (1-2, 3-8, 9-32, 33-128, 129+)
+    PROFILE_COUNTER_GL_BATCH_HIST_0,       // 1-2 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_1,       // 3-8 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_2,       // 9-32 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_3,       // 33-128 tris
+    PROFILE_COUNTER_GL_BATCH_HIST_4,       // 129+ tris
+    PROFILE_COUNTER_GL_MAX_BATCH_SIZE,     // max batch size seen this frame
+    PROFILE_COUNTER_GL_COMMANDS_PROCESSED, // total commands walked through the dispatch loop (incl. sub-DLs)
+
+    // System telemetry (Switch: real values where available, otherwise proxy/zero)
+    PROFILE_COUNTER_SYS_CPU_USAGE_PCT,     // CPU usage across CPU cores (0-100)
+    PROFILE_COUNTER_SYS_GPU_USAGE_EST_PCT, // estimated GPU usage proxy (0-100)
+    PROFILE_COUNTER_SYS_RAM_USAGE_PCT,     // process RAM usage percentage (0-100)
+    PROFILE_COUNTER_SYS_RAM_USED_MB,       // process RAM used (MB)
+    PROFILE_COUNTER_SYS_RAM_TOTAL_MB,      // process RAM budget/total (MB)
+    PROFILE_COUNTER_SYS_CPU_CLOCK_MHZ,     // CPU clock (MHz)
+    PROFILE_COUNTER_SYS_GPU_CLOCK_MHZ,     // GPU clock (MHz)
+    PROFILE_COUNTER_SYS_EMC_CLOCK_MHZ,     // memory controller clock (MHz)
+    PROFILE_COUNTER_SYS_CPU_CORE0_USAGE_PCT, // CPU core #0 usage (0-100)
+    PROFILE_COUNTER_SYS_CPU_CORE1_USAGE_PCT, // CPU core #1 usage (0-100)
+    PROFILE_COUNTER_SYS_CPU_CORE2_USAGE_PCT, // CPU core #2 usage (0-100)
+    PROFILE_COUNTER_SYS_CPU_CORE3_USAGE_PCT, // CPU core #3 usage (0-100)
+    PROFILE_COUNTER_SYS_SOC_TEMP_C,          // SoC temperature (C)
+    PROFILE_COUNTER_SYS_PCB_TEMP_C,          // PCB temperature (C)
+    PROFILE_COUNTER_SYS_SKIN_TEMP_C,         // Skin temperature (C)
+    PROFILE_COUNTER_SYS_BATTERY_TEMP_C,      // Battery temperature (C)
+    PROFILE_COUNTER_SYS_BATTERY_CHARGE_PCT,  // Battery charge percentage (0-100)
+    PROFILE_COUNTER_SYS_BATTERY_AGE_PCT,     // Battery health/age percentage (0-100)
+    PROFILE_COUNTER_SYS_BATTERY_VOLTAGE_MV,  // Battery voltage (mV)
+    PROFILE_COUNTER_SYS_CHARGER_TYPE,        // Charger type enum (PsmChargerType)
+    PROFILE_COUNTER_SYS_CHARGER_VOLTAGE_LIMIT_MV, // Charger input voltage limit (mV)
+    PROFILE_COUNTER_SYS_CHARGER_CURRENT_LIMIT_MA, // Charger input current limit (mA)
+
     PROFILE_COUNTER_MAX
 } ProfileCounter;
 
@@ -85,6 +146,14 @@ typedef struct {
     int setCombine;
 } DLBufferStats;
 
+typedef struct {
+    float totalMs;
+    float dlIterations;
+    float renderFrameMs;
+    float renderFps;
+    float tickFps;
+} FrameProfilerRenderMetrics;
+
 void FrameProfiler_StartPhase(ProfilePhase phase);
 void FrameProfiler_EndPhase(ProfilePhase phase);
 void FrameProfiler_EndFrame(void);
@@ -93,6 +162,10 @@ void FrameProfiler_AddCounter(ProfileCounter counter, float value);
 float FrameProfiler_GetCounterAvg(ProfileCounter counter);
 int FrameProfiler_IsEnabled(void);
 
+// Keep the profiler enabled for the next few frames, even if the profiler window
+// is not open. Call each frame from systems that need profiler data (e.g. benchmark).
+void FrameProfiler_KeepAlive(void);
+
 // Scan all 5 DL buffers from the graphics context. Call from graph.c after
 // GameState_Update has filled the buffers but before Graph_ProcessGfxCommands.
 struct GraphicsContext;
@@ -100,6 +173,11 @@ void FrameProfiler_ScanAllBuffers(struct GraphicsContext* gfxCtx);
 
 // Get per-buffer stats (averaged over ring buffer). bufIdx = PROFILE_DL_BUF_*
 DLBufferStats FrameProfiler_GetBufferStats(int bufIdx);
+
+// Shared render/tick timing math used by profiler snapshot and benchmark reports.
+FrameProfilerRenderMetrics FrameProfiler_MakeRenderMetrics(float totalMs, float dlIterations);
+FrameProfilerRenderMetrics FrameProfiler_GetAverageRenderMetrics(void);
+const char* FrameProfiler_ChargerTypeToString(float chargerType);
 
 #ifdef __cplusplus
 }

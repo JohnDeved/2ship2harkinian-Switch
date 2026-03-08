@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <libultraship/bridge/consolevariablebridge.h>
 #include "UIWidgets.hpp"
 #include "HudEditor.h"
 #include "2s2h/Enhancements/Audio/AudioEditor.h"
@@ -36,9 +37,13 @@
 #include "DeveloperTools/DLViewer.h"
 #include "DeveloperTools/MessageViewer.h"
 #include "DeveloperTools/FrameProfiler.h"
+#include "DeveloperTools/Benchmark.h"
 
 namespace BenGui {
 // MARK: - Delegates
+
+#define CVAR_TIMESPLITS_SETTINGS_NAME "gWindows.TimesplitsSettings"
+#define CVAR_TIMESPLITS_SETTINGS_LEGACY_NAME "gWindows.Timesplits.Settings"
 
 std::shared_ptr<BenMenuBar> mBenMenuBar;
 
@@ -57,6 +62,7 @@ std::shared_ptr<EventLogWindow> mEventLogWindow;
 std::shared_ptr<DLViewerWindow> mDLViewerWindow;
 std::shared_ptr<MessageViewerWindow> mMessageViewerWindow;
 std::shared_ptr<FrameProfilerWindow> mFrameProfilerWindow;
+std::shared_ptr<BenchmarkWindow> mBenchmarkWindow;
 std::shared_ptr<AudioEditor> mAudioEditorWindow;
 std::shared_ptr<BenMenu> mBenMenu;
 std::shared_ptr<Notification::Window> mNotificationWindow;
@@ -76,8 +82,28 @@ UIWidgets::Colors GetMenuThemeColor() {
     return mBenMenu->GetMenuThemeColor();
 }
 
+static bool MigrateTimesplitsSettingsCVar() {
+    bool changed = false;
+
+    if (CVarGet(CVAR_TIMESPLITS_SETTINGS_NAME) == nullptr && CVarGet(CVAR_TIMESPLITS_SETTINGS_LEGACY_NAME) != nullptr) {
+        CVarSetInteger(CVAR_TIMESPLITS_SETTINGS_NAME, CVarGetInteger(CVAR_TIMESPLITS_SETTINGS_LEGACY_NAME, 0));
+        changed = true;
+    }
+
+    if (CVarGet(CVAR_TIMESPLITS_SETTINGS_LEGACY_NAME) != nullptr) {
+        CVarClear(CVAR_TIMESPLITS_SETTINGS_LEGACY_NAME);
+        changed = true;
+    }
+
+    return changed;
+}
+
 void SetupGuiElements() {
     auto gui = Ship::Context::GetInstance()->GetWindow()->GetGui();
+
+    if (MigrateTimesplitsSettingsCVar()) {
+        gui->SaveConsoleVariablesNextFrame();
+    }
 
     auto& style = ImGui::GetStyle();
     style.FramePadding = ImVec2(4.0f, 6.0f);
@@ -152,6 +178,9 @@ void SetupGuiElements() {
         std::make_shared<FrameProfilerWindow>("gWindows.FrameProfiler", "Frame Profiler", ImVec2(550, 400));
     gui->AddGuiWindow(mFrameProfilerWindow);
 
+    mBenchmarkWindow = std::make_shared<BenchmarkWindow>("gWindows.Benchmark", "Benchmark", ImVec2(600, 450));
+    gui->AddGuiWindow(mBenchmarkWindow);
+
     mAudioEditorWindow = std::make_shared<AudioEditor>("gWindows.AudioEditor", "Audio Editor", ImVec2(520, 600));
     gui->AddGuiWindow(mAudioEditorWindow);
 
@@ -172,7 +201,7 @@ void SetupGuiElements() {
     gui->AddGuiWindow(mTimesplitsWindow);
 
     mTimesplitsSettingsWindow = std::make_shared<TimesplitsSettingsWindow>(
-        "gWindows.Timesplits.Settings", "Time Splits Settings Window", ImVec2(567, 97));
+        CVAR_TIMESPLITS_SETTINGS_NAME, "Time Splits Settings Window", ImVec2(567, 97));
     gui->AddGuiWindow(mTimesplitsSettingsWindow);
 
     mNotificationWindow = std::make_shared<Notification::Window>("gWindows.Notifications", "Notifications Window");
@@ -222,6 +251,7 @@ void Destroy() {
     mDLViewerWindow = nullptr;
     mMessageViewerWindow = nullptr;
     mFrameProfilerWindow = nullptr;
+    mBenchmarkWindow = nullptr;
     mAudioEditorWindow = nullptr;
     mItemTrackerWindow = nullptr;
     mItemTrackerSettingsWindow = nullptr;

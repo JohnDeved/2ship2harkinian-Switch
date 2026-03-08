@@ -64,18 +64,6 @@ static void OcTask(void* arg) {
     FrameProfiler_EndPhase(PROFILE_PHASE_COLLISION_OC);
 }
 
-// Task wrapper for running all effect updates on the worker thread.
-// Effect_UpdateAll, EffectSs_UpdateAll, and EffFootmark_Update are independent
-// from camera/environment/UI updates, so they can run concurrently.
-static void EffectsTask(void* arg) {
-    FrameProfiler_StartPhase(PROFILE_PHASE_EFFECTS);
-    PlayState* play = (PlayState*)arg;
-    Effect_UpdateAll(play);
-    EffectSs_UpdateAll(play);
-    EffFootmark_Update(play);
-    FrameProfiler_EndPhase(PROFILE_PHASE_EFFECTS);
-}
-
 s32 gDbgCamEnabled = false;
 u8 D_801D0D54 = false;
 
@@ -1092,9 +1080,13 @@ void Play_UpdateMain(PlayState* this) {
                     }
                     Cutscene_UpdateManual(this, &this->csCtx);
                     Cutscene_UpdateScripted(this, &this->csCtx);
-                    // Run effects on worker thread while main thread continues
-                    // with room/skybox/message/interface updates (independent systems)
-                    TaskWorker_Submit(EffectsTask, this);
+                    // Keep effects on the main thread: effect updates use global RNG state.
+                    // Running them on a worker races with other systems that also call Rand_*.
+                    FrameProfiler_StartPhase(PROFILE_PHASE_EFFECTS);
+                    Effect_UpdateAll(this);
+                    EffectSs_UpdateAll(this);
+                    EffFootmark_Update(this);
+                    FrameProfiler_EndPhase(PROFILE_PHASE_EFFECTS);
                 }
             } else {
                 Rumble_SetUpdateEnabled(false);
@@ -1138,10 +1130,6 @@ void Play_UpdateMain(PlayState* this) {
 
     Environment_Update(this, &this->envCtx, &this->lightCtx, &this->pauseCtx, &this->msgCtx, &this->gameOverCtx,
                        this->state.gfxCtx);
-
-    // Wait for effects worker to complete (submitted after cutscene updates above).
-    // Effects must finish before the draw phase begins.
-    TaskWorker_Wait();
 
     if (this->sramCtx.status != 0) {
         if (GameInteractor_Should(VB_SAVE_USE_OWL_SAVE_TIMING, gSaveContext.save.isOwlSave)) {

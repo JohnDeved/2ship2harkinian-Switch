@@ -19,6 +19,15 @@ void RegisterTimeMovesWhenYouMove() {
         sStoredTimeOffset = DEFAULT_TIME_OFFSET;
     }
 
+    COND_HOOK(OnSaveLoad, true, [](s16 fileNum) {
+        sStoredTimeOffset = DEFAULT_TIME_OFFSET;
+
+        // Normalize legacy saves that persisted the temporary "time frozen while standing still" offset.
+        if (gSaveContext.save.timeSpeedOffset == -3) {
+            gSaveContext.save.timeSpeedOffset = 0;
+        }
+    });
+
     // This is WIP code, sort of turns this enhancement into a "Super Hot" mode where
     // actors update functions are also halted when not moving. The problem is this breaks
     // many situations, like opening a chest or talking to actors. So it needs more time in the oven
@@ -62,7 +71,16 @@ void RegisterTimeMovesWhenYouMove() {
 
     COND_ID_HOOK(OnActorUpdate, ACTOR_PLAYER, CVAR, [](Actor* actor) {
         Player* player = GET_PLAYER(gPlayState);
-        bool timeShouldMove = (player->stateFlags2 & PLAYER_STATE2_USING_OCARINA) || player->speedXZ != 0.0f;
+        bool isRidingHorse = (player->stateFlags1 & PLAYER_STATE1_800000) && player->rideActor != NULL;
+
+        // Detect actual position changes (covers "Move while aiming" and any other feature that
+        // directly modifies actor.world.pos without updating speedXZ).
+        bool positionChanged = (player->actor.world.pos.x != player->actor.prevPos.x) ||
+                               (player->actor.world.pos.z != player->actor.prevPos.z);
+
+        bool timeShouldMove = (player->stateFlags2 & PLAYER_STATE2_USING_OCARINA) || player->speedXZ != 0.0f ||
+                              Play_InCsMode(gPlayState) || (player->stateFlags1 & PLAYER_STATE1_20) ||
+                              positionChanged || (isRidingHorse && player->rideActor->speed != 0.0f);
 
         if (timeShouldMove && sStoredTimeOffset != DEFAULT_TIME_OFFSET) {
             gSaveContext.save.timeSpeedOffset = sStoredTimeOffset;

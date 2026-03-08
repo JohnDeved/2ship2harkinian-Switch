@@ -6,6 +6,13 @@
 union Gfx;
 #include "interpreter.h"
 
+#ifdef __SWITCH__
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
+#endif
+
 namespace Fast {
 class Fast3dWindow : public Ship::Window {
   public:
@@ -61,6 +68,18 @@ class Fast3dWindow : public Ship::Window {
 
     std::weak_ptr<Interpreter> GetInterpreterWeak() const;
 
+#ifdef __SWITCH__
+    // B1: Render thread — moves GL context + DL interpretation to Core 1.
+    // Core 0 submits render work, Core 1 executes it with the GL context.
+    void InitRenderThread();
+    void DestroyRenderThread();
+    bool SubmitRenderWork(Gfx* commands, std::unordered_map<Mtx*, MtxF> mtxReplacements,
+                          bool renderImGui = true);
+    void WaitForRenderDone();
+    void WaitForGlCommandsDone();
+    bool IsRenderThreadActive() const { return mRenderThreadRunning; }
+#endif
+
   protected:
     static bool KeyDown(int32_t scancode);
     static bool KeyUp(int32_t scancode);
@@ -73,5 +92,23 @@ class Fast3dWindow : public Ship::Window {
     GfxRenderingAPI* mRenderingApi;
     GfxWindowBackend* mWindowManagerApi;
     std::shared_ptr<Interpreter> mInterpreter = nullptr;
+
+#ifdef __SWITCH__
+    // B1: Render thread state
+    std::thread mRenderThread;
+    std::mutex mRenderMutex;
+    std::condition_variable mRenderCV;
+    std::condition_variable mRenderDoneCV;
+    std::atomic<bool> mRenderThreadRunning{false};
+    bool mRenderHasWork = false;
+    bool mRenderWorkDone = true;
+    std::atomic<bool> mGlCommandsDone{true};
+    // Render work parameters (set by Core 0, read by Core 1)
+    Gfx* mRenderCommands = nullptr;
+    std::unordered_map<Mtx*, MtxF> mRenderMtxReplacements;
+    bool mRenderImGui = true;
+
+    void RenderThreadLoop();
+#endif
 };
 } // namespace Fast

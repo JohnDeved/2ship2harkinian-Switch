@@ -85,6 +85,7 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 #define DEFAULT_MOVE_COOLDOWN_SECONDS 60.0f
 #define EFFECT_COOLDOWN_FRAMES 30
 #define DEFAULT_RESPAWN_COOLDOWN_SECONDS 30.0f
+#define ROOM_EXIT_RESPAWN_COOLDOWN_SECONDS 60.0f
 #define DEFAULT_DIALOGUE_COOLDOWN_SECONDS 10.0f
 #define DEFAULT_JUMPSCARE_ZOOM_FRAMES 20
 #define DEFAULT_JUMPSCARE_COOLDOWN_SECONDS 1.5f
@@ -319,6 +320,7 @@ static struct {
     f32 jumpscareOriginalFov;
     s16 currentSceneId;
     s32 currentSceneLayer;
+    s8 currentRoomNum;
 } sState;
 
 struct ZoneHistoryCacheEntry {
@@ -545,6 +547,20 @@ static void HandleZoneChange(PlayState* play) {
     ClearStatueTracking();
 }
 
+static void HandleRoomChange(PlayState* play) {
+    s8 roomNum = play->roomCtx.curRoom.num;
+
+    if (roomNum == sState.currentRoomNum) {
+        return;
+    }
+
+    if ((sState.currentRoomNum >= 0) && sState.spawnedStatue) {
+        sState.respawnCooldown = SecondsToFrames(ROOM_EXIT_RESPAWN_COOLDOWN_SECONDS);
+    }
+
+    sState.currentRoomNum = roomNum;
+}
+
 static f32 LoadCooldownSeconds(const char* secondsCvar, const char* legacyFramesCvar, f32 defaultSeconds, bool* migrated) {
     if (HasCVar(secondsCvar)) {
         return CVarGetFloat(secondsCvar, defaultSeconds);
@@ -611,6 +627,7 @@ static void HandlePlayStateChange(PlayState* play) {
         sState.lastPlayState = play;
         sState.currentSceneId = -1;
         sState.currentSceneLayer = -1;
+        sState.currentRoomNum = -1;
         ResetHistory();
         ClearStatueTracking();
     }
@@ -1450,6 +1467,7 @@ void RegisterBenDrowned() {
 
         HandlePlayStateChange(play);
         HandleZoneChange(play);
+        HandleRoomChange(play);
         DecrementCooldown(&sState.dialogueCooldown);
 
         if (!IsNormalGameplayState(play)) {

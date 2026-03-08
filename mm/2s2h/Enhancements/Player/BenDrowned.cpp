@@ -539,6 +539,10 @@ static void HandleZoneChange(PlayState* play) {
         return;
     }
 
+    if ((sState.currentSceneId >= 0) && sState.spawnedStatue) {
+        sState.respawnCooldown = SecondsToFrames(ROOM_EXIT_RESPAWN_COOLDOWN_SECONDS);
+    }
+
     SaveCurrentZoneHistory();
     sState.currentSceneId = sceneId;
     sState.currentSceneLayer = sceneLayer;
@@ -552,10 +556,6 @@ static void HandleRoomChange(PlayState* play) {
 
     if (roomNum == sState.currentRoomNum) {
         return;
-    }
-
-    if ((sState.currentRoomNum >= 0) && sState.spawnedStatue) {
-        sState.respawnCooldown = SecondsToFrames(ROOM_EXIT_RESPAWN_COOLDOWN_SECONDS);
     }
 
     sState.currentRoomNum = roomNum;

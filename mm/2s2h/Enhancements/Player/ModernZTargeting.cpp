@@ -53,7 +53,7 @@ static void ResetTargetSwitchState() {
     sPendingFlickFrames = 0;
 }
 
-static s32 AbsStickValue(s32 value) {
+static s32 AbsValue(s32 value) {
     return (value >= 0) ? value : -value;
 }
 
@@ -97,6 +97,9 @@ static Actor* FindTargetActor(PlayState* play, Player* player, s32 switchDirecti
         return NULL;
     }
 
+    // Directional switching selects the nearest target on the chosen side of the current target,
+    // then wraps to the furthest target on the opposite side if needed.
+    // Left shoulder switching is non-directional, so it picks whichever adjacent target is closest on screen.
     // Use camera yaw to determine screen-space left/right.
     s16 cameraYaw = Math_Vec3f_Yaw(&cam->eye, &cam->at);
 
@@ -126,7 +129,7 @@ static Actor* FindTargetActor(PlayState* play, Player* player, s32 switchDirecti
             s16 actorYaw = Math_Vec3f_Yaw(&player->actor.world.pos, &actor->focus.pos);
             s16 relYaw = (s16)(actorYaw - cameraYaw);
             s16 yawDiff = (s16)(relYaw - currentRel);
-            s16 absYawDiff = AbsStickValue(yawDiff);
+            s16 absYawDiff = AbsValue(yawDiff);
 
             if (switchDirection == SWITCH_DIRECTION_NEAREST) {
                 if ((absYawDiff != 0) && (!foundDirect || (absYawDiff < bestAbsDiff))) {
@@ -194,8 +197,8 @@ static void SwitchTarget(Player* player, Actor* bestActor) {
 static s32 GetRightStickSwitchDirection(Input* input, bool canTrigger) {
     s32 rightStickX = input->cur.right_stick_x;
     s32 rightStickY = input->cur.right_stick_y;
-    s32 absRightStickX = AbsStickValue(rightStickX);
-    s32 absRightStickY = AbsStickValue(rightStickY);
+    s32 absRightStickX = AbsValue(rightStickX);
+    s32 absRightStickY = AbsValue(rightStickY);
     bool stickInNeutral = (absRightStickX < STICK_RELEASE_THRESHOLD) && (absRightStickY < STICK_RELEASE_THRESHOLD);
 
     if (stickInNeutral) {

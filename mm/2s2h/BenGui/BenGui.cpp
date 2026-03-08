@@ -82,7 +82,7 @@ UIWidgets::Colors GetMenuThemeColor() {
     return mBenMenu->GetMenuThemeColor();
 }
 
-static bool MigrateGuiWindowCVars() {
+static bool MigrateTimesplitsSettingsCVar() {
     bool changed = false;
 
     if (CVarGet(CVAR_TIMESPLITS_SETTINGS_NAME) == nullptr && CVarGet(CVAR_TIMESPLITS_SETTINGS_LEGACY_NAME) != nullptr) {
@@ -101,7 +101,7 @@ static bool MigrateGuiWindowCVars() {
 void SetupGuiElements() {
     auto gui = Ship::Context::GetInstance()->GetWindow()->GetGui();
 
-    if (MigrateGuiWindowCVars()) {
+    if (MigrateTimesplitsSettingsCVar()) {
         gui->SaveConsoleVariablesNextFrame();
     }
 

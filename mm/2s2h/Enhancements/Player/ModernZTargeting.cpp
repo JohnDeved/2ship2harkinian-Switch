@@ -126,7 +126,7 @@ static Actor* FindTargetActor(PlayState* play, Player* player, s32 switchDirecti
             s16 actorYaw = Math_Vec3f_Yaw(&player->actor.world.pos, &actor->focus.pos);
             s16 relYaw = (s16)(actorYaw - cameraYaw);
             s16 yawDiff = (s16)(relYaw - currentRel);
-            s16 absYawDiff = std::abs(yawDiff);
+            s16 absYawDiff = static_cast<s16>(std::abs(static_cast<int>(yawDiff)));
 
             if (switchDirection == SWITCH_DIRECTION_NEAREST) {
                 if ((absYawDiff != 0) && (!foundDirect || (absYawDiff < bestAbsDiff))) {

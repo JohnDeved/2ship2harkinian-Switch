@@ -271,7 +271,8 @@ void RegisterModernZTargeting() {
         }
 
         if ((switchDirection == SWITCH_DIRECTION_NONE) && CVAR_LSHOULDER &&
-            CHECK_BTN_ALL(play->state.input[0].press.button, BTN_L) && (sSwitchCooldown == 0)) {
+            CHECK_BTN_ALL(play->state.input[0].cur.button, BTN_L) &&
+            !CHECK_BTN_ALL(play->state.input[0].prev.button, BTN_L) && (sSwitchCooldown == 0)) {
             switchDirection = SWITCH_DIRECTION_NEAREST;
         }
 

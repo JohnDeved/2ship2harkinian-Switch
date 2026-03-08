@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <libultraship/bridge/consolevariablebridge.h>
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include "2s2h/ShipInit.hpp"
@@ -51,10 +52,6 @@ static void ResetTargetSwitchState() {
     sStickReleased = true;
     sPendingSwitchDirection = SWITCH_DIRECTION_NONE;
     sPendingFlickFrames = 0;
-}
-
-static s32 AbsValue(s32 value) {
-    return (value >= 0) ? value : -value;
 }
 
 static bool IsActorTargetable(PlayState* play, Player* player, Actor* actor) {
@@ -129,7 +126,7 @@ static Actor* FindTargetActor(PlayState* play, Player* player, s32 switchDirecti
             s16 actorYaw = Math_Vec3f_Yaw(&player->actor.world.pos, &actor->focus.pos);
             s16 relYaw = (s16)(actorYaw - cameraYaw);
             s16 yawDiff = (s16)(relYaw - currentRel);
-            s16 absYawDiff = AbsValue(yawDiff);
+            s16 absYawDiff = std::abs(yawDiff);
 
             if (switchDirection == SWITCH_DIRECTION_NEAREST) {
                 if ((absYawDiff != 0) && (!foundDirect || (absYawDiff < bestAbsDiff))) {
@@ -197,8 +194,8 @@ static void SwitchTarget(Player* player, Actor* bestActor) {
 static s32 GetRightStickSwitchDirection(Input* input, bool canTrigger) {
     s32 rightStickX = input->cur.right_stick_x;
     s32 rightStickY = input->cur.right_stick_y;
-    s32 absRightStickX = AbsValue(rightStickX);
-    s32 absRightStickY = AbsValue(rightStickY);
+    s32 absRightStickX = std::abs(rightStickX);
+    s32 absRightStickY = std::abs(rightStickY);
     bool stickInNeutral = (absRightStickX < STICK_RELEASE_THRESHOLD) && (absRightStickY < STICK_RELEASE_THRESHOLD);
 
     if (stickInNeutral) {
@@ -225,9 +222,15 @@ static s32 GetRightStickSwitchDirection(Input* input, bool canTrigger) {
     }
 
     if ((absRightStickX >= STICK_FLICK_THRESHOLD) && (absRightStickX >= (absRightStickY + STICK_HORIZONTAL_MARGIN))) {
-        sStickReleased = false;
-        sPendingSwitchDirection = (rightStickX > 0) ? SWITCH_DIRECTION_RIGHT : SWITCH_DIRECTION_LEFT;
-        sPendingFlickFrames = 1;
+        if (rightStickX > 0) {
+            sStickReleased = false;
+            sPendingSwitchDirection = SWITCH_DIRECTION_RIGHT;
+            sPendingFlickFrames = 1;
+        } else if (rightStickX < 0) {
+            sStickReleased = false;
+            sPendingSwitchDirection = SWITCH_DIRECTION_LEFT;
+            sPendingFlickFrames = 1;
+        }
     }
 
     return SWITCH_DIRECTION_NONE;

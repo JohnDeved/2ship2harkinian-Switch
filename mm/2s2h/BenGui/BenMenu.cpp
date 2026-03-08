@@ -1117,7 +1117,7 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.Player.ManualJump")
         .Options(CheckboxOptions().Tooltip("Z + A to Jump and B while midair to Jump Attack."));
     AddWidget(path, "Modern Z-Targeting", WIDGET_CVAR_CHECKBOX)
-        .CVar("gEnhancements.Player.ModernZTargeting")
+        .CVar("gEnhancements.Player.ModernZTargeting.Enable")
         .Options(CheckboxOptions().Tooltip(
             "Enables modern Zelda-style targeting enhancements (BotW/TotK). "
             "Toggle the individual features below."));
@@ -2318,7 +2318,7 @@ void BenMenu::InitElement() {
             "Koume is Invincible" } },
         { DISABLE_FOR_MODERN_ZTARGETING_OFF,
           { [](disabledInfo& info) -> bool {
-               return !CVarGetInteger("gEnhancements.Player.ModernZTargeting", 0);
+               return !CVarGetInteger("gEnhancements.Player.ModernZTargeting.Enable", 0);
            },
             "Modern Z-Targeting is Disabled" } },
         { DISABLE_FOR_ARROW_CYCLE_OFF,

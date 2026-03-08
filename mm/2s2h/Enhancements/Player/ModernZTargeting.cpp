@@ -6,8 +6,11 @@ extern "C" {
 #include "variables.h"
 }
 
-#define CVAR_NAME "gEnhancements.Player.ModernZTargeting"
+#define CVAR_NAME "gEnhancements.Player.ModernZTargeting.Enable"
+#define CVAR_LEGACY_NAME "gEnhancements.Player.ModernZTargeting"
+#define CVAR_CAMERA_NAME "gEnhancements.Player.ModernZTargeting.CameraBasedLock"
 #define CVAR_RSTICK_NAME "gEnhancements.Player.ModernZTargeting.RightStickSwitch"
+#define CVAR_ZTOGGLE_NAME "gEnhancements.Player.ModernZTargeting.ZToggleRelease"
 #define CVAR CVarGetInteger(CVAR_NAME, 0)
 #define CVAR_RSTICK CVarGetInteger(CVAR_RSTICK_NAME, 1)
 
@@ -21,6 +24,16 @@ extern "C" {
 static s32 sSwitchCooldown = 0;
 static bool sStickReleased = true;
 static s32 sPrevRightStickX = 0;
+
+static void MigrateLegacyCVar() {
+    if (CVarGet(CVAR_NAME) == nullptr && CVarGet(CVAR_LEGACY_NAME) != nullptr) {
+        CVarSetInteger(CVAR_NAME, CVarGetInteger(CVAR_LEGACY_NAME, 0));
+    }
+
+    if (CVarGet(CVAR_LEGACY_NAME) != nullptr) {
+        CVarClear(CVAR_LEGACY_NAME);
+    }
+}
 
 static bool IsActorTargetable(PlayState* play, Player* player, Actor* actor) {
     if (actor == NULL || actor->update == NULL) {
@@ -57,6 +70,8 @@ static bool IsActorTargetable(PlayState* play, Player* player, Actor* actor) {
 }
 
 void RegisterModernZTargeting() {
+    MigrateLegacyCVar();
+
     COND_HOOK(OnGameStateUpdate, (CVAR && CVAR_RSTICK), []() {
         if (gPlayState == nullptr) {
             return;
@@ -109,7 +124,11 @@ void RegisterModernZTargeting() {
         bool switchRight = crossedRight;
 
         // Use camera yaw to determine screen-space left/right
-        Camera* cam = play->cameraPtrs[play->activeCamId];
+        Camera* cam = GET_ACTIVE_CAM(play);
+        if (cam == NULL) {
+            sPrevRightStickX = rightStickX;
+            return;
+        }
         s16 cameraYaw = Math_Vec3f_Yaw(&cam->eye, &cam->at);
 
         // Current target angle relative to camera
@@ -194,4 +213,5 @@ void RegisterModernZTargeting() {
     });
 }
 
-static RegisterShipInitFunc initFunc(RegisterModernZTargeting, { CVAR_NAME, CVAR_RSTICK_NAME });
+static RegisterShipInitFunc initFunc(RegisterModernZTargeting, { CVAR_NAME, CVAR_LEGACY_NAME, CVAR_CAMERA_NAME,
+                                                                 CVAR_RSTICK_NAME, CVAR_ZTOGGLE_NAME });

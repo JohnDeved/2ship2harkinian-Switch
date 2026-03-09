@@ -174,6 +174,9 @@ static std::pair<const char*, ImVec4> GetBenDrownedHistoryFlagInfo(const BenDrow
     if (entry.spawnEligible) {
         return { "Hidden | Spawn", ImVec4(0.4f, 1.0f, 0.5f, 1.0f) };
     }
+    if (entry.tooFar) {
+        return { "Too Far", ImVec4(0.75f, 0.55f, 1.0f, 1.0f) };
+    }
     if (entry.visible) {
         return { "Visible", ImVec4(1.0f, 0.4f, 0.4f, 1.0f) };
     }

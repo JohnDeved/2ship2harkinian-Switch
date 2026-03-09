@@ -734,6 +734,10 @@ static bool CanCameraSeePoint(PlayState* play, const Vec3f& point) {
                            point.z - (cameraRight.z * VISIBILITY_SIDE_OFFSET));
 }
 
+static f32 GetSpawnMaxDistSq() {
+    return SQ(std::max(sTuning.maxNearbyDist, sTuning.distantSpawnDist));
+}
+
 static bool FindHiddenHistoryPoint(PlayState* play, Player* player, f32 maxDistSq, Vec3f* hiddenPoint) {
     for (size_t i = 0; i < sState.historyCount; i++) {
         size_t idx = HistoryIndexFromEnd(i);
@@ -758,12 +762,9 @@ static bool FindHiddenHistoryPoint(PlayState* play, Player* player, f32 maxDistS
 }
 
 static bool FindDistantSpawnPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
-    Vec3f bestDistantPoint = player->actor.world.pos;
     Vec3f bestFallbackPoint = player->actor.world.pos;
-    bool foundDistantPoint = false;
     bool foundFallbackPoint = false;
-    f32 bestDistantDistSq = 0.0f;
-    f32 bestFallbackDistSq = 0.0f;
+    f32 maxSpawnDistSq = GetSpawnMaxDistSq();
 
     for (size_t i = 0; i < sState.historyCount; i++) {
         size_t idx = HistoryIndexFromEnd(i);
@@ -774,24 +775,19 @@ static bool FindDistantSpawnPoint(PlayState* play, Player* player, Vec3f* hidden
             continue;
         }
 
-        if (!CanCameraSeePoint(play, candidatePoint)) {
-            if (playerDistSq >= SQ(sTuning.distantSpawnDist)) {
-                if (!foundDistantPoint || (playerDistSq > bestDistantDistSq)) {
-                    bestDistantPoint = candidatePoint;
-                    bestDistantDistSq = playerDistSq;
-                    foundDistantPoint = true;
-                }
-            } else if (!foundFallbackPoint || (playerDistSq > bestFallbackDistSq)) {
-                bestFallbackPoint = candidatePoint;
-                bestFallbackDistSq = playerDistSq;
-                foundFallbackPoint = true;
-            }
+        if ((playerDistSq > maxSpawnDistSq) || CanCameraSeePoint(play, candidatePoint)) {
+            continue;
         }
-    }
 
-    if (foundDistantPoint) {
-        *hiddenPoint = bestDistantPoint;
-        return true;
+        if (playerDistSq >= SQ(sTuning.distantSpawnDist)) {
+            *hiddenPoint = candidatePoint;
+            return true;
+        }
+
+        if (!foundFallbackPoint) {
+            bestFallbackPoint = candidatePoint;
+            foundFallbackPoint = true;
+        }
     }
 
     if (foundFallbackPoint) {
@@ -1278,7 +1274,8 @@ static void PopulateDebugHistoryEntry(PlayState* play, Player* player, const Vec
     entry->playerDistSq = Math3D_Vec3fDistSq(&pointCopy, &player->actor.world.pos);
     entry->playerDist = sqrtf(entry->playerDistSq);
     entry->visible = CanCameraSeePoint(play, point);
-    entry->spawnEligible = !entry->visible && (entry->playerDistSq >= SQ(sTuning.minSpawnDist));
+    entry->tooFar = entry->playerDistSq > GetSpawnMaxDistSq();
+    entry->spawnEligible = !entry->visible && !entry->tooFar && (entry->playerDistSq >= SQ(sTuning.minSpawnDist));
     entry->distantEligible = entry->spawnEligible && (entry->playerDistSq >= SQ(sTuning.distantSpawnDist));
 }
 
@@ -1293,6 +1290,8 @@ static void AddDebugHistoryObject(PlayState* play, const BenDrowned::DebugHistor
         AddDebugObject(play, entry.pos, DEBUG_HISTORY_MARKER_SCALE, 80, 180, 255, 220, DEBUG_HISTORY_MARKER_TYPE);
     } else if (entry.spawnEligible) {
         AddDebugObject(play, entry.pos, DEBUG_HISTORY_MARKER_SCALE, 80, 255, 120, 200, DEBUG_HISTORY_MARKER_TYPE);
+    } else if (entry.tooFar) {
+        AddDebugObject(play, entry.pos, DEBUG_HISTORY_MARKER_SCALE, 170, 120, 255, 180, DEBUG_HISTORY_MARKER_TYPE);
     } else if (entry.visible) {
         AddDebugObject(play, entry.pos, DEBUG_HISTORY_MARKER_SCALE, 255, 90, 90, 180, DEBUG_HISTORY_MARKER_TYPE);
     } else {

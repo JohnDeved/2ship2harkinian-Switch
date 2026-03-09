@@ -20,6 +20,7 @@ struct DebugHistoryEntry {
     f32 playerDist;
     f32 playerDistSq;
     bool visible;
+    bool tooFar;
     bool spawnEligible;
     bool distantEligible;
 };

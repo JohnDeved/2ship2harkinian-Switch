@@ -26,6 +26,7 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 // --- History recording ---
 #define HISTORY_SIZE 48
 #define HISTORY_DISTINCT_CHECK_WINDOW 12
+#define RECENT_VISIBLE_SPAWN_WINDOW 24
 #define RECORD_INTERVAL_FRAMES 20
 #define DEFAULT_HISTORY_POINT_MIN_DIST 20.0f
 
@@ -762,32 +763,47 @@ static bool FindHiddenHistoryPoint(PlayState* play, Player* player, f32 maxDistS
 }
 
 static bool FindDistantSpawnPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
-    Vec3f bestFallbackPoint = player->actor.world.pos;
+    Vec3f bestDistantPoint = {};
+    Vec3f bestFallbackPoint = {};
+    bool foundDistantPoint = false;
     bool foundFallbackPoint = false;
     f32 maxSpawnDistSq = GetSpawnMaxDistSq();
+    size_t recentWindow = std::min(sState.historyCount, static_cast<size_t>(RECENT_VISIBLE_SPAWN_WINDOW));
 
-    for (size_t i = 0; i < sState.historyCount; i++) {
-        size_t idx = HistoryIndexFromEnd(i);
-        Vec3f candidatePoint = sState.history[idx];
-        f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
+    auto scanHistoryRange = [&](size_t begin, size_t end) {
+        for (size_t i = end; i-- > begin;) {
+            size_t idx = HistoryIndexFromEnd(i);
+            Vec3f candidatePoint = sState.history[idx];
+            f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
 
-        if (playerDistSq < SQ(sTuning.minSpawnDist)) {
-            continue;
+            if (playerDistSq < SQ(sTuning.minSpawnDist)) {
+                continue;
+            }
+
+            if ((playerDistSq > maxSpawnDistSq) || CanCameraSeePoint(play, candidatePoint)) {
+                continue;
+            }
+
+            if (!foundFallbackPoint) {
+                bestFallbackPoint = candidatePoint;
+                foundFallbackPoint = true;
+            }
+
+            if (!foundDistantPoint && (playerDistSq >= SQ(sTuning.distantSpawnDist))) {
+                bestDistantPoint = candidatePoint;
+                foundDistantPoint = true;
+            }
         }
+    };
 
-        if ((playerDistSq > maxSpawnDistSq) || CanCameraSeePoint(play, candidatePoint)) {
-            continue;
-        }
+    scanHistoryRange(0, recentWindow);
+    if (recentWindow < sState.historyCount) {
+        scanHistoryRange(recentWindow, sState.historyCount);
+    }
 
-        if (playerDistSq >= SQ(sTuning.distantSpawnDist)) {
-            *hiddenPoint = candidatePoint;
-            return true;
-        }
-
-        if (!foundFallbackPoint) {
-            bestFallbackPoint = candidatePoint;
-            foundFallbackPoint = true;
-        }
+    if (foundDistantPoint) {
+        *hiddenPoint = bestDistantPoint;
+        return true;
     }
 
     if (foundFallbackPoint) {

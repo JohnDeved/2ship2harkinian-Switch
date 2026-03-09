@@ -763,14 +763,15 @@ static bool FindHiddenHistoryPoint(PlayState* play, Player* player, f32 maxDistS
 }
 
 static bool FindDistantSpawnPoint(PlayState* play, Player* player, Vec3f* hiddenPoint) {
-    Vec3f bestDistantPoint = {};
-    Vec3f bestFallbackPoint = {};
+    Vec3f bestDistantPoint = { 0.0f, 0.0f, 0.0f };
+    Vec3f bestFallbackPoint = { 0.0f, 0.0f, 0.0f };
     bool foundDistantPoint = false;
     bool foundFallbackPoint = false;
     f32 maxSpawnDistSq = GetSpawnMaxDistSq();
     size_t recentWindow = std::min<size_t>(sState.historyCount, RECENT_VISIBLE_SPAWN_WINDOW);
 
     auto scanHistoryRange = [&](size_t begin, size_t end) {
+        // Higher history offsets are older points, so this walks the selected range from older to newer.
         for (size_t i = end; i > begin; --i) {
             size_t idx = HistoryIndexFromEnd(i - 1);
             Vec3f candidatePoint = sState.history[idx];
@@ -801,7 +802,7 @@ static bool FindDistantSpawnPoint(PlayState* play, Player* player, Vec3f* hidden
     };
 
     scanHistoryRange(0, recentWindow);
-    if (recentWindow < sState.historyCount) {
+    if (!foundDistantPoint || !foundFallbackPoint) {
         scanHistoryRange(recentWindow, sState.historyCount);
     }
 

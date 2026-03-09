@@ -768,11 +768,11 @@ static bool FindDistantSpawnPoint(PlayState* play, Player* player, Vec3f* hidden
     bool foundDistantPoint = false;
     bool foundFallbackPoint = false;
     f32 maxSpawnDistSq = GetSpawnMaxDistSq();
-    size_t recentWindow = std::min(sState.historyCount, static_cast<size_t>(RECENT_VISIBLE_SPAWN_WINDOW));
+    size_t recentWindow = std::min<size_t>(sState.historyCount, RECENT_VISIBLE_SPAWN_WINDOW);
 
     auto scanHistoryRange = [&](size_t begin, size_t end) {
-        for (size_t i = end; i-- > begin;) {
-            size_t idx = HistoryIndexFromEnd(i);
+        for (size_t i = end; i > begin; --i) {
+            size_t idx = HistoryIndexFromEnd(i - 1);
             Vec3f candidatePoint = sState.history[idx];
             f32 playerDistSq = Math3D_Vec3fDistSq(&candidatePoint, &player->actor.world.pos);
 
@@ -792,6 +792,10 @@ static bool FindDistantSpawnPoint(PlayState* play, Player* player, Vec3f* hidden
             if (!foundDistantPoint && (playerDistSq >= SQ(sTuning.distantSpawnDist))) {
                 bestDistantPoint = candidatePoint;
                 foundDistantPoint = true;
+            }
+
+            if (foundDistantPoint && foundFallbackPoint) {
+                break;
             }
         }
     };

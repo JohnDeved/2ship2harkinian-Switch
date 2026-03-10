@@ -44,6 +44,11 @@
 
 #endif
 
+#ifdef ENABLE_DEKO3D
+#include <imgui_impl_sdl2.h>
+#include "fast/backends/gfx_deko3d.h"
+#endif
+
 #if defined(ENABLE_DX11) || defined(ENABLE_DX12)
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
@@ -193,6 +198,15 @@ void Gui::ImGuiWMInit() {
             ImGui_ImplWin32_Init(mImpl.Dx11.Window);
             break;
 #endif
+#ifdef ENABLE_DEKO3D
+        case WindowBackend::FAST3D_DEKO3D:
+            SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
+            SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+            // Initialize SDL2 for input events without an OpenGL context.
+            // The deko3d rendering backend handles display output.
+            ImGui_ImplSDL2_InitForOpenGL(static_cast<SDL_Window*>(mImpl.Opengl.Window), nullptr);
+            break;
+#endif
         default:
             break;
     }
@@ -218,6 +232,13 @@ void Gui::ShutDownImGui(Ship::Window* window) {
             ImGui_ImplDX11_Shutdown();
             break;
 #endif
+#ifdef ENABLE_DEKO3D
+        case WindowBackend::FAST3D_DEKO3D:
+            ImGui_ImplSDL2_Shutdown();
+            break;
+#endif
+        default:
+            break;
     }
     ImGui::DestroyContext();
 }
@@ -250,6 +271,13 @@ void Gui::ImGuiBackendInit() {
         case WindowBackend::FAST3D_DXGI_DX11:
             ImGui_ImplDX11_Init(static_cast<ID3D11Device*>(mImpl.Dx11.Device),
                                 static_cast<ID3D11DeviceContext*>(mImpl.Dx11.DeviceContext));
+            break;
+#endif
+
+#ifdef ENABLE_DEKO3D
+        case WindowBackend::FAST3D_DEKO3D:
+            // deko3d ImGui rendering backend initialization.
+            // ImGui draw data will be rendered by the deko3d rendering API.
             break;
 #endif
         default:
@@ -306,6 +334,9 @@ void Gui::HandleWindowEvents(WindowEvent event) {
     switch (Context::GetInstance()->GetWindow()->GetWindowBackend()) {
         case WindowBackend::FAST3D_SDL_OPENGL:
         case WindowBackend::FAST3D_SDL_METAL:
+#ifdef ENABLE_DEKO3D
+        case WindowBackend::FAST3D_DEKO3D:
+#endif
             ImGui_ImplSDL2_ProcessEvent(static_cast<const SDL_Event*>(event.Sdl.Event));
 #ifdef __SWITCH__
             {
@@ -383,6 +414,12 @@ void Gui::ImGuiBackendNewFrame() {
             break;
         }
 #endif
+
+#ifdef ENABLE_DEKO3D
+        case WindowBackend::FAST3D_DEKO3D:
+            // deko3d new frame — no per-frame ImGui backend state needed currently.
+            break;
+#endif
         default:
             break;
     }
@@ -392,6 +429,9 @@ void Gui::ImGuiWMNewFrame() {
     switch (Context::GetInstance()->GetWindow()->GetWindowBackend()) {
         case WindowBackend::FAST3D_SDL_OPENGL:
         case WindowBackend::FAST3D_SDL_METAL:
+#ifdef ENABLE_DEKO3D
+        case WindowBackend::FAST3D_DEKO3D:
+#endif
             ImGui_ImplSDL2_NewFrame();
 #ifdef __SWITCH__
             {
@@ -912,6 +952,15 @@ void Gui::ImGuiRenderDrawData(ImDrawData* data) {
         case WindowBackend::FAST3D_DXGI_DX11:
             ImGui_ImplDX11_RenderDrawData(data);
             break;
+#endif
+
+#ifdef ENABLE_DEKO3D
+        case WindowBackend::FAST3D_DEKO3D: {
+            Fast::GfxRenderingAPIDeko3d* api =
+                (Fast::GfxRenderingAPIDeko3d*)mInterpreter.lock()->GetCurrentRenderingAPI();
+            api->RenderImGuiDrawData(data);
+            break;
+        }
 #endif
         default:
             break;

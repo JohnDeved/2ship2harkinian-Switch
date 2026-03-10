@@ -62,6 +62,11 @@ jobs:
         sudo apt-get install -y ninja-build
         sudo apt-get remove -y cmake
         sudo dkp-pacman -R --noconfirm switch-tinyxml2
+        sudo dkp-pacman -S --noconfirm deko3d
+        echo "== deko3d package info =="
+        dkp-pacman -Qi deko3d || true
+        echo "== uam binary =="
+        which uam
         wget https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.sh -O /tmp/cmake.sh
         sudo sh /tmp/cmake.sh --prefix=/usr/local/ --exclude-subdir
 
@@ -86,6 +91,10 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
           -DCMAKE_C_COMPILER_LAUNCHER=ccache
         cmake --build build-switch --target 2ship_nro --config Release --parallel 10
+        echo "== Verify deko3d shader artifacts =="
+        test -f build-switch/mm/romfs/shaders/fast3d_vs.dksh
+        test -f build-switch/mm/romfs/shaders/fast3d_fs.dksh
+        ls -lh build-switch/mm/romfs/shaders/fast3d_vs.dksh build-switch/mm/romfs/shaders/fast3d_fs.dksh
         ccache --show-stats
         echo "=== ccache log (last 50 lines) ==="
         tail -50 ccache.log || true

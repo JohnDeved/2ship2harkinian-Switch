@@ -8,7 +8,7 @@
 #include "libultraship/classes.h"
 #endif
 
-#if defined(ENABLE_OPENGL) || defined(__APPLE__)
+#if defined(ENABLE_OPENGL) || defined(__APPLE__) || defined(ENABLE_DEKO3D)
 
 #ifdef __MINGW32__
 #define FOR_WINDOWS 1
@@ -34,7 +34,9 @@
 #elif __SWITCH__
 #include <SDL2/SDL.h>
 #include <switch.h>
+#ifndef ENABLE_DEKO3D
 #include <glad/glad.h>
+#endif
 #include "ship/port/switch/SwitchImpl.h"
 #else
 #include <SDL2/SDL.h>
@@ -338,6 +340,11 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
 
 #if defined(__APPLE__)
     bool use_opengl = strcmp(gfxApiName, "OpenGL") == 0;
+#elif defined(ENABLE_DEKO3D)
+    bool use_opengl = false;
+    if (strcmp(gfxApiName, "deko3d") != 0) {
+        SPDLOG_WARN("Invalid graphics API '{}' for this build; forcing 'deko3d'", gfxApiName);
+    }
 #else
     constexpr bool use_opengl = true;
 #endif
@@ -346,8 +353,10 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
         SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
         SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
         SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+#if defined(__APPLE__)
     } else {
         SDL_SetHint(SDL_HINT_RENDER_DRIVER, "metal");
+#endif
     }
 
 #if defined(__APPLE__)
@@ -355,7 +364,7 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-#elif defined(__SWITCH__)
+#elif defined(__SWITCH__) && !defined(ENABLE_DEKO3D)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
@@ -386,8 +395,10 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
 
     if (use_opengl) {
         flags = flags | SDL_WINDOW_OPENGL;
+#ifdef __APPLE__
     } else {
         flags = flags | SDL_WINDOW_METAL;
+#endif
     }
 
     mWnd = SDL_CreateWindow(title, posX, posY, mWindowWidth, mWindowHeight, flags);
@@ -426,12 +437,13 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
 
         SDL_GL_MakeCurrent(mWnd, mCtx);
         SDL_GL_SetSwapInterval(mVsyncEnabled ? 1 : 0);
-#ifdef __SWITCH__
+#if defined(__SWITCH__) && !defined(ENABLE_DEKO3D)
         if (!gladLoadGLLoader(SDL_GL_GetProcAddress)) {
             printf("Failed to initialize glad\n");
         }
 #endif
         window_impl.Opengl = { mWnd, mCtx };
+#ifdef __APPLE__
     } else {
         uint32_t flags = SDL_RENDERER_ACCELERATED;
         if (mVsyncEnabled) {
@@ -443,14 +455,20 @@ void GfxWindowBackendSDL2::Init(const char* gameName, const char* gfxApiName, bo
             return;
         }
 
-#ifndef __SWITCH__
         if (startFullScreen) {
             SetFullscreenImpl(true, false);
         }
-#endif
 
         SDL_GetRendererOutputSize(mRenderer, &mWindowWidth, &mWindowHeight);
         window_impl.Metal = { mWnd, mRenderer };
+#endif
+#ifdef ENABLE_DEKO3D
+    } else {
+        // deko3d mode: SDL window is used only for input handling.
+        // Display output is managed by deko3d via NWindow directly.
+        // No GL context or SDL renderer needed.
+        window_impl.Opengl = { mWnd, nullptr };
+#endif
     }
 
     Ship::Context::GetInstance()->GetWindow()->GetGui()->Init(window_impl);
@@ -722,6 +740,13 @@ void GfxWindowBackendSDL2::SyncFramerateWithTime() const {
 }
 
 void GfxWindowBackendSDL2::SwapBuffersBegin() {
+#ifdef ENABLE_DEKO3D
+    // When deko3d is the rendering backend, swap is handled by deko3d's swapchain.
+    // SDL is only used for input, so skip GL swap operations.
+    if (!mCtx) {
+        return;
+    }
+#endif
 #ifdef __SWITCH__
     // Force vsync on Switch and skip SyncFramerateWithTime.
     // Vsync provides frame pacing; the nanosleep-based limiter adds unnecessary latency.

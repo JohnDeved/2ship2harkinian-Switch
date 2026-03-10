@@ -162,6 +162,15 @@ if (USE_OPENGLES)
     endif()
 endif()
 
+if (CMAKE_SYSTEM_NAME STREQUAL "NintendoSwitch")
+    # deko3d GPU API for Nintendo Switch rendering
+    target_link_libraries(libultraship PRIVATE -ldeko3d)
+    target_include_directories(libultraship PRIVATE
+        ${DEVKITPRO}/libnx/include
+        ${DEVKITPRO}/portlibs/switch/include
+    )
+endif()
+
 target_link_libraries(libultraship PUBLIC prism)
 
 #=================== Compile Options & Defs ===================
@@ -228,7 +237,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
     endif()
 else()
     target_compile_definitions(libultraship PRIVATE
-        ENABLE_OPENGL
+        $<$<NOT:$<STREQUAL:${CMAKE_SYSTEM_NAME},NintendoSwitch>>:ENABLE_OPENGL>
+        $<$<STREQUAL:${CMAKE_SYSTEM_NAME},NintendoSwitch>:ENABLE_DEKO3D>
         $<$<CONFIG:Debug>:_DEBUG>
         $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
         SPDLOG_ACTIVE_LEVEL=${SPDLOG_MIN_CUTOFF}

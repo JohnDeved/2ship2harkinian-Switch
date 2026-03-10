@@ -309,6 +309,9 @@ WindowBackend Config::GetWindowBackend() {
         return WindowBackend::FAST3D_SDL_METAL;
     }
 #endif
+#ifdef ENABLE_DEKO3D
+    return WindowBackend::FAST3D_DEKO3D;
+#endif
     return WindowBackend::FAST3D_SDL_OPENGL;
 }
 
@@ -324,6 +327,9 @@ void Config::SetWindowBackend(WindowBackend backend) {
             break;
         case WindowBackend::FAST3D_SDL_METAL:
             SetString("Window.Backend.Name", "Metal");
+            break;
+        case WindowBackend::FAST3D_DEKO3D:
+            SetString("Window.Backend.Name", "deko3d");
             break;
         default:
             SetString("Window.Backend.Name", "");

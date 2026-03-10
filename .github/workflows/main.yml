@@ -93,6 +93,10 @@ jobs:
 
         mv build-switch/mm/*.nro 2ship.nro
         mv README.md readme.txt
+        # Copy reshade-shaders for distribution (standard ReShade shader pack)
+        mkdir -p reshade-shaders-dist/reshade-shaders/Shaders reshade-shaders-dist/reshade-shaders/Textures
+        cp -r reshade-shaders/Shaders/* reshade-shaders-dist/reshade-shaders/Shaders/ 2>/dev/null || true
+        cp -r reshade-shaders/Textures/* reshade-shaders-dist/reshade-shaders/Textures/ 2>/dev/null || true
     - name: Upload NRO and supporting files
       uses: actions/upload-artifact@v4
       with:
@@ -101,6 +105,7 @@ jobs:
           2ship.nro
           readme.txt
           gamecontrollerdb.txt
+          reshade-shaders-dist/reshade-shaders
         retention-days: 3
 
   combine-artifacts:
@@ -132,5 +137,6 @@ jobs:
           ./artifacts/2ship.nro
           ./artifacts/readme.txt
           ./artifacts/gamecontrollerdb.txt
+          ./artifacts/reshade-shaders
         if-no-files-found: error
         retention-days: 3

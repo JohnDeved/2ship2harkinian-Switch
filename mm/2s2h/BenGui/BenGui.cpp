@@ -38,6 +38,7 @@
 #include "DeveloperTools/MessageViewer.h"
 #include "DeveloperTools/FrameProfiler.h"
 #include "DeveloperTools/Benchmark.h"
+#include "Enhancements/Graphics/ReShadeOverlay.h"
 
 namespace BenGui {
 // MARK: - Delegates
@@ -77,6 +78,7 @@ std::shared_ptr<TimesplitsSettingsWindow> mTimesplitsSettingsWindow;
 std::shared_ptr<InputViewer> mInputViewer;
 std::shared_ptr<InputViewerSettingsWindow> mInputViewerSettings;
 std::shared_ptr<BenModalWindow> mModalWindow;
+std::shared_ptr<ReShadeOverlayWindow> mReShadeOverlayWindow;
 
 UIWidgets::Colors GetMenuThemeColor() {
     return mBenMenu->GetMenuThemeColor();
@@ -224,6 +226,10 @@ void SetupGuiElements() {
     mModalWindow = std::make_shared<BenModalWindow>("gWindows.ModalWindow", "Modal Window");
     gui->AddGuiWindow(mModalWindow);
     mModalWindow->Show();
+
+    mReShadeOverlayWindow =
+        std::make_shared<ReShadeOverlayWindow>("gWindows.ReShadeOverlay", "ReShade", ImVec2(450, 500));
+    gui->AddGuiWindow(mReShadeOverlayWindow);
 }
 
 void Destroy() {

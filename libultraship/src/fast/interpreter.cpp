@@ -5665,6 +5665,13 @@ void Interpreter::StartFrame() {
         mRendersToFb = false;
     }
 
+    // Force rendering to framebuffer when post-processing is active
+    if (mPostProcessCallback && !mRendersToFb) {
+        mRendersToFb = true;
+        mRapi->UpdateFramebufferParameters(mGameFb, mCurDimensions.width, mCurDimensions.height, mMsaaLevel, true,
+                                            true, true, true);
+    }
+
     mFbActive = false;
 }
 
@@ -5842,6 +5849,11 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
 
             assert(0 && "active framebuffer was never reset back to original");
         }
+
+        // Apply post-processing if callback is set
+        if (mPostProcessCallback && mGfxFrameBuffer) {
+            mGfxFrameBuffer = mPostProcessCallback(mGfxFrameBuffer, mCurDimensions.width, mCurDimensions.height);
+        }
     }
 
     if (mProfilingEnabled) {
@@ -5849,6 +5861,14 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
         mFrameStats.ComputeDerived();
     }
 }
+void Interpreter::SetPostProcessCallback(PostProcessFunc callback) {
+    mPostProcessCallback = std::move(callback);
+}
+
+void Interpreter::ClearPostProcessCallback() {
+    mPostProcessCallback = nullptr;
+}
+
 void Interpreter::EndFrame() {
     mRapi->EndFrame();
     mWapi->SwapBuffersBegin();

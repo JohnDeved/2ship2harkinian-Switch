@@ -101,6 +101,7 @@ jobs:
           2ship.nro
           readme.txt
           gamecontrollerdb.txt
+          glsl-shaders/crt/shaders/*.glsl
         retention-days: 3
 
   combine-artifacts:
@@ -132,5 +133,6 @@ jobs:
           ./artifacts/2ship.nro
           ./artifacts/readme.txt
           ./artifacts/gamecontrollerdb.txt
+          ./artifacts/glsl-shaders/crt/shaders/*.glsl
         if-no-files-found: error
         retention-days: 3

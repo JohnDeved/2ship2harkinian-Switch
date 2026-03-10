@@ -5,6 +5,7 @@
 #include "DeveloperTools/SaveEditor.h"
 #include "DeveloperTools/CollisionViewer.h"
 #include "2s2h/Enhancements/GfxPatcher/AuthenticGfxPatches.h"
+#include "2s2h/Enhancements/Graphics/Graphics.h"
 #include "2s2h/PresetManager/PresetManager.h"
 #include "HudEditor.h"
 #include "Notification.h"
@@ -98,6 +99,7 @@ static const std::vector<const char*> motionBlurOptions = {
     "Always Off",        // MOTION_BLUR_ALWAYS_OFF
     "Always On",         // MOTION_BLUR_ALWAYS_ON
 };
+
 static const std::vector<const char*> debugSaveOptions = {
     "Empty save",         // DEBUG_SAVE_INFO_NONE
     "Vanilla debug save", // DEBUG_SAVE_INFO_VANILLA_DEBUG
@@ -1453,6 +1455,28 @@ void BenMenu::AddEnhancements() {
         .CVar(CVAR_LOW_RES_MODE)
         .Options(CheckboxOptions().Tooltip(
             "Sets the aspect ratio to 4:3 and lowers resolution to 240p, the N64's native resolution."));
+    AddWidget(path, "CRT Filter", WIDGET_SEPARATOR_TEXT);
+    AddWidget(path, "Enable CRT Filter", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Graphics.CRTFilter.Enabled")
+        .Options(CheckboxOptions().Tooltip(
+            "Applies a CRT display effect using RetroArch GLSL shaders.\n"
+            "Shaders are loaded from the glsl-shaders/crt/shaders/ directory.\n"
+            "Press L + ZL during gameplay to quickly cycle shaders."));
+    AddWidget(path, "CRT Shader", WIDGET_CVAR_COMBOBOX)
+        .CVar("gEnhancements.Graphics.CRTFilter.Shader")
+        .Options(ComboboxOptions()
+                     .Tooltip("Select which CRT shader to use. Change takes effect immediately.\n"
+                              "Press L + ZL during gameplay to quickly cycle through shaders.")
+                     .ComboVec(CRTFilter_GetShaderNames())
+                     .DefaultIndex(0))
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
+        });
+    AddWidget(path, "CRT Shader Parameters", WIDGET_CUSTOM)
+        .CustomFunction([](WidgetInfo& info) { CRTFilter_DrawParamSliders(); })
+        .PreFunc([](WidgetInfo& info) {
+            info.isHidden = !CVarGetInteger("gEnhancements.Graphics.CRTFilter.Enabled", 0);
+        });
 
     path = { "Enhancements", "Items/Songs", SECTION_COLUMN_1 };
     AddSidebarEntry("Enhancements", "Items/Songs", 3);

@@ -512,6 +512,11 @@ class Interpreter {
     void SetProfilingEnabled(bool enabled);
     bool IsProfilingEnabled() const;
 
+    // Post-processing callback: takes (texId, width, height), returns new texId
+    using PostProcessFunc = uintptr_t (*)(uintptr_t texId, uint32_t width, uint32_t height);
+    void SetPostProcessCallback(PostProcessFunc callback);
+    PostProcessFunc GetPostProcessCallback() const;
+
     // private: TODO make these private
     void Flush();
     ShaderProgram* LookupOrCreateShaderProgram(uint64_t id0, uint64_t id1);
@@ -613,6 +618,8 @@ class Interpreter {
     XYWidthHeight mNativeDimensions{};     // gfx_native_dimensions;
     XYWidthHeight mPrevNativeDimensions{}; // gfx_prev_native_dimensions;
     uintptr_t mGfxFrameBuffer{};
+
+    PostProcessFunc mPostProcessCallback = nullptr;
 
     unsigned int mMsaaLevel = 1;
     bool mDroppedFrame{};

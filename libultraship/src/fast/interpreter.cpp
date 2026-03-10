@@ -5646,9 +5646,9 @@ void Interpreter::StartFrame() {
 
     mPrvDimensions = mCurDimensions;
     mPrevNativeDimensions = mNativeDimensions;
-    if (!ViewportMatchesRendererResolution() || mMsaaLevel > 1) {
+    if (!ViewportMatchesRendererResolution() || mMsaaLevel > 1 || mPostProcessCallback) {
         mRendersToFb = true;
-        if (!ViewportMatchesRendererResolution()) {
+        if (!ViewportMatchesRendererResolution() || (mPostProcessCallback && mMsaaLevel <= 1)) {
             mRapi->UpdateFramebufferParameters(mGameFb, mCurDimensions.width, mCurDimensions.height, mMsaaLevel, true,
                                                true, true, true);
         } else {
@@ -5841,6 +5841,11 @@ void Interpreter::Run(Gfx* commands, const std::unordered_map<Mtx*, MtxF>& mtx_r
             mRapi->StartDrawToFramebuffer(0, 1);
 
             assert(0 && "active framebuffer was never reset back to original");
+        }
+
+        if (mPostProcessCallback && mGfxFrameBuffer) {
+            mGfxFrameBuffer =
+                mPostProcessCallback(mGfxFrameBuffer, mCurDimensions.width, mCurDimensions.height);
         }
     }
 
@@ -6062,6 +6067,14 @@ void Interpreter::SetProfilingEnabled(bool enabled) {
 
 bool Interpreter::IsProfilingEnabled() const {
     return mProfilingEnabled;
+}
+
+void Interpreter::SetPostProcessCallback(PostProcessFunc callback) {
+    mPostProcessCallback = callback;
+}
+
+Interpreter::PostProcessFunc Interpreter::GetPostProcessCallback() const {
+    return mPostProcessCallback;
 }
 
 } // namespace Fast

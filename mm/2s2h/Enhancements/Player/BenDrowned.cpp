@@ -183,7 +183,6 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 // --- Screen glitch effect ---
 #define SCREEN_GLITCH_MIN_INTENSITY 0.08f
 #define SCREEN_GLITCH_RED_ALPHA 85.0f
-#define SCREEN_GLITCH_GREEN_ALPHA 40.0f
 #define SCREEN_GLITCH_BLUE_ALPHA 95.0f
 #define SCREEN_GLITCH_WHITE_ALPHA 28.0f
 #define SCREEN_GLITCH_MAX_OFFSET_X 7.0f
@@ -1302,11 +1301,11 @@ static void UpdateStatueProximityRumble(Player* player, EnTorch2* statue) {
 static f32 GetScreenGlitchIntensity(PlayState* play, Player* player, EnTorch2* statue) {
     f32 distSq;
     f32 maxEffectDist;
-    f32 dist;
     f32 proximity;
+    f32 maxEffectDistSq;
 
     if ((play == nullptr) || (player == nullptr) || (statue == nullptr) || !IsNormalGameplayState(play) ||
-        !CanCameraSeePoint(play, statue->actor.world.pos)) {
+        !sState.statueWasVisible) {
         return 0.0f;
     }
 
@@ -1314,15 +1313,15 @@ static f32 GetScreenGlitchIntensity(PlayState* play, Player* player, EnTorch2* s
     if (maxEffectDist <= 0.0f) {
         return 0.0f;
     }
+    maxEffectDistSq = SQ(maxEffectDist);
 
     distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
                              statue->actor.world.pos.z);
-    if (distSq > SQ(maxEffectDist)) {
+    if (distSq > maxEffectDistSq) {
         return 0.0f;
     }
 
-    dist = sqrtf(distSq);
-    proximity = std::clamp(1.0f - (dist / maxEffectDist), 0.0f, 1.0f);
+    proximity = std::clamp(1.0f - (distSq / maxEffectDistSq), 0.0f, 1.0f);
     return proximity * proximity;
 }
 
@@ -1348,8 +1347,8 @@ static void DrawScreenGlitchEffect() {
         return;
     }
 
-    time = play->gameplayFrames;
-    offsetX = (sinf(time * 0.43f) + cosf(time * 0.17f)) * (SCREEN_GLITCH_MAX_OFFSET_X * intensity);
+    time = (f32)(play->gameplayFrames % 1024);
+    offsetX = sinf(time * 0.43f) * (SCREEN_GLITCH_MAX_OFFSET_X * intensity);
     offsetY = cosf(time * 0.31f) * (SCREEN_GLITCH_MAX_OFFSET_Y * intensity);
     scaleJitter = SCREEN_GLITCH_MAX_SCALE * intensity;
 
@@ -1359,14 +1358,13 @@ static void DrawScreenGlitchEffect() {
     FB_CopyToFramebuffer(&gfx, 0, gReusableFrameBuffer, false, NULL);
     FB_DrawFromFramebufferEx(&gfx, gReusableFrameBuffer, 255, 64, 64, (u8)(SCREEN_GLITCH_RED_ALPHA * intensity),
                              -offsetX, offsetY, 1.0f + scaleJitter, 1.0f);
-    FB_DrawFromFramebufferEx(&gfx, gReusableFrameBuffer, 90, 255, 110, (u8)(SCREEN_GLITCH_GREEN_ALPHA * intensity),
-                             offsetX * 0.35f, -offsetY * 0.45f, 1.0f - (scaleJitter * 0.35f),
-                             1.0f + (scaleJitter * 0.25f));
     FB_DrawFromFramebufferEx(&gfx, gReusableFrameBuffer, 96, 140, 255, (u8)(SCREEN_GLITCH_BLUE_ALPHA * intensity),
                              offsetX, -offsetY, 1.0f + (scaleJitter * 0.65f), 1.0f + (scaleJitter * 0.4f));
-    FB_DrawFromFramebufferEx(&gfx, gReusableFrameBuffer, 255, 255, 255, (u8)(SCREEN_GLITCH_WHITE_ALPHA * intensity),
-                             -offsetX * 0.2f, offsetY * 0.2f, 1.0f + (scaleJitter * 0.18f),
-                             1.0f + (scaleJitter * 0.12f));
+    if (intensity > 0.35f) {
+        FB_DrawFromFramebufferEx(&gfx, gReusableFrameBuffer, 255, 255, 255,
+                                 (u8)(SCREEN_GLITCH_WHITE_ALPHA * intensity), -offsetX * 0.2f, offsetY * 0.2f,
+                                 1.0f + (scaleJitter * 0.18f), 1.0f + (scaleJitter * 0.12f));
+    }
     OVERLAY_DISP = gfx;
 
     CLOSE_DISPS(play->state.gfxCtx);

@@ -13,6 +13,7 @@ extern "C" {
 #include "functions.h"
 #include "sfx.h"
 #include "variables.h"
+#include "2s2h/framebuffer_effects.h"
 #include "z64debug_display.h"
 #include "overlays/actors/ovl_En_Torch2/z_en_torch2.h"
 #include "overlays/effects/ovl_Effect_Ss_Dust/z_eff_ss_dust.h"
@@ -178,6 +179,16 @@ extern f32 Camera_ScaledStepToCeilF(f32 target, f32 cur, f32 stepScale, f32 minD
 #define DEBUG_HISTORY_MARKER_TYPE 2
 #define DEBUG_TARGET_MARKER_TYPE 1
 #define DEBUG_STATUE_MARKER_TYPE 3
+
+// --- Screen glitch effect ---
+#define SCREEN_GLITCH_MIN_INTENSITY 0.08f
+#define SCREEN_GLITCH_RED_ALPHA 85.0f
+#define SCREEN_GLITCH_GREEN_ALPHA 40.0f
+#define SCREEN_GLITCH_BLUE_ALPHA 95.0f
+#define SCREEN_GLITCH_WHITE_ALPHA 28.0f
+#define SCREEN_GLITCH_MAX_OFFSET_X 7.0f
+#define SCREEN_GLITCH_MAX_OFFSET_Y 3.5f
+#define SCREEN_GLITCH_MAX_SCALE 0.035f
 
 // --- Fallback yaw offsets for off-camera stalking positions ---
 #define FALLBACK_YAW_SIDE_NEAR 0x5000
@@ -366,8 +377,7 @@ static bool HasCVar(const char* name) {
 }
 
 static void ResetLaughCooldown() {
-    sState.laughCooldown =
-        SecondsToFrames(sTuning.laughBaseSeconds + (Rand_ZeroOne() * sTuning.laughRandomSeconds));
+    sState.laughCooldown = SecondsToFrames(sTuning.laughBaseSeconds + (Rand_ZeroOne() * sTuning.laughRandomSeconds));
 }
 
 static void NormalizeTuning() {
@@ -555,7 +565,8 @@ static void HandleZoneChange(PlayState* play) {
     ResetEncounterState(true);
 }
 
-static f32 LoadCooldownSeconds(const char* secondsCvar, const char* legacyFramesCvar, f32 defaultSeconds, bool* migrated) {
+static f32 LoadCooldownSeconds(const char* secondsCvar, const char* legacyFramesCvar, f32 defaultSeconds,
+                               bool* migrated) {
     if (HasCVar(secondsCvar)) {
         return CVarGetFloat(secondsCvar, defaultSeconds);
     }
@@ -580,8 +591,9 @@ static f32 LoadFloatTuningValue(const char* cvar, f32 defaultValue) {
 static void LoadTuning() {
     bool migratedCooldownCvars = false;
 
-    sTuning.moveCooldownSeconds = LoadCooldownSeconds(TUNING_CVAR_MOVE_COOLDOWN_SECONDS, TUNING_CVAR_MOVE_COOLDOWN_LEGACY,
-                                                      DEFAULT_MOVE_COOLDOWN_SECONDS, &migratedCooldownCvars);
+    sTuning.moveCooldownSeconds =
+        LoadCooldownSeconds(TUNING_CVAR_MOVE_COOLDOWN_SECONDS, TUNING_CVAR_MOVE_COOLDOWN_LEGACY,
+                            DEFAULT_MOVE_COOLDOWN_SECONDS, &migratedCooldownCvars);
     sTuning.respawnCooldownSeconds =
         LoadCooldownSeconds(TUNING_CVAR_RESPAWN_COOLDOWN_SECONDS, TUNING_CVAR_RESPAWN_COOLDOWN_LEGACY,
                             DEFAULT_RESPAWN_COOLDOWN_SECONDS, &migratedCooldownCvars);
@@ -1287,6 +1299,79 @@ static void UpdateStatueProximityRumble(Player* player, EnTorch2* statue) {
     Rumble_Request(0.0f, strength, decayTimer, PROXIMITY_RUMBLE_STEP);
 }
 
+static f32 GetScreenGlitchIntensity(PlayState* play, Player* player, EnTorch2* statue) {
+    f32 distSq;
+    f32 maxEffectDist;
+    f32 dist;
+    f32 proximity;
+
+    if ((play == nullptr) || (player == nullptr) || (statue == nullptr) || !IsNormalGameplayState(play) ||
+        !CanCameraSeePoint(play, statue->actor.world.pos)) {
+        return 0.0f;
+    }
+
+    maxEffectDist = std::max(sTuning.maxNearbyDist, sTuning.proximityRumbleDist);
+    if (maxEffectDist <= 0.0f) {
+        return 0.0f;
+    }
+
+    distSq = Math3D_Dist2DSq(player->actor.world.pos.x, player->actor.world.pos.z, statue->actor.world.pos.x,
+                             statue->actor.world.pos.z);
+    if (distSq > SQ(maxEffectDist)) {
+        return 0.0f;
+    }
+
+    dist = sqrtf(distSq);
+    proximity = std::clamp(1.0f - (dist / maxEffectDist), 0.0f, 1.0f);
+    return proximity * proximity;
+}
+
+static void DrawScreenGlitchEffect() {
+    PlayState* play = gPlayState;
+    Player* player;
+    EnTorch2* statue;
+    f32 intensity;
+    f32 time;
+    f32 offsetX;
+    f32 offsetY;
+    f32 scaleJitter;
+    Gfx* gfx;
+
+    if (play == nullptr) {
+        return;
+    }
+
+    player = GetValidPlayer(play);
+    statue = GetStatue(play);
+    intensity = GetScreenGlitchIntensity(play, player, statue);
+    if (intensity < SCREEN_GLITCH_MIN_INTENSITY) {
+        return;
+    }
+
+    time = play->gameplayFrames;
+    offsetX = (sinf(time * 0.43f) + cosf(time * 0.17f)) * (SCREEN_GLITCH_MAX_OFFSET_X * intensity);
+    offsetY = cosf(time * 0.31f) * (SCREEN_GLITCH_MAX_OFFSET_Y * intensity);
+    scaleJitter = SCREEN_GLITCH_MAX_SCALE * intensity;
+
+    OPEN_DISPS(play->state.gfxCtx);
+
+    gfx = OVERLAY_DISP;
+    FB_CopyToFramebuffer(&gfx, 0, gReusableFrameBuffer, false, NULL);
+    FB_DrawFromFramebufferEx(&gfx, gReusableFrameBuffer, 255, 64, 64, (u8)(SCREEN_GLITCH_RED_ALPHA * intensity),
+                             -offsetX, offsetY, 1.0f + scaleJitter, 1.0f);
+    FB_DrawFromFramebufferEx(&gfx, gReusableFrameBuffer, 90, 255, 110, (u8)(SCREEN_GLITCH_GREEN_ALPHA * intensity),
+                             offsetX * 0.35f, -offsetY * 0.45f, 1.0f - (scaleJitter * 0.35f),
+                             1.0f + (scaleJitter * 0.25f));
+    FB_DrawFromFramebufferEx(&gfx, gReusableFrameBuffer, 96, 140, 255, (u8)(SCREEN_GLITCH_BLUE_ALPHA * intensity),
+                             offsetX, -offsetY, 1.0f + (scaleJitter * 0.65f), 1.0f + (scaleJitter * 0.4f));
+    FB_DrawFromFramebufferEx(&gfx, gReusableFrameBuffer, 255, 255, 255, (u8)(SCREEN_GLITCH_WHITE_ALPHA * intensity),
+                             -offsetX * 0.2f, offsetY * 0.2f, 1.0f + (scaleJitter * 0.18f),
+                             1.0f + (scaleJitter * 0.12f));
+    OVERLAY_DISP = gfx;
+
+    CLOSE_DISPS(play->state.gfxCtx);
+}
+
 static void PopulateDebugHistoryEntry(PlayState* play, Player* player, const Vec3f& point,
                                       BenDrowned::DebugHistoryEntry* entry) {
     Vec3f pointCopy = point;
@@ -1609,7 +1694,10 @@ void RegisterBenDrowned() {
         }
     });
 
-    COND_HOOK(OnPlayDrawWorldEnd, CVAR, []() { DrawDebugOverlay(); });
+    COND_HOOK(OnPlayDrawWorldEnd, CVAR, []() {
+        DrawScreenGlitchEffect();
+        DrawDebugOverlay();
+    });
 }
 
 static RegisterShipInitFunc initFunc(RegisterBenDrowned, {

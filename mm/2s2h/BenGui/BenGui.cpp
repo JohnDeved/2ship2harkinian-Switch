@@ -9,6 +9,7 @@
 #include "2s2h/Enhancements/Audio/AudioEditor.h"
 #include "CosmeticEditor.h"
 #include "Notification.h"
+#include "BenDrownedDebugWindow.h"
 #include "2s2h/Rando/CheckTracker/CheckTracker.h"
 
 #ifdef __APPLE__
@@ -65,6 +66,7 @@ std::shared_ptr<FrameProfilerWindow> mFrameProfilerWindow;
 std::shared_ptr<BenchmarkWindow> mBenchmarkWindow;
 std::shared_ptr<AudioEditor> mAudioEditorWindow;
 std::shared_ptr<BenMenu> mBenMenu;
+std::shared_ptr<BenDrownedDebugWindow> mBenDrownedDebugWindow;
 std::shared_ptr<Notification::Window> mNotificationWindow;
 std::shared_ptr<Rando::CheckTracker::CheckTrackerWindow> mRandoCheckTrackerWindow;
 std::shared_ptr<Rando::CheckTracker::SettingsWindow> mRandoCheckTrackerSettingsWindow;
@@ -184,6 +186,10 @@ void SetupGuiElements() {
     mAudioEditorWindow = std::make_shared<AudioEditor>("gWindows.AudioEditor", "Audio Editor", ImVec2(520, 600));
     gui->AddGuiWindow(mAudioEditorWindow);
 
+    mBenDrownedDebugWindow = std::make_shared<BenDrownedDebugWindow>("gWindows.BenDrownedDebug",
+                                                                     "Spooky Mode Debug", ImVec2(480, 600));
+    gui->AddGuiWindow(mBenDrownedDebugWindow);
+
     mItemTrackerWindow = std::make_shared<ItemTrackerWindow>("gWindows.ItemTracker", "Item Tracker");
     gui->AddGuiWindow(mItemTrackerWindow);
 
@@ -253,6 +259,7 @@ void Destroy() {
     mFrameProfilerWindow = nullptr;
     mBenchmarkWindow = nullptr;
     mAudioEditorWindow = nullptr;
+    mBenDrownedDebugWindow = nullptr;
     mItemTrackerWindow = nullptr;
     mItemTrackerSettingsWindow = nullptr;
     mInputViewer = nullptr;

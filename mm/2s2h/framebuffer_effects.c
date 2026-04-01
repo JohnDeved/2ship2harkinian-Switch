@@ -175,3 +175,33 @@ void FB_DrawFromFramebufferScaled(Gfx** gfxp, s32 fb, u8 alpha, float scaleX, fl
 
     *gfxp = gfx;
 }
+
+void FB_DrawFromFramebufferEx(Gfx** gfxp, s32 fb, u8 red, u8 green, u8 blue, u8 alpha, float offsetX, float offsetY,
+                              float scaleX, float scaleY) {
+    Gfx* gfx = *gfxp;
+    float drawWidth = gScreenWidth * scaleX;
+    float drawHeight = gScreenHeight * scaleY;
+    float x0 = ((float)gScreenWidth - drawWidth) * 0.5f + offsetX;
+    float y0 = ((float)gScreenHeight - drawHeight) * 0.5f + offsetY;
+    float x1 = x0 + drawWidth;
+    float y1 = y0 + drawHeight;
+
+    gDPSetEnvColor(gfx++, red, green, blue, alpha);
+
+    gDPSetOtherMode(gfx++,
+                    G_AD_NOISE | G_CD_NOISE | G_CK_NONE | G_TC_FILT | G_TF_BILERP | G_TT_NONE | G_TL_TILE | G_TD_CLAMP |
+                        G_TP_NONE | G_CYC_1CYCLE | G_PM_NPRIMITIVE,
+                    G_AC_NONE | G_ZS_PRIM | G_RM_CLD_SURF | G_RM_CLD_SURF2);
+
+    gDPSetCombineLERP(gfx++, TEXEL0, 0, ENVIRONMENT, 0, 0, 0, 0, ENVIRONMENT, TEXEL0, 0, ENVIRONMENT, 0, 0, 0, 0,
+                      ENVIRONMENT);
+
+    gDPSetScissor(gfx++, G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    gDPSetTextureImageFB(gfx++, 0, 0, 0, fb);
+    gDPImageRectangle(gfx++, OTRGetRectDimensionFromLeftEdge(x0) << 2, (int)(y0) << 2, 0, 0,
+                      OTRGetRectDimensionFromRightEdge(x1) << 2, (int)(y1) << 2, OTRGetGameRenderWidth(),
+                      OTRGetGameRenderHeight(), G_TX_RENDERTILE, OTRGetGameRenderWidth(), OTRGetGameRenderHeight());
+
+    *gfxp = gfx;
+}

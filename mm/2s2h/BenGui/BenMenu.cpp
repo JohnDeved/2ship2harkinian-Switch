@@ -2,13 +2,13 @@
 #include "UIWidgets.hpp"
 #include "BenPort.h"
 #include "BenInputEditorWindow.h"
+#include "2s2h/Enhancements/Player/BenDrowned.h"
 #include "DeveloperTools/SaveEditor.h"
 #include "DeveloperTools/CollisionViewer.h"
 #include "2s2h/Enhancements/GfxPatcher/AuthenticGfxPatches.h"
 #include "2s2h/PresetManager/PresetManager.h"
 #include "HudEditor.h"
 #include "Notification.h"
-#include <variant>
 #include <ship/utils/StringHelper.h>
 #include <spdlog/fmt/fmt.h>
 #include "variables.h"
@@ -29,6 +29,45 @@ extern SaveContext gSaveContext;
 extern std::unordered_map<s16, const char*> warpPointSceneList;
 extern void Warp();
 
+static float BenDrownedFramesToSeconds(int frames) {
+    return frames / BenDrowned::TUNING_FRAMES_PER_SECOND;
+}
+
+static float BenDrownedFramesToMinutes(int frames) {
+    return frames / (BenDrowned::TUNING_FRAMES_PER_SECOND * 60.0f);
+}
+
+static float BenDrownedSecondsToMinutes(float seconds) {
+    return seconds / 60.0f;
+}
+
+static float BenDrownedMinutesToSeconds(float minutes) {
+    return minutes * 60.0f;
+}
+
+static const ImVec4 sBenDrownedDistantSpawnColor = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
+static const ImVec4 sBenDrownedActiveTargetColor = ImVec4(1.0f, 0.85f, 0.35f, 1.0f);
+
+static bool RenderBenDrownedMinutesSlider(const char* label, float* secondsValue, float minMinutes, float maxMinutes,
+                                          const char* format) {
+    float minutesValue = BenDrownedSecondsToMinutes(*secondsValue);
+
+    if (!ImGui::SliderFloat(label, &minutesValue, minMinutes, maxMinutes, format)) {
+        return false;
+    }
+
+    *secondsValue = BenDrownedMinutesToSeconds(minutesValue);
+    return true;
+}
+
+static void RenderBenDrownedBulletPositionText(const char* label, const Vec3f& pos) {
+    ImGui::BulletText("%s: %.1f, %.1f, %.1f", label, pos.x, pos.y, pos.z);
+}
+
+static void RenderBenDrownedColoredPositionText(const char* label, const Vec3f& pos, const ImVec4& color) {
+    ImGui::TextColored(color, "%s: %.1f, %.1f, %.1f", label, pos.x, pos.y, pos.z);
+}
+
 static const std::unordered_map<int32_t, const char*> menuThemeOptions = {
     { UIWidgets::Colors::Red, "Red" },
     { UIWidgets::Colors::DarkRed, "Dark Red" },
@@ -45,7 +84,6 @@ static const std::unordered_map<int32_t, const char*> menuThemeOptions = {
     { UIWidgets::Colors::Gray, "Gray" },
     { UIWidgets::Colors::DarkGray, "Dark Gray" },
 };
-
 
 static const std::unordered_map<int32_t, const char*> SwitchOCProfiles = {
     { Ship::MAXIMUM, "MAXIMUM" },
@@ -119,6 +157,179 @@ static const std::vector<const char*> logLevels = {
     "Critical", // DEBUG_LOG_CRITICAL
     "Off",      // DEBUG_LOG_OFF
 };
+
+static void RenderBenDrownedDebugBool(const char* label, bool value) {
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::Text("%s", label);
+    ImGui::TableNextColumn();
+    ImGui::TextColored(value ? ImVec4(0.35f, 0.95f, 0.45f, 1.0f) : ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s",
+                       value ? "Yes" : "No");
+}
+
+static std::pair<const char*, ImVec4> GetBenDrownedHistoryFlagInfo(const BenDrowned::DebugHistoryEntry& entry) {
+    if (entry.distantEligible) {
+        return { "Hidden | Distant", ImVec4(0.4f, 0.8f, 1.0f, 1.0f) };
+    }
+    if (entry.spawnEligible) {
+        return { "Hidden | Spawn", ImVec4(0.4f, 1.0f, 0.5f, 1.0f) };
+    }
+    if (entry.tooFar) {
+        return { "Too Far", ImVec4(0.75f, 0.55f, 1.0f, 1.0f) };
+    }
+    if (entry.visible) {
+        return { "Visible", ImVec4(1.0f, 0.4f, 0.4f, 1.0f) };
+    }
+
+    return { "Too Close", ImVec4(1.0f, 0.75f, 0.35f, 1.0f) };
+}
+
+void RenderBenDrownedDebugSection() {
+    BenDrowned::DebugSnapshot snapshot = BenDrowned::GetDebugSnapshot();
+    BenDrowned::TuningParams& tuning = BenDrowned::GetTuning();
+
+    UIWidgets::CVarCheckbox("World Overlay", "gDeveloperTools.BenDrowned.DebugOverlay");
+    UIWidgets::CVarInputString("Player name override", "gDeveloperTools.BenDrowned.PlayerNameOverride",
+                               UIWidgets::InputOptions().PlaceholderText("Uses save file name if empty"));
+    ImGui::SeparatorText("Runtime State");
+
+    if (!snapshot.enabled) {
+        ImGui::TextColored(UIWidgets::ColorValues.at(UIWidgets::Colors::Gray), "Spooky Mode is disabled.");
+        return;
+    }
+
+    if (!snapshot.hasPlayState) {
+        ImGui::TextColored(UIWidgets::ColorValues.at(UIWidgets::Colors::Gray), "No active play state.");
+        return;
+    }
+
+    if (ImGui::BeginTable("BenDrownedStateTable", 2, ImGuiTableFlags_SizingStretchSame)) {
+        RenderBenDrownedDebugBool("Normal gameplay", snapshot.normalGameplayState);
+        RenderBenDrownedDebugBool("Player valid", snapshot.playerValid);
+        RenderBenDrownedDebugBool("Grounded and dry", snapshot.playerGroundedAndDry);
+        RenderBenDrownedDebugBool("Statue alive", snapshot.statueAlive);
+        RenderBenDrownedDebugBool("Statue managed", snapshot.statueManaged);
+        RenderBenDrownedDebugBool("Statue observed", snapshot.statueObserved);
+        RenderBenDrownedDebugBool("Statue visible", snapshot.statueVisible);
+        RenderBenDrownedDebugBool("Disappear armed", snapshot.disappearAfterObserved);
+        RenderBenDrownedDebugBool("Respawn ready", snapshot.respawnReady);
+        RenderBenDrownedDebugBool("Move ready", snapshot.moveReady);
+        RenderBenDrownedDebugBool("Distant spawn found", snapshot.hasDistantSpawnPoint);
+        RenderBenDrownedDebugBool("Target point found", snapshot.hasTargetPoint);
+        ImGui::EndTable();
+    }
+
+    ImGui::SeparatorText("Positions");
+    if (snapshot.playerValid) {
+        RenderBenDrownedBulletPositionText("Player", snapshot.playerPos);
+    }
+    if (snapshot.statueAlive) {
+        RenderBenDrownedBulletPositionText("Statue", snapshot.statuePos);
+    }
+    if (snapshot.hasDistantSpawnPoint) {
+        RenderBenDrownedColoredPositionText("Best distant spawn", snapshot.distantSpawnPoint,
+                                            sBenDrownedDistantSpawnColor);
+    }
+    if (snapshot.hasTargetPoint) {
+        RenderBenDrownedColoredPositionText("Best active target", snapshot.targetPoint, sBenDrownedActiveTargetColor);
+    }
+
+    ImGui::SeparatorText("Active Cooldowns");
+    ImGui::BulletText("History count: %d / %zu", snapshot.historyCount, BenDrowned::DEBUG_HISTORY_SIZE);
+    ImGui::BulletText("Record timer: %d", snapshot.recordTimer);
+    ImGui::BulletText("Move cooldown: %.2f min", BenDrownedFramesToMinutes(snapshot.moveCooldown));
+    ImGui::BulletText("Respawn cooldown: %.2f min", BenDrownedFramesToMinutes(snapshot.respawnCooldown));
+    ImGui::BulletText("Laugh cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.laughCooldown));
+    ImGui::BulletText("Arrival effect cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.effectCooldown));
+    ImGui::BulletText("Dialogue cooldown: %.1f s", BenDrownedFramesToSeconds(snapshot.dialogueCooldown));
+
+    bool tuningChanged = false;
+
+    if (ImGui::CollapsingHeader("Cooldown Tuning")) {
+        tuningChanged |=
+            RenderBenDrownedMinutesSlider("Move cooldown (minutes)", &tuning.moveCooldownSeconds, 0.1f, 200.0f, "%.2f");
+        tuningChanged |= RenderBenDrownedMinutesSlider("Respawn cooldown (minutes)", &tuning.respawnCooldownSeconds,
+                                                       0.1f, 200.0f, "%.2f");
+        tuningChanged |=
+            ImGui::SliderFloat("Dialogue cooldown (seconds)", &tuning.dialogueCooldownSeconds, 0.5f, 60.0f, "%.1f");
+        tuningChanged |= ImGui::SliderFloat("Laugh base (seconds)", &tuning.laughBaseSeconds, 0.5f, 60.0f, "%.1f");
+        tuningChanged |= ImGui::SliderFloat("Laugh random (seconds)", &tuning.laughRandomSeconds, 0.0f, 60.0f, "%.1f");
+        tuningChanged |= ImGui::SliderFloat("Disappear chance", &tuning.disappearChance, 0.0f, 1.0f, "%.2f");
+        tuningChanged |= ImGui::SliderFloat("Dialogue chance", &tuning.dialogueChance, 0.0f, 1.0f, "%.2f");
+    }
+
+    if (ImGui::CollapsingHeader("Audio / FX Tuning")) {
+        tuningChanged |= ImGui::SliderFloat("Laugh min pitch", &tuning.laughMinPitch, BenDrowned::MIN_TUNING_PITCH,
+                                            BenDrowned::MAX_TUNING_PITCH, "%.2f");
+        tuningChanged |= ImGui::SliderFloat("Laugh max pitch", &tuning.laughMaxPitch, BenDrowned::MIN_TUNING_PITCH,
+                                            BenDrowned::MAX_TUNING_PITCH, "%.2f");
+    }
+
+    if (ImGui::CollapsingHeader("Distance Tuning")) {
+        tuningChanged |= ImGui::SliderFloat("History point spacing", &tuning.historyPointMinDist, 1.0f, 200.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Min spawn dist", &tuning.minSpawnDist, 10.0f, 500.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Distant spawn dist", &tuning.distantSpawnDist, 20.0f, 1000.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Max nearby dist", &tuning.maxNearbyDist, 50.0f, 1000.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Min reposition dist", &tuning.minRepositionDist, 1.0f, 300.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Move threshold dist", &tuning.moveThresholdDist, 1.0f, 200.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Close effect dist", &tuning.closeEffectDist, 1.0f, 300.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Fallback stalk dist", &tuning.fallbackStalkDist, 20.0f, 500.0f, "%.0f");
+        tuningChanged |=
+            ImGui::SliderFloat("Proximity rumble dist", &tuning.proximityRumbleDist, 10.0f, 500.0f, "%.0f");
+    }
+
+    if (ImGui::CollapsingHeader("Jumpscare Tuning")) {
+        tuningChanged |= ImGui::SliderInt("Zoom (frames)", &tuning.jumpscareZoomFrames, 1, 120);
+        tuningChanged |=
+            ImGui::SliderFloat("Cooldown (seconds)", &tuning.jumpscareCooldownSeconds, 0.0f, 10.0f, "%.1f");
+        tuningChanged |= ImGui::SliderFloat("Trigger dist", &tuning.jumpscareTriggerDist, 1.0f, 300.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Target dist", &tuning.jumpscareTargetDist, 1.0f, 200.0f, "%.0f");
+        tuningChanged |= ImGui::SliderFloat("Target FOV", &tuning.jumpscareTargetFov, 1.0f, 120.0f, "%.1f");
+    }
+
+    if (tuningChanged) {
+        BenDrowned::SaveTuning();
+    }
+
+    ImGui::SeparatorText("Recorded Locations");
+    if (snapshot.historyCount <= 0) {
+        ImGui::TextColored(UIWidgets::ColorValues.at(UIWidgets::Colors::Gray), "No recorded locations yet.");
+        return;
+    }
+
+    if (ImGui::BeginTable("BenDrownedHistoryTable", 6,
+                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY,
+                          ImVec2(0.0f, 260.0f))) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 28.0f);
+        ImGui::TableSetupColumn("X");
+        ImGui::TableSetupColumn("Y");
+        ImGui::TableSetupColumn("Z");
+        ImGui::TableSetupColumn("Dist");
+        ImGui::TableSetupColumn("Flags");
+        ImGui::TableHeadersRow();
+
+        for (int i = 0; i < snapshot.historyCount; i++) {
+            const BenDrowned::DebugHistoryEntry& entry = snapshot.history[i];
+            auto [flags, flagColor] = GetBenDrownedHistoryFlagInfo(entry);
+
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%d", i + 1);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", entry.pos.x);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", entry.pos.y);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", entry.pos.z);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", snapshot.playerValid ? entry.playerDist : 0.0f);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(flagColor, "%s", flags);
+        }
+
+        ImGui::EndTable();
+    }
+}
 
 static const std::vector<const char*> timeStopOptions = {
     "Off",                     // TIME_STOP_OFF
@@ -547,12 +758,14 @@ void BenMenu::AddSettings() {
     AddWidget(path, "Switch performance mode", WIDGET_CVAR_COMBOBOX)
         .CVar("gSwitchPerfMode")
         .Callback([](WidgetInfo& info) {
-            Ship::Switch::ApplyOverclock();;
+            Ship::Switch::ApplyOverclock();
         })
-        .Options(ComboboxOptions().Tooltip("Sets the Switch performance mode.")
+        .Options(ComboboxOptions()
+                     .Tooltip("Sets the Switch performance mode.")
                      .DefaultIndex(Ship::SwitchProfiles::STOCK)
                      .ComboMap(&SwitchOCProfiles));
-    SPDLOG_INFO("Profile:: %s", SWITCH_CPU_PROFILES[CVarGetInteger("gSwitchPerfMode", (int)Ship::SwitchProfiles::STOCK)]);
+    SPDLOG_INFO("Profile:: %s",
+                SWITCH_CPU_PROFILES[CVarGetInteger("gSwitchPerfMode", (int)Ship::SwitchProfiles::STOCK)]);
 #endif
 
     AddWidget(path, "Current FPS: %d", WIDGET_CVAR_SLIDER_INT)
@@ -1126,9 +1339,10 @@ void BenMenu::AddEnhancements() {
         .PreFunc([](WidgetInfo& info) {
             info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
         })
-        .Options(CheckboxOptions().Tooltip(
-            "Initial lock-on picks the target closest to the camera center instead of the player's facing direction.")
-            .DefaultValue(true));
+        .Options(CheckboxOptions()
+                     .Tooltip("Initial lock-on picks the target closest to the camera center instead of the player's "
+                              "facing direction.")
+                     .DefaultValue(true));
     AddWidget(path, "  Right Stick Target Switch", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Player.ModernZTargeting.RightStickSwitch")
         .PreFunc([](WidgetInfo& info) {
@@ -1152,9 +1366,9 @@ void BenMenu::AddEnhancements() {
         .PreFunc([](WidgetInfo& info) {
             info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_MODERN_ZTARGETING_OFF).active;
         })
-        .Options(CheckboxOptions().Tooltip(
-            "Pressing Z while locked on releases the lock instead of switching targets.")
-            .DefaultValue(true));
+        .Options(CheckboxOptions()
+                     .Tooltip("Pressing Z while locked on releases the lock instead of switching targets.")
+                     .DefaultValue(true));
     AddWidget(path, "Dpad Equips", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Dpad.DpadEquips")
         .Options(CheckboxOptions().Tooltip("Allows you to equip items to your D-pad."));
@@ -1183,12 +1397,9 @@ void BenMenu::AddEnhancements() {
             "While aiming the bow, use R to cycle between Normal, Fire, Ice and Light arrows."));
     AddWidget(path, "  D-Pad Arrow Cycling", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.PlayerActions.ArrowCycleDpad")
-        .PreFunc([](WidgetInfo& info) {
-            info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_ARROW_CYCLE_OFF).active;
-        })
-        .Options(CheckboxOptions().Tooltip(
-            "While aiming the bow, use D-Pad Left/Right to cycle between arrow types. "
-            "Disables R-based arrow cycling; R will shield/exit as normal."));
+        .PreFunc([](WidgetInfo& info) { info.isHidden = mBenMenu->disabledMap.at(DISABLE_FOR_ARROW_CYCLE_OFF).active; })
+        .Options(CheckboxOptions().Tooltip("While aiming the bow, use D-Pad Left/Right to cycle between arrow types. "
+                                           "Disables R-based arrow cycling; R will shield/exit as normal."));
     AddWidget(path, "Remote Bombchu Control", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.PlayerActions.RemoteBombchu")
         .Options(CheckboxOptions().Tooltip(
@@ -2112,6 +2323,17 @@ void BenMenu::AddDevTools() {
         .Options(ButtonOptions().Tooltip("Makes collision visible on screen.").Size(Sizes::Inline))
         .WindowName("Collision Viewer");
 
+    path = { "Dev Tools", "Spooky Mode", SECTION_COLUMN_1 };
+    AddSidebarEntry("Dev Tools", "Spooky Mode", 1);
+    AddWidget(path, "Spooky Mode", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.Player.BenDrowned")
+        .Options(CheckboxOptions().Tooltip("Turns the human Elegy statue into a weeping angel that stalks Link from "
+                                           "recent hidden positions and only moves while off-camera."));
+    AddWidget(path, "Popout Spooky Mode Debug", WIDGET_WINDOW_BUTTON)
+        .CVar("gWindows.BenDrownedDebug")
+        .Options(ButtonOptions().Tooltip("Opens the Spooky Mode debug panel in a separate window.").Size(Sizes::Inline))
+        .WindowName("Spooky Mode Debug");
+
     path = { "Dev Tools", "Stats", SECTION_COLUMN_1 };
     AddSidebarEntry("Dev Tools", "Stats", 1);
     AddWidget(path, "Popout Stats", WIDGET_WINDOW_BUTTON)
@@ -2332,9 +2554,7 @@ void BenMenu::InitElement() {
            },
             "Modern Z-Targeting is Disabled" } },
         { DISABLE_FOR_ARROW_CYCLE_OFF,
-          { [](disabledInfo& info) -> bool {
-               return !CVarGetInteger("gEnhancements.PlayerActions.ArrowCycle", 0);
-           },
+          { [](disabledInfo& info) -> bool { return !CVarGetInteger("gEnhancements.PlayerActions.ArrowCycle", 0); },
             "Arrow Type Cycling is Disabled" } },
     };
 }

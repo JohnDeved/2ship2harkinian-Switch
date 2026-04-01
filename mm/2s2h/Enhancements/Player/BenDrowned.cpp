@@ -650,6 +650,10 @@ static bool IsNormalGameplayState(PlayState* play) {
            (play->transitionMode == TRANS_MODE_OFF) && !Play_InCsMode(play);
 }
 
+static bool IsBenDrownedAllowedScene(PlayState* play) {
+    return (play != nullptr) && (play->sceneId != SCENE_KAKUSIANA);
+}
+
 static bool IsPlayerGroundedAndDry(Player* player) {
     return (player->actor.bgCheckFlags & BGCHECKFLAG_GROUND) && !(player->actor.bgCheckFlags & BGCHECKFLAG_WATER);
 }
@@ -1588,6 +1592,11 @@ void RegisterBenDrowned() {
         HandlePlayStateChange(play);
         HandleZoneChange(play);
         DecrementCooldown(&sState.dialogueCooldown);
+
+        if (!IsBenDrownedAllowedScene(play)) {
+            CleanupOwnedStatue();
+            return;
+        }
 
         if (!IsNormalGameplayState(play)) {
             return;
